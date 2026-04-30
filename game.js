@@ -4874,11 +4874,17 @@ function runConsoleCommand(line) {
     consoleEcho("  peace <civ name>           reset relations to zero with target", "info");
     consoleEcho("  year                       print current year", "info");
     consoleEcho("  list                       list all alive civs", "info");
+    consoleEcho("  showtree                   family tree of every civ ever", "info");
     return;
   }
 
   if (cmd === "year") {
     consoleEcho("year " + state.year, "ok");
+    return;
+  }
+
+  if (cmd === "showtree") {
+    showCivFamilyTree();
     return;
   }
 
@@ -4990,6 +4996,97 @@ function runConsoleCommand(line) {
   }
 
   consoleEcho("unknown command: " + cmd + " (try 'help')", "err");
+}
+
+// Build a name -> { name, year, children } map by walking
+// HISTORICAL_CIVS (the 1000 BC starting tribes) + HISTORICAL_EVENTS.
+//   - rename A -> B   : B is a child of A
+//   - secede target=T civ=N : N is a child of T
+//   - merge from=[A,B] to=C : C is a child of A (and B - rendered as note)
+//   - spawn replaces=X     : new civ is a child of X
+//   - spawn standalone     : new top-level root
+// Roots are the initial tribes + any standalone-spawned civs that have no parent.
+function buildCivFamilyTree() {
+  const nodes = new Map();
+  function ensure(name, year, note) {
+    if (!nodes.has(name)) {
+      nodes.set(name, { name, year, note, children: [], parents: [] });
+    } else {
+      const n = nodes.get(name);
+      // Pick the earliest year if we see the node multiple times.
+      if (year != null && (n.year == null || year < n.year)) n.year = year;
+      if (note && !n.note) n.note = note;
+    }
+    return nodes.get(name);
+  }
+  function link(parentName, childName, year) {
+    if (!parentName || !childName || parentName === childName) return;
+    const p = ensure(parentName, null);
+    const c = ensure(childName, year);
+    if (!c.parents.includes(p)) c.parents.push(p);
+    if (!p.children.includes(c)) p.children.push(c);
+  }
+  // 1000 BC starting tribes - each becomes a root.
+  if (typeof HISTORICAL_CIVS !== "undefined") {
+    for (const t of HISTORICAL_CIVS) ensure(t.name, -1000, "starting tribe");
+  }
+  // Walk every event in chronological order.
+  if (typeof HISTORICAL_EVENTS !== "undefined") {
+    const sorted = HISTORICAL_EVENTS.slice().sort((a, b) => a.year - b.year);
+    for (const ev of sorted) {
+      const y = ev.year;
+      if (ev.type === "rename" && ev.from && ev.to) {
+        link(ev.from, ev.to, y);
+      } else if (ev.type === "secede" && ev.civ && ev.target) {
+        const civName = typeof ev.civ === "string" ? ev.civ : (ev.civ && ev.civ.name);
+        if (civName) link(ev.target, civName, y);
+      } else if (ev.type === "merge" && Array.isArray(ev.from) && ev.to) {
+        const toName = typeof ev.to === "string" ? ev.to : ev.to.name;
+        for (const fromName of ev.from) link(fromName, toName, y);
+      } else if (!ev.type && ev.civ && ev.civ.name) {
+        // Spawn event.
+        const node = ensure(ev.civ.name, y);
+        if (ev.replaces) link(ev.replaces, ev.civ.name, y);
+      }
+    }
+  }
+  // Roots = nodes with no parent.
+  const roots = [];
+  for (const n of nodes.values()) if (n.parents.length === 0) roots.push(n);
+  // Sort roots by year, then alphabetically.
+  roots.sort((a, b) => (a.year || 0) - (b.year || 0) || a.name.localeCompare(b.name));
+  // Sort each node's children by year for nicer output.
+  for (const n of nodes.values()) {
+    n.children.sort((a, b) => (a.year || 0) - (b.year || 0) || a.name.localeCompare(b.name));
+  }
+  return { nodes, roots };
+}
+
+function showCivFamilyTree() {
+  const { nodes, roots } = buildCivFamilyTree();
+  const seen = new Set();   // dedupe in case a civ has multiple parents (merges)
+  consoleEcho("=== Civilization Family Tree (" + nodes.size + " civs) ===", "info");
+  function fmtYear(y) {
+    if (y == null) return "";
+    return " (" + (y < 0 ? Math.abs(y) + " BC" : y + " AD") + ")";
+  }
+  function render(node, prefix, isLast) {
+    const connector = prefix === null ? "" : (isLast ? "└─ " : "├─ ");
+    const dup = seen.has(node.name) ? "  *" : "";
+    const extraParents = node.parents.length > 1
+      ? "  (also from " + node.parents.slice(1).map(p => p.name).join(", ") + ")"
+      : "";
+    const noteStr = node.note ? "  [" + node.note + "]" : "";
+    consoleEcho((prefix === null ? "" : prefix) + connector + node.name + fmtYear(node.year) + extraParents + noteStr + dup, "info");
+    if (seen.has(node.name)) return;   // don't re-expand merge duplicates
+    seen.add(node.name);
+    const childPrefix = prefix === null ? "" : prefix + (isLast ? "   " : "│  ");
+    for (let i = 0; i < node.children.length; i++) {
+      render(node.children[i], childPrefix, i === node.children.length - 1);
+    }
+  }
+  for (const root of roots) render(root, null, true);
+  consoleEcho("=== " + nodes.size + " civilizations total ===", "info");
 }
 
 (function wireConsole() {
