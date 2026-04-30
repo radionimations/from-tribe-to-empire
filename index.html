@@ -578,6 +578,139 @@
     0%   { opacity: 0; transform: translateX(80px); }
     100% { opacity: 1; transform: translateX(0); }
   }
+  /* Family tree modal - opened by `showtree` console command. */
+  #tree-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(8, 5, 2, 0.92);
+    z-index: 260;
+    display: none;
+    flex-direction: column;
+  }
+  #tree-modal.open { display: flex; }
+  #tree-modal .tree-header {
+    background: linear-gradient(180deg, #2a1a10, #1a1208);
+    color: #d4a657;
+    padding: 8px 16px;
+    border-bottom: 2px solid #6b4f2c;
+    font-family: Georgia, serif;
+    font-size: 14px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  #tree-modal .tree-close {
+    background: linear-gradient(180deg, #6b2c2c, #4a2020);
+    color: #fff;
+    border: 1px solid #8a3c3c;
+    padding: 4px 12px;
+    cursor: pointer;
+    border-radius: 3px;
+    font-family: inherit;
+  }
+  #tree-modal .tree-scroll {
+    flex: 1;
+    overflow: auto;
+    padding: 32px;
+    background: radial-gradient(circle at 50% 0%, #1a1208 0%, #0a0604 100%);
+  }
+  #tree-modal .tree-root-list, #tree-modal .tree-children {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: row;
+    gap: 24px;
+    justify-content: flex-start;
+    align-items: flex-start;
+    position: relative;
+  }
+  #tree-modal .tree-root-list { gap: 60px; padding-bottom: 20px; }
+  #tree-modal .tree-node {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+  }
+  /* Vertical line above each node connecting to parent. */
+  #tree-modal .tree-children > .tree-node::before {
+    content: "";
+    position: absolute;
+    top: -20px;
+    left: 50%;
+    width: 2px;
+    height: 20px;
+    background: #6b4f2c;
+    transform: translateX(-1px);
+  }
+  /* Horizontal line above each child group spanning all siblings. */
+  #tree-modal .tree-children::before {
+    content: "";
+    position: absolute;
+    top: -20px;
+    left: 50%;
+    right: 50%;
+    height: 2px;
+    background: transparent;
+  }
+  #tree-modal .tree-children.multi::before {
+    left: var(--first-mid, 0);
+    right: var(--last-mid, 0);
+    background: #6b4f2c;
+    width: auto;
+  }
+  /* Vertical stub from parent down to the horizontal connector. */
+  #tree-modal .tree-node-card-wrap {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  #tree-modal .tree-node-card-wrap.has-children::after {
+    content: "";
+    position: absolute;
+    bottom: -20px;
+    left: 50%;
+    width: 2px;
+    height: 20px;
+    background: #6b4f2c;
+    transform: translateX(-1px);
+  }
+  #tree-modal .tree-card {
+    background: linear-gradient(180deg, #2a1a10, #1a0e08);
+    border: 2px solid #6b4f2c;
+    border-radius: 5px;
+    padding: 8px 10px 6px;
+    width: 132px;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+    color: #f0e6cc;
+  }
+  #tree-modal .tree-card .tree-flag {
+    width: 48px;
+    height: 32px;
+    object-fit: cover;
+    border: 1px solid #4a3520;
+    background: rgba(0,0,0,0.4);
+    margin-bottom: 4px;
+  }
+  #tree-modal .tree-card .tree-name {
+    font-family: Georgia, serif;
+    font-size: 12px;
+    color: #d4a657;
+    line-height: 1.25;
+    word-wrap: break-word;
+  }
+  #tree-modal .tree-card .tree-year {
+    font-size: 10px;
+    color: #8a7a5c;
+    margin-top: 2px;
+    letter-spacing: 0.5px;
+  }
+  #tree-modal .tree-card.dup { opacity: 0.55; border-style: dashed; }
+
   /* HOI4-style console panel - opened by typing "admin". Spawns centered,
      drag the header to move it. */
   #console-panel {
@@ -948,6 +1081,13 @@
 </div>
 <div id="version-tag">v0.1.0</div>
 <div id="war-popup-stack"></div>
+<div id="tree-modal">
+  <div class="tree-header">
+    <span>Civilization Family Tree</span>
+    <button class="tree-close" id="tree-close">Close</button>
+  </div>
+  <div class="tree-scroll" id="tree-scroll"></div>
+</div>
 <div id="console-panel">
   <div class="console-header">~ CONSOLE - type "help" for commands</div>
   <div class="console-output" id="console-output"></div>

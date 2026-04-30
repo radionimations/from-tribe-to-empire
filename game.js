@@ -5062,32 +5062,103 @@ function buildCivFamilyTree() {
   return { nodes, roots };
 }
 
+// Resolve a flag URL by civ name without needing a live civ object - looks
+// up CIV_TAGS for the HOI4 tag, falls back to FLAG_URLS for Wikipedia URLs,
+// or null if neither exists. Used by the tree UI for civs that long since
+// died and aren't in state.civs anymore.
+function flagUrlForName(name) {
+  if (typeof CIV_TAGS !== "undefined") {
+    const tag = CIV_TAGS[name];
+    if (tag) return "flags_png/" + tag + ".png";
+  }
+  if (typeof FLAG_URLS !== "undefined" && FLAG_URLS[name]) return FLAG_URLS[name];
+  return null;
+}
+
+function fmtTreeYear(y) {
+  if (y == null) return "";
+  return y < 0 ? Math.abs(y) + " BC" : y + " AD";
+}
+
+// Build a DOM tree from the family-tree data and inject it into the modal.
+// Each node = a card with flag thumbnail + name + year. Children render in
+// a horizontal row beneath their parent, with CSS-drawn vertical/horizontal
+// connector lines.
 function showCivFamilyTree() {
   const { nodes, roots } = buildCivFamilyTree();
-  const seen = new Set();   // dedupe in case a civ has multiple parents (merges)
-  consoleEcho("=== Civilization Family Tree (" + nodes.size + " civs) ===", "info");
-  function fmtYear(y) {
-    if (y == null) return "";
-    return " (" + (y < 0 ? Math.abs(y) + " BC" : y + " AD") + ")";
-  }
-  function render(node, prefix, isLast) {
-    const connector = prefix === null ? "" : (isLast ? "└─ " : "├─ ");
-    const dup = seen.has(node.name) ? "  *" : "";
-    const extraParents = node.parents.length > 1
-      ? "  (also from " + node.parents.slice(1).map(p => p.name).join(", ") + ")"
-      : "";
-    const noteStr = node.note ? "  [" + node.note + "]" : "";
-    consoleEcho((prefix === null ? "" : prefix) + connector + node.name + fmtYear(node.year) + extraParents + noteStr + dup, "info");
-    if (seen.has(node.name)) return;   // don't re-expand merge duplicates
-    seen.add(node.name);
-    const childPrefix = prefix === null ? "" : prefix + (isLast ? "   " : "│  ");
-    for (let i = 0; i < node.children.length; i++) {
-      render(node.children[i], childPrefix, i === node.children.length - 1);
+  const scroll = document.getElementById("tree-scroll");
+  const modal = document.getElementById("tree-modal");
+  if (!scroll || !modal) return;
+  const seen = new Set();
+  function renderNode(node) {
+    const li = document.createElement("li");
+    li.className = "tree-node";
+    const wrap = document.createElement("div");
+    wrap.className = "tree-node-card-wrap";
+    const isDup = seen.has(node.name);
+    const card = document.createElement("div");
+    card.className = "tree-card" + (isDup ? " dup" : "");
+    const url = flagUrlForName(node.name);
+    if (url) {
+      const img = document.createElement("img");
+      img.className = "tree-flag";
+      img.src = url;
+      img.alt = "";
+      img.onerror = () => { img.style.display = "none"; };
+      card.appendChild(img);
+    } else {
+      // Procedural mini-flag fallback.
+      const c = document.createElement("canvas");
+      c.className = "tree-flag";
+      c.width = 48; c.height = 32;
+      try {
+        drawProceduralFlag(c, { id: 0, name: node.name, color: "#6b4f2c" });
+      } catch (e) {}
+      card.appendChild(c);
     }
+    const nm = document.createElement("div");
+    nm.className = "tree-name";
+    nm.textContent = node.name;
+    card.appendChild(nm);
+    if (node.year != null) {
+      const yr = document.createElement("div");
+      yr.className = "tree-year";
+      yr.textContent = fmtTreeYear(node.year);
+      card.appendChild(yr);
+    }
+    wrap.appendChild(card);
+    li.appendChild(wrap);
+    if (isDup) return li;
+    seen.add(node.name);
+    if (node.children.length > 0) {
+      wrap.classList.add("has-children");
+      const childUl = document.createElement("ul");
+      childUl.className = "tree-children" + (node.children.length > 1 ? " multi" : "");
+      for (const c of node.children) childUl.appendChild(renderNode(c));
+      li.appendChild(childUl);
+    }
+    return li;
   }
-  for (const root of roots) render(root, null, true);
-  consoleEcho("=== " + nodes.size + " civilizations total ===", "info");
+  scroll.innerHTML = "";
+  const ul = document.createElement("ul");
+  ul.className = "tree-root-list";
+  for (const root of roots) ul.appendChild(renderNode(root));
+  scroll.appendChild(ul);
+  modal.classList.add("open");
 }
+
+(function wireTreeModal() {
+  const close = document.getElementById("tree-close");
+  if (close) close.addEventListener("click", () => {
+    document.getElementById("tree-modal").classList.remove("open");
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      const m = document.getElementById("tree-modal");
+      if (m && m.classList.contains("open")) m.classList.remove("open");
+    }
+  });
+})();
 
 (function wireConsole() {
   const inp = document.getElementById("console-input");
