@@ -5044,12 +5044,23 @@ function buildCivFamilyTree() {
   // Pre-linking these BEFORE walking events ensures the override wins
   // (since link() only takes the first parent).
   const TREE_PARENT_OVERRIDES = {
+    // Baltic peoples (Latvians + Lithuanians)
     "Republic of Latvia": "Balts",
     "Livonian Order": "Balts",
-    // Republic of Lithuania descends from the medieval Grand Duchy of
-    // Lithuania - independence from the Russian Empire in 1918 is the
-    // event that re-creates it, but the lineage is GDL.
     "Republic of Lithuania": "Grand Duchy of Lithuania",
+    // Polish lineage continues independently of the Russian Empire that
+    // partitioned it. Polans -> Duchy -> Kingdom -> Commonwealth -> ... ->
+    // Republic of Poland.
+    "Republic of Poland": "Kingdom of Poland",
+    // East Slavs are the proto-Russian/Ukrainian/Belarusian people. Ukraine
+    // and Belarus descend from them, not from the Soviet Union that briefly
+    // absorbed them.
+    "Ukraine": "East Slavs",
+    "Belarus": "East Slavs",
+    // Estonia + Finland are Finnic peoples (NOT Balts). Finland already
+    // descends from Finns naturally; Estonia gets its proper ancestor here.
+    "Republic of Estonia": "Finns",
+    "Finland": "Finns",
   };
   for (const [child, parent] of Object.entries(TREE_PARENT_OVERRIDES)) {
     link(parent, child);
