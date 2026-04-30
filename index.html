@@ -616,65 +616,68 @@
     padding: 32px;
     background: radial-gradient(circle at 50% 0%, #1a1208 0%, #0a0604 100%);
   }
+  /* Classic CSS family-tree pattern. Each ul is a level of children. Each
+     li has top + bottom connector lines drawn via ::before / ::after that
+     auto-trim at first/last children to make junctions look right. */
   #tree-modal .tree-root-list, #tree-modal .tree-children {
     list-style: none;
-    padding: 0;
+    padding: 24px 0 0 0;
     margin: 0;
-    display: flex;
-    flex-direction: row;
-    gap: 24px;
-    justify-content: flex-start;
-    align-items: flex-start;
+    text-align: center;
     position: relative;
+    white-space: nowrap;
   }
-  #tree-modal .tree-root-list { gap: 60px; padding-bottom: 20px; }
+  #tree-modal .tree-root-list { padding-top: 0; }
   #tree-modal .tree-node {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+    display: inline-block;
+    vertical-align: top;
+    padding: 0 12px;
     position: relative;
   }
-  /* Vertical line above each node connecting to parent. */
-  #tree-modal .tree-children > .tree-node::before {
+  /* ---- horizontal lines above siblings ---- */
+  #tree-modal .tree-node::before,
+  #tree-modal .tree-node::after {
     content: "";
     position: absolute;
-    top: -20px;
+    top: 0;
+    height: 24px;
+    border-top: 2px solid #6b4f2c;
+  }
+  #tree-modal .tree-node::before { left: 0; right: 50%; }
+  #tree-modal .tree-node::after  { left: 50%; right: 0; border-left: 2px solid #6b4f2c; }
+  /* Trim corners at first/last child so the horizontal line doesn't
+     extend past the outermost siblings. */
+  #tree-modal .tree-node:first-child::before { border-top: 0; }
+  #tree-modal .tree-node:last-child::after   { border-top: 0; }
+  #tree-modal .tree-node:last-child::before  { border-right: 2px solid #6b4f2c; border-radius: 0; }
+  /* Single child: drop the horizontal lines, keep just the vertical. */
+  #tree-modal .tree-node:only-child::before,
+  #tree-modal .tree-node:only-child::after { display: none; }
+  #tree-modal .tree-node:only-child > .tree-node-card-wrap::before {
+    content: "";
+    position: absolute;
+    top: -24px;
     left: 50%;
     width: 2px;
-    height: 20px;
+    height: 24px;
     background: #6b4f2c;
     transform: translateX(-1px);
   }
-  /* Horizontal line above each child group spanning all siblings. */
-  #tree-modal .tree-children::before {
-    content: "";
-    position: absolute;
-    top: -20px;
-    left: 50%;
-    right: 50%;
-    height: 2px;
-    background: transparent;
-  }
-  #tree-modal .tree-children.multi::before {
-    left: var(--first-mid, 0);
-    right: var(--last-mid, 0);
-    background: #6b4f2c;
-    width: auto;
-  }
-  /* Vertical stub from parent down to the horizontal connector. */
+  /* Roots have no parent, so suppress all top-connectors on the root list. */
+  #tree-modal .tree-root-list > .tree-node::before,
+  #tree-modal .tree-root-list > .tree-node::after { display: none; }
+  /* ---- vertical stub from each parent down to its children's horizontal bar ---- */
   #tree-modal .tree-node-card-wrap {
+    display: inline-block;
     position: relative;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
   }
   #tree-modal .tree-node-card-wrap.has-children::after {
     content: "";
     position: absolute;
-    bottom: -20px;
     left: 50%;
+    bottom: -24px;
     width: 2px;
-    height: 20px;
+    height: 24px;
     background: #6b4f2c;
     transform: translateX(-1px);
   }
