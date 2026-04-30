@@ -5046,6 +5046,10 @@ function buildCivFamilyTree() {
   const TREE_PARENT_OVERRIDES = {
     "Republic of Latvia": "Balts",
     "Livonian Order": "Balts",
+    // Republic of Lithuania descends from the medieval Grand Duchy of
+    // Lithuania - independence from the Russian Empire in 1918 is the
+    // event that re-creates it, but the lineage is GDL.
+    "Republic of Lithuania": "Grand Duchy of Lithuania",
   };
   for (const [child, parent] of Object.entries(TREE_PARENT_OVERRIDES)) {
     link(parent, child);
