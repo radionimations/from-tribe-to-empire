@@ -2838,13 +2838,19 @@ function tryMoveOrAttack(army, toC, toR) {
     army.moves = 0;   // burn the move so we don't loop forever
     return false;
   }
-  // PLAYER ATTACK GUARD: the only way to invade is to formally declare war.
-  // We use an explicit `state.playerWars` set populated by the Declare War
-  // button - relation drift from combat doesn't unlock invasions, only the
-  // formal declaration does.
-  if (civ && civ.isPlayer && (!state.playerWars || !state.playerWars.has(owner))) {
-    army.moves = 0;
-    return false;
+  // PLAYER ATTACK GUARD: the player can invade if EITHER:
+  //   - they explicitly declared war (state.playerWars set), OR
+  //   - relations are <= -50 (covers historical war events AND wars the
+  //     enemy declared ON the player). Without this second branch, an AI
+  //     could declare war on you and you couldn't retaliate.
+  if (civ && civ.isPlayer) {
+    const formallyDeclared = state.playerWars && state.playerWars.has(owner);
+    const rel = civ.relations[owner] || 0;
+    const atWar = formallyDeclared || rel <= -50;
+    if (!atWar) {
+      army.moves = 0;
+      return false;
+    }
   }
   // Enemy tile - combat (always ends the unit's turn).
   resolveCombat(army, toC, toR);
@@ -5780,17 +5786,31 @@ function showCountryPanel(civ) {
   const customBtn = document.getElementById("cp-customize-btn");
   if (customBtn) customBtn.style.display = civ.isPlayer ? "" : "none";
 
-  // Declare War button - only when looking at OTHER civ panels. If already
-  // at war (rel <= -50) we show the AT WAR banner instead.
+  // Declare War + Form Alliance buttons - only when looking at OTHER civ
+  // panels. If already at war/allied we show a banner instead of the button.
   const warBtn = document.getElementById("cp-declare-war-btn");
   const warBanner = document.getElementById("cp-war-state");
+  const allyBtn = document.getElementById("cp-ally-btn");
+  const allyBanner = document.getElementById("cp-ally-state");
   const player = state.civs[0];
-  if (warBtn && warBanner && player && player.isPlayer) {
+  if (warBtn && warBanner && allyBtn && allyBanner && player && player.isPlayer) {
     if (civ.isPlayer || !civ.alive) {
       warBtn.style.display = "none";
       warBanner.style.display = "none";
+      allyBtn.style.display = "none";
+      allyBanner.style.display = "none";
     } else {
       const rel = player.relations[civ.id] || 0;
+      // Allied state (rel >= 80)
+      if (rel >= 80) {
+        allyBtn.style.display = "none";
+        allyBanner.style.display = "";
+      } else {
+        allyBtn.style.display = "";
+        allyBanner.style.display = "none";
+        allyBtn.dataset.civId = civ.id;
+      }
+      // War state (rel <= -50)
       if (rel <= -50) {
         warBtn.style.display = "none";
         warBanner.style.display = "";
