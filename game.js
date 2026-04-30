@@ -5036,6 +5036,20 @@ function buildCivFamilyTree() {
   if (typeof HISTORICAL_CIVS !== "undefined") {
     for (const t of HISTORICAL_CIVS) ensure(t.name, -1000, "starting tribe");
   }
+  // Tree-shape overrides: civs whose natural event-derived parent doesn't
+  // match the cultural/ethnic lineage. e.g. Republic of Latvia gains
+  // independence from the Russian Empire (1918), but Latvians ARE Balts -
+  // they should sit in the Balt branch, not under Russia. Same for the
+  // Livonian Order's Latvian-speaking territory.
+  // Pre-linking these BEFORE walking events ensures the override wins
+  // (since link() only takes the first parent).
+  const TREE_PARENT_OVERRIDES = {
+    "Republic of Latvia": "Balts",
+    "Livonian Order": "Balts",
+  };
+  for (const [child, parent] of Object.entries(TREE_PARENT_OVERRIDES)) {
+    link(parent, child);
+  }
   // Walk every event in chronological order.
   if (typeof HISTORICAL_EVENTS !== "undefined") {
     const sorted = HISTORICAL_EVENTS.slice().sort((a, b) => a.year - b.year);
