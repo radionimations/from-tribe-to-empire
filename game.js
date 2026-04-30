@@ -4713,6 +4713,260 @@ canvas.addEventListener("mousemove", (e) => {
 });
 canvas.addEventListener("mouseleave", () => { tooltip.style.display = "none"; });
 
+// =================== CONSOLE PANEL ===================
+// HOI4-style console. Toggle with `~` or `§`. Commands:
+//   help                 list commands
+//   tag <civ name>       switch to playing as that civ
+//   annex <civ name>     player civ absorbs target
+//   kill <civ name>      destroy target outright
+//   add_war <civ name>   declare war on target
+//   peace <civ name>     reset relations to zero with target
+//   gold N (placeholder, no economy yet)
+//   year                 print current year
+const CONSOLE_HISTORY = [];
+let consoleHistoryIdx = -1;
+
+function consoleEcho(text, kind) {
+  const out = document.getElementById("console-output");
+  if (!out) return;
+  const div = document.createElement("div");
+  if (kind) div.className = kind;
+  div.textContent = text;
+  out.appendChild(div);
+  out.scrollTop = out.scrollHeight;
+}
+
+function toggleConsole() {
+  const panel = document.getElementById("console-panel");
+  if (!panel) return;
+  const opened = !panel.classList.contains("open");
+  panel.classList.toggle("open", opened);
+  if (opened) {
+    const inp = document.getElementById("console-input");
+    setTimeout(() => inp && inp.focus(), 0);
+  }
+}
+
+// Drag-to-move on the console header. Once the user drags, the panel sticks
+// to its dropped position (the centering transform stops applying).
+(function wireConsoleDrag() {
+  const panel = document.getElementById("console-panel");
+  if (!panel) return;
+  const header = panel.querySelector(".console-header");
+  if (!header) return;
+  let dragging = false;
+  let offsetX = 0, offsetY = 0;
+  header.addEventListener("mousedown", (e) => {
+    dragging = true;
+    const rect = panel.getBoundingClientRect();
+    offsetX = e.clientX - rect.left;
+    offsetY = e.clientY - rect.top;
+    // Switch to explicit positioning the first time we drag.
+    panel.classList.add("dragged");
+    panel.style.left = rect.left + "px";
+    panel.style.top  = rect.top  + "px";
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const x = Math.max(0, Math.min(window.innerWidth  - 40, e.clientX - offsetX));
+    const y = Math.max(0, Math.min(window.innerHeight - 40, e.clientY - offsetY));
+    panel.style.left = x + "px";
+    panel.style.top  = y + "px";
+  });
+  document.addEventListener("mouseup", () => { dragging = false; });
+})();
+
+// Resolve a civ by name (case-insensitive, allows partial matches if unique).
+function consoleFindCiv(query) {
+  if (!query) return null;
+  const q = query.trim().toLowerCase();
+  // Exact (case-insensitive) match first.
+  let exact = state.civs.filter(c => c.alive && c.name.toLowerCase() === q);
+  if (exact.length === 1) return exact[0];
+  // Prefix / substring match if exactly one hit.
+  const partial = state.civs.filter(c => c.alive && c.name.toLowerCase().includes(q));
+  if (partial.length === 1) return partial[0];
+  if (partial.length === 0) return null;
+  // Multiple matches - tell the caller (returns array).
+  return partial;
+}
+
+function runConsoleCommand(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return;
+  consoleEcho("> " + trimmed, "echo");
+  CONSOLE_HISTORY.push(trimmed);
+  consoleHistoryIdx = CONSOLE_HISTORY.length;
+  const parts = trimmed.split(/\s+/);
+  const cmd = parts[0].toLowerCase();
+  const arg = trimmed.slice(parts[0].length).trim();
+
+  if (cmd === "help") {
+    consoleEcho("commands:", "info");
+    consoleEcho("  help                       list commands", "info");
+    consoleEcho("  tag <civ name>             switch to playing as that civ (no rename)", "info");
+    consoleEcho("  annex <civ name>           your civ absorbs target's territory + cities", "info");
+    consoleEcho("  kill <civ name>            destroy target outright (territory becomes neutral)", "info");
+    consoleEcho("  add_war <civ name>         declare war on target", "info");
+    consoleEcho("  peace <civ name>           reset relations to zero with target", "info");
+    consoleEcho("  year                       print current year", "info");
+    consoleEcho("  list                       list all alive civs", "info");
+    return;
+  }
+
+  if (cmd === "year") {
+    consoleEcho("year " + state.year, "ok");
+    return;
+  }
+
+  if (cmd === "list") {
+    const alive = state.civs.filter(c => c.alive).sort((a, b) => a.name.localeCompare(b.name));
+    consoleEcho(alive.length + " civs alive:", "info");
+    for (const c of alive) consoleEcho("  " + c.name + (c.isPlayer ? "  [PLAYER]" : ""), "info");
+    return;
+  }
+
+  if (cmd === "tag" || cmd === "annex" || cmd === "kill" || cmd === "add_war" || cmd === "peace") {
+    if (!arg) { consoleEcho("usage: " + cmd + " <civ name>", "err"); return; }
+    const result = consoleFindCiv(arg);
+    if (!result) { consoleEcho("no civ matches: " + arg, "err"); return; }
+    if (Array.isArray(result)) {
+      consoleEcho("ambiguous - " + result.length + " matches:", "err");
+      for (const c of result.slice(0, 10)) consoleEcho("  " + c.name, "err");
+      return;
+    }
+    const target = result;
+    const player = state.civs[0];
+
+    if (cmd === "tag") {
+      if (target === player) { consoleEcho("already playing as " + target.name, "err"); return; }
+      if (player) player.isPlayer = false;
+      target.isPlayer = true;
+      // Move target to index 0 since lots of code assumes player is state.civs[0].
+      const idx = state.civs.indexOf(target);
+      if (idx > 0) {
+        state.civs.splice(idx, 1);
+        state.civs.unshift(target);
+      }
+      // Clear war-focus targeting on the old player (no longer relevant).
+      state.warFocus = state.warFocus || {};
+      // Reset playerWars - the new player starts fresh on war declarations.
+      state.playerWars = new Set();
+      consoleEcho("now playing as " + target.name, "ok");
+      invalidateTintCache();
+      updateUI();
+      render();
+      return;
+    }
+
+    if (cmd === "annex") {
+      if (!player) { consoleEcho("no player civ", "err"); return; }
+      if (target === player) { consoleEcho("can't annex yourself", "err"); return; }
+      // Reuse the absorb event handler logic.
+      fireEvent({ type: "absorb", absorber: player.name, target: target.name, message: player.name + " annexes " + target.name });
+      consoleEcho("annexed " + target.name, "ok");
+      return;
+    }
+
+    if (cmd === "kill") {
+      // Force the target to die without an absorber - territory goes to no-man's land via the standard handler.
+      fireEvent({ type: "absorb", target: target.name, message: target.name + " is wiped from the map" });
+      consoleEcho("killed " + target.name, "ok");
+      return;
+    }
+
+    if (cmd === "add_war") {
+      if (!player) { consoleEcho("no player civ", "err"); return; }
+      if (target === player) { consoleEcho("can't declare war on yourself", "err"); return; }
+      player.relations[target.id] = -100;
+      target.relations[player.id] = -100;
+      state.warFocus = state.warFocus || {};
+      state.warFocus[target.id] = player.id;
+      state.playerWars = state.playerWars || new Set();
+      state.playerWars.add(target.id);
+      log("war", player.name + " declares war on " + target.name + "!");
+      try { showWarPopup(player, target); } catch (e) {}
+      consoleEcho("at war with " + target.name, "ok");
+      return;
+    }
+
+    if (cmd === "peace") {
+      if (!player) { consoleEcho("no player civ", "err"); return; }
+      player.relations[target.id] = 0;
+      target.relations[player.id] = 0;
+      if (state.warFocus) delete state.warFocus[target.id];
+      if (state.playerWars) state.playerWars.delete(target.id);
+      consoleEcho("peace with " + target.name, "ok");
+      return;
+    }
+  }
+
+  consoleEcho("unknown command: " + cmd + " (try 'help')", "err");
+}
+
+(function wireConsole() {
+  const inp = document.getElementById("console-input");
+  if (!inp) return;
+  inp.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      runConsoleCommand(inp.value);
+      inp.value = "";
+      e.preventDefault();
+    } else if (e.key === "Escape" || e.key === "`" || e.key === "~" || e.key === "§") {
+      toggleConsole();
+      e.preventDefault();
+    } else if (e.key === "ArrowUp") {
+      if (CONSOLE_HISTORY.length === 0) return;
+      consoleHistoryIdx = Math.max(0, consoleHistoryIdx - 1);
+      inp.value = CONSOLE_HISTORY[consoleHistoryIdx] || "";
+      e.preventDefault();
+    } else if (e.key === "ArrowDown") {
+      if (CONSOLE_HISTORY.length === 0) return;
+      consoleHistoryIdx = Math.min(CONSOLE_HISTORY.length, consoleHistoryIdx + 1);
+      inp.value = CONSOLE_HISTORY[consoleHistoryIdx] || "";
+      e.preventDefault();
+    }
+  });
+})();
+
+// Multiple ways to open the console - whichever your keyboard / browser /
+// game state allows.
+//   1. Type "admin" (last-5-char buffer, capture phase, document-wide)
+//   2. F1 key
+//   3. window.openConsole() from DevTools
+//   4. Click the version tag in the bottom-left corner
+function openConsolePanel() {
+  const panel = document.getElementById("console-panel");
+  if (panel && !panel.classList.contains("open")) toggleConsole();
+}
+window.openConsole = openConsolePanel;
+
+let consoleUnlockBuf = "";
+function _consoleAdminKey(e) {
+  if (!e.key || e.key.length !== 1) return;
+  consoleUnlockBuf = (consoleUnlockBuf + e.key.toLowerCase()).slice(-5);
+  if (consoleUnlockBuf === "admin") {
+    consoleUnlockBuf = "";
+    openConsolePanel();
+  }
+}
+document.addEventListener("keydown", _consoleAdminKey, true);
+window.addEventListener("keydown", _consoleAdminKey, true);
+// Also F1.
+document.addEventListener("keydown", (e) => {
+  if (e.key === "F1") { openConsolePanel(); e.preventDefault(); }
+});
+// Click the version tag to open. (Tag is in the bottom-left corner.)
+(function wireVersionTagAdminClick() {
+  const tag = document.getElementById("version-tag");
+  if (!tag) return;
+  tag.style.pointerEvents = "auto";
+  tag.style.cursor = "pointer";
+  tag.title = "Click to open admin console";
+  tag.addEventListener("click", openConsolePanel);
+})();
+
 // DEBUG mode: type "DEBUG" while on splash
 let debugBuffer = "";
 document.addEventListener("keydown", (e) => {
@@ -5886,8 +6140,16 @@ function saveCustomization() {
   civ.name = tpl.prefix + middle + tpl.suffix;
   civ.customLeaderName = (document.getElementById("cm-leader-name").value || "").trim() || null;
   civ.customLeaderImg  = _cmDraft.portraitSrc || null;
+  const flagChanged = (civ.customFlag || null) !== (_cmDraft.flagSrc || null);
   civ.customFlag       = _cmDraft.flagSrc || null;
   civ.customFlagTag    = _cmDraft.flagTag || null;
+  // If the flag changed, re-derive the territory color from its average.
+  // applyFlagColor() short-circuits when _flagColorApplied is true, so we
+  // clear the flag here to force a fresh sample.
+  if (flagChanged) {
+    civ._flagColorApplied = false;
+    applyFlagColor(civ);
+  }
   closeCustomizeModal();
   showCountryPanel(civ);   // refresh
   updateUI();

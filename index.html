@@ -578,6 +578,73 @@
     0%   { opacity: 0; transform: translateX(80px); }
     100% { opacity: 1; transform: translateX(0); }
   }
+  /* HOI4-style console panel - opened by typing "admin". Spawns centered,
+     drag the header to move it. */
+  #console-panel {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 480px;
+    max-height: 320px;
+    background: rgba(8, 5, 2, 0.95);
+    border: 1px solid #6b4f2c;
+    border-radius: 4px;
+    color: #d4d0c0;
+    font-family: "Menlo", monospace;
+    font-size: 12px;
+    z-index: 240;
+    display: none;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.7);
+  }
+  #console-panel.open { display: flex; flex-direction: column; }
+  /* When the user has dragged the panel, JS sets explicit top/left and
+     adds the .dragged class so the centering transform stops applying. */
+  #console-panel.dragged { transform: none; }
+  #console-panel .console-header {
+    background: linear-gradient(180deg, #2a1a10, #1a1208);
+    color: #d4a657;
+    padding: 6px 10px;
+    border-bottom: 1px solid #4a3520;
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    cursor: move;
+    user-select: none;
+  }
+  #console-panel .console-output {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 10px;
+    line-height: 1.55;
+    min-height: 80px;
+    max-height: 220px;
+  }
+  #console-panel .console-output .echo { color: #8aa8d8; }
+  #console-panel .console-output .err  { color: #ff6464; }
+  #console-panel .console-output .ok   { color: #6acf6a; }
+  #console-panel .console-output .info { color: #d4a657; }
+  #console-panel .console-input-row {
+    display: flex;
+    align-items: center;
+    border-top: 1px solid #4a3520;
+    padding: 4px 10px;
+    background: rgba(0,0,0,0.4);
+  }
+  #console-panel .console-input-row .prompt {
+    color: #d4a657;
+    margin-right: 6px;
+    font-weight: bold;
+  }
+  #console-panel input.console-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: #d4d0c0;
+    font-family: "Menlo", monospace;
+    font-size: 12px;
+    outline: none;
+  }
   #move-mode-banner {
     position: absolute;
     top: 12px;
@@ -879,6 +946,14 @@
 </div>
 <div id="version-tag">v0.1.0</div>
 <div id="war-popup-stack"></div>
+<div id="console-panel">
+  <div class="console-header">~ CONSOLE - type "help" for commands</div>
+  <div class="console-output" id="console-output"></div>
+  <div class="console-input-row">
+    <span class="prompt">&gt;</span>
+    <input type="text" class="console-input" id="console-input" autocomplete="off" spellcheck="false" />
+  </div>
+</div>
 <div id="move-mode-banner" style="display:none;"></div>
 <div id="city-tooltip" style="display:none;"></div>
 <div id="province-status">
