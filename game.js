@@ -5138,29 +5138,36 @@ function showCivFamilyTree() {
   const modal = document.getElementById("tree-modal");
   if (!scroll || !modal) return;
   const seen = new Set();
-  // Mark each node as "extinct" if no living civ in its subtree exists.
-  // A node is alive if state.civs has any alive civ with its name. A node
-  // is extinct iff: no civ with that name is alive AND every child is also
-  // extinct. So a tribe whose entire lineage was wiped out (e.g. East Slavs
-  // killed via console) gets X'd along with all its (never-to-appear)
-  // descendants.
+  // Status marking:
+  //   alive   - civ is in state.civs and alive (or any descendant is)
+  //   future  - civ's spawn year hasn't been reached yet AND no descendant
+  //             is alive yet. Could still appear -> gray, no X.
+  //   extinct - past-year and nothing in the subtree is alive. Lineage is
+  //             gone for good -> X stamp.
   const aliveNames = new Set();
   for (const c of state.civs) if (c.alive) aliveNames.add(c.name);
-  function markExtinction(node, visiting) {
-    if (node._extinctionDone) return node._extinct;
-    if (visiting.has(node)) return false;   // cycle guard
+  function markStatus(node, visiting) {
+    if (node._statusDone) return node._status;
+    if (visiting.has(node)) return "alive";   // cycle guard
     visiting.add(node);
     const selfAlive = aliveNames.has(node.name);
     let anyChildAlive = false;
     for (const ch of node.children) {
-      if (!markExtinction(ch, visiting)) anyChildAlive = true;
+      if (markStatus(ch, visiting) === "alive") anyChildAlive = true;
     }
     visiting.delete(node);
-    node._extinct = !selfAlive && !anyChildAlive;
-    node._extinctionDone = true;
-    return node._extinct;
+    if (selfAlive || anyChildAlive) {
+      node._status = "alive";
+    } else if (node.year != null && node.year > state.year) {
+      // Hasn't appeared yet - it's in the future.
+      node._status = "future";
+    } else {
+      node._status = "extinct";
+    }
+    node._statusDone = true;
+    return node._status;
   }
-  for (const root of roots) markExtinction(root, new Set());
+  for (const root of roots) markStatus(root, new Set());
   function renderNode(node) {
     const li = document.createElement("li");
     li.className = "tree-node";
@@ -5168,7 +5175,10 @@ function showCivFamilyTree() {
     wrap.className = "tree-node-card-wrap";
     const isDup = seen.has(node.name);
     const card = document.createElement("div");
-    card.className = "tree-card" + (isDup ? " dup" : "") + (node._extinct ? " extinct" : "");
+    let cls = "tree-card" + (isDup ? " dup" : "");
+    if (node._status === "extinct") cls += " extinct";
+    else if (node._status === "future") cls += " future";
+    card.className = cls;
     const url = flagUrlForName(node.name);
     if (url) {
       const img = document.createElement("img");
@@ -5197,7 +5207,7 @@ function showCivFamilyTree() {
       yr.textContent = fmtTreeYear(node.year);
       card.appendChild(yr);
     }
-    if (node._extinct) {
+    if (node._status === "extinct") {
       const x = document.createElement("div");
       x.className = "tree-extinct-mark";
       x.textContent = "✕";

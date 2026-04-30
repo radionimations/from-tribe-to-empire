@@ -713,6 +713,14 @@
     letter-spacing: 0.3px;
   }
   #tree-modal .tree-card.dup { opacity: 0.55; border-style: dashed; }
+  /* Future civ: hasn't appeared yet but its lineage is intact - it COULD
+     still spawn when the game reaches its year. Just greyed, no ✕. */
+  #tree-modal .tree-card.future {
+    opacity: 0.55;
+    filter: grayscale(0.6);
+    border-style: dashed;
+  }
+  #tree-modal .tree-card.future .tree-name { color: #a89678; }
   /* Extinct lineage: civ + descendants will never appear (e.g. tribe was
      killed before its children could spawn). Greyed, with a red ✕ stamp. */
   #tree-modal .tree-card.extinct {
