@@ -1,0 +1,28 @@
+# Huge HOI4 install dump - ~7.7GB, only needed by build_*.py preprocessors,
+# never read at runtime. Don't ship it to GitHub.
+Hearts of Iron IV/
+
+# 34MB BMP - the runtime uses the preprocessed hoi4_province_ids.png (~500KB)
+# instead, with the BMP only as a fallback. We can't ship the BMP via Pages
+# anyway (tens of MB feels wrong for a static site).
+map/provinces.bmp
+
+# HOI4 cities.bmp / terrain heightmaps - massive and unused at runtime.
+map/cities.bmp
+map/heightmap.bmp
+map/terrain.bmp
+map/rivers.bmp
+map/trees.bmp
+map/world_normal.bmp
+
+# Other large preprocessor inputs the runtime doesn't need.
+GDLstates/
+worldmap_hi.jpg
+
+# Server logs / OS detritus.
+.DS_Store
+*.log
+
+# Python preprocessor caches.
+__pycache__/
+*.pyc

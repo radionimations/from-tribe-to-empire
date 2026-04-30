@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>From Tribe to Empire</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Trajan Pro', 'Cinzel', 'Georgia', serif;
+    background: #0a0a0f;
+    color: #e8e2d0;
+    overflow: hidden;
+    height: 100vh;
+    user-select: none;
+  }
+  #game {
+    display: flex;
+    height: 100vh;
+  }
+  #map-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background: #04060d;
+  }
+  #map {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    cursor: crosshair;
+    display: block;
+  }
+  #overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    image-rendering: pixelated;
+  }
+  #sidebar {
+    width: 340px;
+    background: linear-gradient(180deg, #1a1410, #0f0a08);
+    border-left: 2px solid #6b4f2c;
+    padding: 16px;
+    overflow-y: auto;
+    box-shadow: -4px 0 12px rgba(0,0,0,0.6);
+  }
+  h1 {
+    font-size: 22px;
+    color: #d4a657;
+    text-align: center;
+    letter-spacing: 2px;
+    text-shadow: 0 1px 2px #000;
+    margin-bottom: 4px;
+  }
+  .subtitle {
+    text-align: center;
+    color: #8a7a5c;
+    font-size: 11px;
+    letter-spacing: 3px;
+    margin-bottom: 10px;
+  }
+  hr {
+    border: none;
+    border-top: 1px solid #4a3520;
+    margin: 10px 0;
+  }
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+    font-size: 13px;
+  }
+  .stat-label { color: #a89678; }
+  .stat-val { color: #e8e2d0; font-weight: bold; }
+  .era-badge {
+    background: linear-gradient(90deg, #6b4f2c, #8a6a3c);
+    color: #fff;
+    padding: 4px 8px;
+    border-radius: 3px;
+    text-align: center;
+    font-size: 12px;
+    letter-spacing: 1px;
+    margin: 4px 0;
+  }
+  .year-display {
+    text-align: center;
+    font-size: 24px;
+    color: #d4a657;
+    font-weight: bold;
+    text-shadow: 0 0 8px rgba(212, 166, 87, 0.4);
+  }
+  button {
+    background: linear-gradient(180deg, #6b4f2c, #4a3520);
+    color: #f0e6cc;
+    border: 1px solid #8a6a3c;
+    padding: 8px 12px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    letter-spacing: 1px;
+    border-radius: 3px;
+    width: 100%;
+    margin: 3px 0;
+    transition: all 0.15s;
+  }
+  button:hover:not(:disabled) {
+    background: linear-gradient(180deg, #8a6a3c, #6b4f2c);
+    box-shadow: 0 0 6px rgba(212, 166, 87, 0.4);
+  }
+  button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  button.primary {
+    background: linear-gradient(180deg, #b8893a, #8a5a20);
+    border-color: #d4a657;
+    font-weight: bold;
+    font-size: 14px;
+    padding: 12px;
+  }
+  button.primary:hover {
+    background: linear-gradient(180deg, #d4a657, #b8893a);
+  }
+  button.danger {
+    background: linear-gradient(180deg, #6b2c2c, #4a2020);
+    border-color: #8a3c3c;
+  }
+  .tile-info {
+    background: rgba(0,0,0,0.4);
+    padding: 8px;
+    border-radius: 3px;
+    border-left: 3px solid #6b4f2c;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .civ-list {
+    max-height: 180px;
+    overflow-y: auto;
+  }
+  .civ-row {
+    display: flex;
+    align-items: center;
+    padding: 4px 6px;
+    margin: 2px 0;
+    background: rgba(0,0,0,0.3);
+    border-radius: 3px;
+    font-size: 12px;
+  }
+  .civ-color {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    margin-right: 8px;
+    border: 1px solid #000;
+  }
+  .civ-name { flex: 1; }
+  .civ-meta { color: #8a7a5c; font-size: 10px; }
+  .log {
+    max-height: 140px;
+    overflow-y: auto;
+    background: rgba(0,0,0,0.4);
+    padding: 6px;
+    font-size: 11px;
+    border-radius: 3px;
+    line-height: 1.4;
+  }
+  .log-entry {
+    padding: 2px 0;
+    border-bottom: 1px solid rgba(106, 79, 44, 0.2);
+  }
+  .log-entry.war { color: #e88a4a; }
+  .log-entry.peace { color: #6acf6a; }
+  .log-entry.event { color: #d4a657; }
+  .log-entry.death { color: #c46060; }
+  #splash {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(8, 5, 2, 0.82);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    text-align: center;
+    pointer-events: none;
+  }
+  #splash h2 {
+    font-size: 48px;
+    color: #d4a657;
+    letter-spacing: 6px;
+    margin-bottom: 16px;
+    text-shadow: 0 0 30px rgba(212, 166, 87, 0.5);
+  }
+  #splash p {
+    font-size: 16px;
+    color: #a89678;
+    margin: 6px 0;
+    max-width: 600px;
+  }
+  #splash .hint {
+    margin-top: 30px;
+    color: #d4a657;
+    font-size: 14px;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+  .action-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  .action-btns button { margin: 0; }
+  .build-queue {
+    background: rgba(0,0,0,0.4);
+    padding: 6px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    margin: 4px 0;
+  }
+  .progress-bar {
+    height: 4px;
+    background: #2a1a10;
+    border-radius: 2px;
+    margin-top: 3px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #b8893a, #d4a657);
+    transition: width 0.3s;
+  }
+  #province-status {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(8, 5, 2, 0.92);
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #f0e6cc;
+    font-family: Georgia, serif;
+  }
+  #province-status.hidden { display: none; }
+  #province-status.failed .ps-card { border-color: #c44; box-shadow: 0 0 24px rgba(196, 64, 64, 0.5); }
+  #province-status.failed .ps-spinner { display: none; }
+  #province-status.failed .ps-title { color: #ff6464; }
+  #province-status .ps-card {
+    background: linear-gradient(180deg, #1a1410, #0a0604);
+    border: 2px solid #6b4f2c;
+    border-radius: 6px;
+    padding: 32px 40px;
+    text-align: center;
+    max-width: 540px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.7);
+  }
+  #province-status .ps-spinner {
+    width: 48px;
+    height: 48px;
+    margin: 0 auto 18px;
+    border: 4px solid #6b4f2c;
+    border-top-color: #d4a657;
+    border-radius: 50%;
+    animation: ps-spin 0.9s linear infinite;
+  }
+  @keyframes ps-spin { to { transform: rotate(360deg); } }
+  #province-status .ps-title {
+    font-size: 18px;
+    color: #d4a657;
+    letter-spacing: 1px;
+    margin-bottom: 10px;
+  }
+  #province-status .ps-detail {
+    font-size: 13px;
+    color: #a89678;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    text-align: left;
+    background: rgba(0,0,0,0.4);
+    padding: 10px 14px;
+    border-radius: 3px;
+    border-left: 3px solid #6b4f2c;
+  }
+  #province-status.failed .ps-detail {
+    border-left-color: #c44;
+    color: #f0a0a0;
+    font-family: monospace;
+  }
+  #province-status .ps-version {
+    margin-top: 16px;
+    font-size: 11px;
+    color: #6b5a40;
+    font-family: Georgia, serif;
+    letter-spacing: 0.5px;
+    user-select: none;
+  }
+  /* Customize modal */
+  #customize-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(8, 5, 2, 0.85);
+    z-index: 250;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #f0e6cc;
+  }
+  #customize-modal.hidden { display: none; }
+  #customize-modal .cm-card {
+    background: linear-gradient(180deg, #1a1410, #0a0604);
+    border: 2px solid #6b4f2c;
+    border-radius: 6px;
+    padding: 20px 26px;
+    width: 520px;
+    max-height: 85vh;
+    overflow-y: auto;
+    position: relative;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.7);
+  }
+  #customize-modal h2 {
+    color: #d4a657;
+    text-align: center;
+    letter-spacing: 2px;
+    font-size: 18px;
+    margin-bottom: 14px;
+  }
+  #customize-modal .cm-section {
+    margin: 14px 0;
+    padding-top: 10px;
+    border-top: 1px solid #4a3520;
+  }
+  #customize-modal .cm-label {
+    display: block;
+    color: #a89678;
+    font-size: 11px;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+  }
+  #customize-modal input[type="text"] {
+    width: 100%;
+    background: rgba(0,0,0,0.5);
+    border: 1px solid #4a3520;
+    color: #f0e6cc;
+    padding: 7px 10px;
+    font-family: Georgia, serif;
+    font-size: 13px;
+    border-radius: 3px;
+    box-sizing: border-box;
+  }
+  #customize-modal input[type="text"]:focus {
+    outline: none;
+    border-color: #d4a657;
+  }
+  #customize-modal .cm-name-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  #customize-modal .cm-name-prefix,
+  #customize-modal .cm-name-suffix {
+    color: #d4a657;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  #customize-modal .cm-hint {
+    color: #6b5a40;
+    font-size: 11px;
+    font-style: italic;
+    margin-top: 4px;
+  }
+  #customize-modal .cm-current-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  #customize-modal .cm-current-row img {
+    width: 56px;
+    height: 56px;
+    object-fit: cover;
+    border: 1px solid #4a3520;
+    border-radius: 3px;
+    background: rgba(0,0,0,0.5);
+  }
+  #customize-modal .cm-current-label {
+    font-size: 12px;
+    color: #a89678;
+    flex: 1;
+  }
+  #customize-modal .cm-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+    gap: 4px;
+    max-height: 180px;
+    overflow-y: auto;
+    background: rgba(0,0,0,0.4);
+    padding: 6px;
+    border-radius: 3px;
+    border: 1px solid #4a3520;
+    margin-top: 6px;
+  }
+  #customize-modal .cm-grid-item {
+    aspect-ratio: 1 / 1;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    cursor: pointer;
+    overflow: hidden;
+    background: #2a1a10;
+    position: relative;
+  }
+  #customize-modal .cm-grid-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  #customize-modal .cm-grid-item:hover {
+    border-color: #d4a657;
+  }
+  #customize-modal .cm-grid-item.selected {
+    border-color: #d4a657;
+    box-shadow: 0 0 8px rgba(212, 166, 87, 0.6);
+  }
+  #customize-modal .cm-grid-item .cm-tag-label {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: rgba(0,0,0,0.75);
+    color: #d4a657;
+    font-size: 9px;
+    text-align: center;
+    padding: 1px 0;
+    letter-spacing: 0.5px;
+  }
+  #customize-modal .cm-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid #4a3520;
+  }
+  #customize-modal .cm-actions button { flex: 1; margin: 0; }
+  #customize-modal .cm-upload-row {
+    display: flex;
+    gap: 6px;
+    margin: 4px 0 8px 0;
+  }
+  #customize-modal .cm-upload-btn {
+    flex: 1;
+    text-align: center;
+    background: linear-gradient(180deg, #6b4f2c, #4a3520);
+    color: #f0e6cc;
+    border: 1px solid #8a6a3c;
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 11px;
+    letter-spacing: 1px;
+    border-radius: 3px;
+    font-family: inherit;
+    text-transform: uppercase;
+    transition: all 0.15s;
+  }
+  #customize-modal .cm-upload-btn:hover {
+    background: linear-gradient(180deg, #8a6a3c, #6b4f2c);
+    box-shadow: 0 0 6px rgba(212, 166, 87, 0.4);
+  }
+  #customize-modal .cm-clear-btn {
+    width: auto !important;
+    margin: 0 !important;
+    padding: 6px 12px !important;
+    font-size: 11px !important;
+  }
+  /* Top-left mini-flag — click to open your country panel. */
+  #player-flag-btn {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    width: 60px;
+    height: 40px;
+    background: linear-gradient(180deg, #1a1410, #0a0604);
+    border: 2px solid #6b4f2c;
+    border-radius: 4px;
+    cursor: pointer;
+    z-index: 90;
+    padding: 0;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  #player-flag-btn:hover {
+    border-color: #d4a657;
+    box-shadow: 0 0 12px rgba(212, 166, 87, 0.5);
+  }
+  #player-flag-btn canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  #player-flag-btn.hidden { display: none; }
+  #city-tooltip {
+    position: absolute;
+    background: rgba(8, 5, 2, 0.92);
+    color: #f0e6cc;
+    padding: 4px 8px;
+    border: 1px solid #6b4f2c;
+    border-radius: 3px;
+    font-size: 12px;
+    font-family: Georgia, serif;
+    pointer-events: none;
+    z-index: 90;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    white-space: nowrap;
+  }
+  #city-tooltip .tt-vp {
+    color: #d4a657;
+    font-size: 10px;
+    margin-left: 6px;
+  }
+  #version-tag {
+    position: fixed;
+    left: 8px;
+    bottom: 6px;
+    color: #8a7a5c;
+    font-size: 11px;
+    font-family: Georgia, serif;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+    pointer-events: none;
+    z-index: 200;
+    user-select: none;
+  }
+  /* War-declared popup stack (bottom-right). Each popup slides in from the
+     right, stays a few seconds, fades out. Multiple stack vertically. */
+  #war-popup-stack {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 10px;
+    z-index: 220;
+    pointer-events: none;
+  }
+  .war-popup {
+    background: linear-gradient(180deg, #2a0808, #1a0404);
+    border: 2px solid #c44;
+    border-radius: 5px;
+    padding: 10px 14px;
+    color: #ffe0c0;
+    font-family: Georgia, serif;
+    font-size: 13px;
+    box-shadow: 0 6px 22px rgba(180,40,40,0.5), 0 0 0 1px rgba(255,150,150,0.15) inset;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 280px;
+    animation: war-popup-in 0.35s ease-out;
+    transition: opacity 0.5s ease-in, transform 0.5s ease-in;
+  }
+  .war-popup img {
+    width: 36px;
+    height: 24px;
+    object-fit: cover;
+    border: 1px solid #4a3520;
+    border-radius: 2px;
+    background: #0a0604;
+    flex-shrink: 0;
+  }
+  .war-popup .wp-arrow {
+    color: #ff6464;
+    font-size: 16px;
+    font-weight: bold;
+  }
+  .war-popup.fading {
+    opacity: 0;
+    transform: translateX(40px);
+  }
+  @keyframes war-popup-in {
+    0%   { opacity: 0; transform: translateX(80px); }
+    100% { opacity: 1; transform: translateX(0); }
+  }
+  #move-mode-banner {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(184, 137, 58, 0.9);
+    color: #fff;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-size: 14px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+    pointer-events: none;
+  }
+  .legend {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+    font-size: 10px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .legend-swatch {
+    width: 10px;
+    height: 10px;
+    border: 1px solid #000;
+  }
+  .section-title {
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: #d4a657;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  #country-panel {
+    width: 260px;
+    background: linear-gradient(180deg, #1a1410, #0c0806);
+    border-right: 2px solid #6b4f2c;
+    box-shadow: 4px 0 12px rgba(0,0,0,0.6);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding: 14px;
+    transition: width 0.3s, padding 0.3s, opacity 0.3s;
+    position: relative;
+  }
+  #country-panel.hidden {
+    width: 0;
+    padding: 0;
+    border-right: none;
+    opacity: 0;
+    overflow: hidden;
+  }
+  .close-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 24px;
+    height: 24px;
+    background: transparent;
+    border: 1px solid #4a3520;
+    color: #a89678;
+    cursor: pointer;
+    font-size: 14px;
+    margin: 0;
+    padding: 0;
+    line-height: 22px;
+  }
+  .close-btn:hover { color: #f0e6cc; border-color: #d4a657; }
+  #country-flag-wrap {
+    display: flex;
+    justify-content: center;
+    margin: 10px 0 8px;
+  }
+  #country-flag {
+    border: 2px solid #4a3520;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.7);
+    background: #2a1a10;
+  }
+  .cp-name {
+    text-align: center;
+    color: #d4a657;
+    font-size: 16px;
+    letter-spacing: 1px;
+    font-weight: bold;
+    margin: 4px 0;
+  }
+  .cp-era {
+    text-align: center;
+    color: #8a7a5c;
+    font-size: 11px;
+    letter-spacing: 2px;
+  }
+  .cp-section-title {
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: #d4a657;
+    text-transform: uppercase;
+    margin: 6px 0 4px;
+  }
+  #cp-leader-portrait {
+    display: flex;
+    justify-content: center;
+    margin: 4px 0;
+  }
+  #cp-leader-portrait img {
+    width: 90px;
+    height: 110px;
+    object-fit: cover;
+    border: 2px solid #4a3520;
+    border-radius: 2px;
+    background: #2a1a10;
+  }
+  .cp-leader-name {
+    text-align: center;
+    color: #e8e2d0;
+    font-size: 13px;
+    margin-top: 4px;
+    font-style: italic;
+  }
+  .cp-stats { font-size: 12px; }
+  .cp-stats .stat-row { padding: 2px 0; }
+  #cp-relations { font-size: 11px; max-height: 120px; overflow-y: auto; }
+  #cp-relations .rel-row {
+    display: flex;
+    align-items: center;
+    padding: 2px 0;
+  }
+  #cp-relations .rel-swatch {
+    width: 8px;
+    height: 8px;
+    margin-right: 6px;
+    border: 1px solid #000;
+  }
+  #cp-relations .rel-name { flex: 1; }
+  #cp-relations .rel-val { font-weight: bold; }
+  .rel-pos { color: #6acf6a; }
+  .rel-neg { color: #e85d4a; }
+  .rel-zero { color: #8a7a5c; }
+  .speed-bar {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr 1fr;
+    gap: 3px;
+  }
+  .speed-btn {
+    margin: 0;
+    padding: 10px 0;
+    font-size: 13px;
+    font-weight: bold;
+  }
+  .speed-btn.active {
+    background: linear-gradient(180deg, #d4a657, #b8893a);
+    border-color: #ffd24a;
+    box-shadow: 0 0 8px rgba(212, 166, 87, 0.6);
+    color: #1a1410;
+  }
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-track { background: #1a1410; }
+  ::-webkit-scrollbar-thumb { background: #4a3520; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #6b4f2c; }
+</style>
+</head>
+<body>
+<div id="game">
+  <div id="country-panel" class="hidden">
+    <button class="close-btn" id="country-close">×</button>
+    <div id="country-flag-wrap"><canvas id="country-flag" width="180" height="120"></canvas></div>
+    <div class="cp-name" id="cp-name">-</div>
+    <div class="cp-era" id="cp-era">-</div>
+    <button id="cp-customize-btn" style="display:none;margin:8px 0;">Customize</button>
+    <button class="danger" id="cp-declare-war-btn" style="display:none;margin:8px 0;">Declare War</button>
+    <div id="cp-war-state" style="display:none;text-align:center;color:#ff6464;font-size:13px;font-weight:bold;letter-spacing:1px;margin:8px 0;">⚔ AT WAR</div>
+    <hr/>
+    <div class="cp-section-title">LEADER</div>
+    <div id="cp-leader-portrait"><img id="cp-leader-img" alt="" /></div>
+    <div class="cp-leader-name" id="cp-leader-name">Unknown</div>
+    <hr/>
+    <div class="cp-stats" id="cp-stats"></div>
+    <hr/>
+    <div class="cp-section-title">RELATIONS</div>
+    <div id="cp-relations"></div>
+  </div>
+
+  <!-- Customization modal -->
+  <div id="customize-modal" class="hidden">
+    <div class="cm-card">
+      <button class="close-btn" id="cm-close">×</button>
+      <h2>CUSTOMIZE CIVILIZATION</h2>
+
+      <div class="cm-section">
+        <label class="cm-label" for="cm-name">Country name</label>
+        <div class="cm-name-row">
+          <span class="cm-name-prefix" id="cm-name-prefix"></span>
+          <input type="text" id="cm-name" maxlength="40" />
+          <span class="cm-name-suffix" id="cm-name-suffix"></span>
+        </div>
+        <div class="cm-hint" id="cm-name-hint"></div>
+      </div>
+
+      <div class="cm-section">
+        <label class="cm-label" for="cm-leader-name">Leader name</label>
+        <input type="text" id="cm-leader-name" maxlength="40" />
+      </div>
+
+      <div class="cm-section">
+        <label class="cm-label">Leader portrait</label>
+        <div class="cm-current-row">
+          <img id="cm-portrait-preview" alt="" />
+          <span class="cm-current-label" id="cm-portrait-label">(none)</span>
+        </div>
+        <div class="cm-upload-row">
+          <label class="cm-upload-btn" for="cm-portrait-file">Upload your own image</label>
+          <input type="file" id="cm-portrait-file" accept="image/*" hidden />
+          <button type="button" class="cm-clear-btn" id="cm-portrait-clear">Clear</button>
+        </div>
+        <input type="text" id="cm-portrait-search" placeholder="Search by tag or name (e.g. POL, stalin)" />
+        <div class="cm-grid" id="cm-portrait-grid"></div>
+      </div>
+
+      <div class="cm-section">
+        <label class="cm-label">Flag</label>
+        <div class="cm-current-row">
+          <img id="cm-flag-preview" alt="" />
+          <span class="cm-current-label" id="cm-flag-label">(procedural)</span>
+        </div>
+        <div class="cm-upload-row">
+          <label class="cm-upload-btn" for="cm-flag-file">Upload your own flag</label>
+          <input type="file" id="cm-flag-file" accept="image/*" hidden />
+          <button type="button" class="cm-clear-btn" id="cm-flag-clear">Clear</button>
+        </div>
+        <input type="text" id="cm-flag-search" placeholder="Search by tag (e.g. POL, USA)" />
+        <div class="cm-grid" id="cm-flag-grid"></div>
+      </div>
+
+      <div class="cm-actions">
+        <button id="cm-cancel">Cancel</button>
+        <button class="primary" id="cm-save">Save</button>
+      </div>
+    </div>
+  </div>
+  <div id="map-wrap">
+    <canvas id="map"></canvas>
+    <canvas id="overlay"></canvas>
+    <button id="player-flag-btn" class="hidden" title="View your country">
+      <canvas id="player-flag-canvas" width="120" height="80"></canvas>
+    </button>
+    <div id="splash">
+      <h2>FROM TRIBE TO EMPIRE</h2>
+      <p>The year is 1000 BC. Mighty empires rise from humble beginnings.</p>
+      <p>You are a small tribe. Your destiny is to become a superpower - or vanish into the dust of history.</p>
+      <p style="margin-top:20px;color:#8a7a5c;font-size:13px;">Egypt, Assyria, Babylon, Phoenicia, the Mycenaean Greeks, the Zhou, the Olmec, and a dozen other peoples are already on the map.</p>
+      <p style="color:#8a7a5c;font-size:13px;">Rome will not be founded until 753 BC. The game runs in real time - pause to plan, speed up to watch history unfold.</p>
+      <p class="hint">Click any land tile on the map to place your tribe</p>
+      <p style="color:#5a4a32;font-size:11px;margin-top:18px;">Scroll to zoom · Right-click drag to pan · Type <b>DEBUG</b> to auto-run</p>
+    </div>
+  </div>
+  <div id="sidebar">
+    <h1>FROM TRIBE TO EMPIRE</h1>
+    <div class="subtitle">1000 BC - ?</div>
+    <div class="year-display" id="year-display">1000 BC</div>
+    <div class="era-badge" id="era-badge">TRIBAL AGE</div>
+    <div id="player-panel"></div>
+    <hr/>
+    <div class="section-title">Selected Tile</div>
+    <div class="tile-info" id="tile-info">Click a tile to inspect</div>
+    <div id="actions"></div>
+    <hr/>
+    <div class="section-title">Civilizations</div>
+    <div class="civ-list" id="civ-list"></div>
+    <hr/>
+    <div class="section-title">Chronicle</div>
+    <div class="log" id="log"></div>
+    <hr/>
+    <div class="speed-bar" id="speed-bar">
+      <button class="speed-btn" data-speed="0" title="Pause (Space)">❚❚</button>
+      <button class="speed-btn" data-speed="1" title="Speed 1 - slowest">1×</button>
+      <button class="speed-btn" data-speed="2" title="Speed 2">2×</button>
+      <button class="speed-btn" data-speed="3" title="Speed 3">3×</button>
+      <button class="speed-btn" data-speed="4" title="Speed 4">4×</button>
+      <button class="speed-btn" data-speed="5" title="Speed 5 - fastest">5×</button>
+      <button class="speed-btn debug-only" data-speed="6" title="Speed 6 - DEBUG turbo (20x)" style="display:none;">20×</button>
+    </div>
+    <div style="text-align:center;color:#8a7a5c;font-size:10px;margin-top:4px;">Space = pause/play · 1-5 = speed</div>
+    <details style="margin-top:10px;">
+      <summary style="cursor:pointer;color:#8a7a5c;font-size:11px;">Map Legend</summary>
+      <div class="legend" style="margin-top:6px;">
+        <div class="legend-item"><span class="legend-swatch" style="background:#3a8a4a"></span>Plains</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#1f5a2a"></span>Forest</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#0e6e3e"></span>Jungle</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#d4b85a"></span>Desert</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#a8b8c8"></span>Tundra</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#6a5a4a"></span>Mountain</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#1a3a6a"></span>Ocean</div>
+      </div>
+    </details>
+  </div>
+</div>
+<div id="version-tag">v0.1.0</div>
+<div id="war-popup-stack"></div>
+<div id="move-mode-banner" style="display:none;"></div>
+<div id="city-tooltip" style="display:none;"></div>
+<div id="province-status">
+  <div class="ps-card">
+    <div class="ps-spinner"></div>
+    <div class="ps-title">Loading HOI4 province grid…</div>
+    <div class="ps-detail" id="ps-detail">Fetching map/provinces.bmp + map/definition.csv</div>
+    <div class="ps-version">v0.1.0</div>
+  </div>
+</div>
+<script>const _v = Date.now();
+document.write('<script src="hoi4_data.js?v=' + _v + '"></sc' + 'ript>');
+document.write('<script src="leaders.js?v=' + _v + '"></sc' + 'ript>');
+document.write('<script src="game.js?v=' + _v + '"></sc' + 'ript>');
+</script>
+</body>
+</html>

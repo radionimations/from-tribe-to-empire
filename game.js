@@ -1,0 +1,6005 @@
+// FROM TRIBE TO EMPIRE - historical alt-history civ game
+// Vibe-coded vanilla JS, single canvas, turn-based.
+
+// =================== CONSTANTS ===================
+const TILE = 8;                          // logical pixels per tile (at zoom=1)
+const COLS = 352;                        // game logic grid width (matches HOI4 aspect 2.75:1)
+const ROWS = 128;                        // game logic grid height
+const MAP_W = COLS * TILE;               // 2816 - matches HOI4 source resolution / 2
+const MAP_H = ROWS * TILE;               // 1024
+// HOI4 truncates Antarctica: latitude span is roughly +90° (top) to -56° (bottom).
+const LAT_TOP = 90;
+const LAT_BOTTOM = -56;
+const LAT_SPAN = LAT_TOP - LAT_BOTTOM;
+const START_YEAR = -1000;
+const YEARS_PER_TURN = 5;
+
+// Real-time speed: ms of real time per simulation turn (5 game years)
+// Speed 0 = paused. 1 = slowest, 5 = fastest.
+const SPEED_TURN_MS = [Infinity, 4000, 1800, 900, 450, 200, 50];   // slot 6 = 20x debug turbo
+
+const BIOME_COLORS = {
+  ocean:    "#1a3a6a",
+  plains:   "#3a8a4a",
+  forest:   "#1f5a2a",
+  jungle:   "#0e6e3e",
+  desert:   "#d4b85a",
+  tundra:   "#a8b8c8",
+  mountain: "#6a5a4a",
+};
+
+const BIOME_FOOD = {
+  plains: 3, forest: 2, jungle: 2, desert: 0, tundra: 0, mountain: 1, ocean: 0,
+};
+const BIOME_DEFENSE = {
+  plains: 0, forest: 1, jungle: 1, desert: 0, tundra: 0, mountain: 3, ocean: 0,
+};
+const PASSABLE = (b) => b !== "ocean";
+
+// Naval traversal: civs can cross ocean tiles starting from the Classical Age
+// (era 1+). Ocean transit doesn't claim ownership of the tile - it's just
+// a sea route armies/settlers can use to reach islands and overseas land.
+function canMoveInto(civ, biome) {
+  if (biome === "ocean") return !!(civ && civ.era >= 1);
+  return PASSABLE(biome);
+}
+
+const ERAS = [
+  { name: "Tribal Age",       threshold: 0,    yearGuide: -1000 },
+  { name: "Classical Age",    threshold: 100,  yearGuide: -500 },
+  { name: "Medieval Age",     threshold: 350,  yearGuide: 500 },
+  { name: "Renaissance",      threshold: 800,  yearGuide: 1400 },
+  { name: "Industrial Age",   threshold: 1600, yearGuide: 1800 },
+  { name: "Modern Age",       threshold: 3000, yearGuide: 1950 },
+  { name: "Information Age",  threshold: 5000, yearGuide: 2020 },
+];
+
+// Unit types unlock per era
+const UNITS = {
+  warrior:   { era: 0, cost: 12, str: 4,   name: "Warriors" },
+  // Colonizers - fast claimers. 2 moves/turn, light combat power, but every
+  // tile they touch in an unowned province flips THE WHOLE PROVINCE to your color.
+  colonizer: { era: 0, cost: 18, str: 2,   name: "Colonizers", maxMoves: 2, claimsProvince: true },
+  // Leaders - automated advisors. While you have at least one alive, the AI
+  // takes over your build queues and army movement (skipping any unit you've
+  // currently selected). Weak in combat - they're meant to sit in a city.
+  leader:    { era: 0, cost: 30, str: 1,   name: "Leaders", assistsPlayer: true },
+  archer:    { era: 1, cost: 16, str: 6,   name: "Archers" },
+  legion:    { era: 1, cost: 22, str: 9,   name: "Legion" },
+  knight:    { era: 2, cost: 30, str: 14,  name: "Knights" },
+  musketeer: { era: 3, cost: 35, str: 20,  name: "Musketeers" },
+  rifleman:  { era: 4, cost: 50, str: 32,  name: "Riflemen" },
+  tank:      { era: 5, cost: 80, str: 60,  name: "Armor" },
+  modern:    { era: 6, cost: 120, str: 100, name: "Mech Inf." },
+};
+const SETTLER_COST = 25;
+
+// Civ palette
+const CIV_COLORS = [
+  "#ffd24a", "#e85d4a", "#5da9e8", "#9b6ae8", "#6acf6a",
+  "#e8a04a", "#4ae8c4", "#e84a9b", "#b8e84a", "#c46060",
+  "#4a8ae8", "#e8e84a", "#a06bff", "#ff7d4a", "#4ae87d",
+  "#ff4a8a", "#3aa9c4", "#a8c44a", "#c44aa8", "#4ac4c4",
+];
+
+// =================== MAP ===================
+// Per-tile biome grid. Filled in at runtime from HOI4 data - until then, empty
+// ocean placeholder so accessors don't crash.
+let MAP = Array.from({ length: ROWS }, () => new Array(COLS).fill("ocean"));
+
+// Map HOI4 terrain types (from definition.csv) to our game biomes.
+const HOI4_TERRAIN_TO_BIOME = {
+  ocean: "ocean", lakes: "ocean",
+  plains: "plains", marsh: "plains", urban: "plains",
+  forest: "forest", hills: "forest",
+  jungle: "jungle",
+  desert: "desert",
+  mountain: "mountain",
+};
+
+// Build the per-tile biome grid by sampling province terrain data at each tile center.
+function buildMapFromProvinces(provinceTerrain) {
+  // provinceTerrain: array indexed by pid → terrain string
+  const newMap = Array.from({ length: ROWS }, () => new Array(COLS).fill("ocean"));
+  if (!provinceGrid) return newMap;
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      // Sample multiple points within the tile and pick the most common terrain
+      const counts = new Map();
+      for (let dy = 1; dy < TILE; dy += Math.max(1, TILE >> 1)) {
+        for (let dx = 1; dx < TILE; dx += Math.max(1, TILE >> 1)) {
+          const x = c * TILE + dx;
+          const y = r * TILE + dy;
+          if (x >= MAP_W || y >= MAP_H) continue;
+          const pid = provinceGrid[y * MAP_W + x];
+          if (pid === 0) continue;
+          const terrain = provinceTerrain[pid];
+          if (!terrain) continue;
+          const biome = HOI4_TERRAIN_TO_BIOME[terrain] || "plains";
+          counts.set(biome, (counts.get(biome) || 0) + 1);
+        }
+      }
+      // Pick most-common biome; default to ocean if none.
+      let best = "ocean", bestCount = 0;
+      for (const [biome, n] of counts) {
+        if (n > bestCount) { bestCount = n; best = biome; }
+      }
+      newMap[r][c] = best;
+    }
+  }
+  return newMap;
+}
+
+function tileAt(c, r) {
+  if (r < 0 || r >= ROWS || c < 0) return null;
+  c = ((c % COLS) + COLS) % COLS; // wrap longitude
+  return MAP[r][c];
+}
+
+function neighbors(c, r) {
+  const out = [];
+  for (const [dc, dr] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+    const nr = r + dr;
+    if (nr < 0 || nr >= ROWS) continue;
+    const nc = ((c + dc) % COLS + COLS) % COLS;
+    out.push([nc, nr]);
+  }
+  return out;
+}
+
+function coastalLand(c, r) {
+  if (!PASSABLE(MAP[r][c])) return false;
+  for (const [nc, nr] of neighbors(c, r)) {
+    if (MAP[nr][nc] === "ocean") return true;
+  }
+  return false;
+}
+
+// =================== HISTORICAL CIVS ===================
+// (lat, lon) → 1000 BC starting positions for AI civs
+// Pairs of civs that start the game friendly (relations 100) and won't attack
+// each other unless something breaks the alliance. The relationship survives
+// rename chains (Polans → Duchy of Poland → Kingdom of Poland → Commonwealth)
+// because rename events keep the same civ object.
+const INITIAL_ALLIANCES = [
+  ["Polans", "Balts"],          // proto-Polish ↔ proto-Lithuanian (foundation of later Krewo + Lublin unions)
+  ["Polans", "Bohemia"],        // Slavic neighbors - N/A at start since Bohemia spawns later, but kept as reference
+];
+
+const HISTORICAL_CIVS = [
+  { name: "Egypt",       lat: 30,  lon: 31,   color: "#ffd24a" },
+  { name: "Phoenicia",   lat: 33,  lon: 35,   color: "#a8326a" },
+  { name: "Assyria",     lat: 36,  lon: 43,   color: "#c46060" },
+  { name: "Babylon",     lat: 32,  lon: 44,   color: "#9b6ae8" },
+  { name: "Greeks",      lat: 38,  lon: 23,   color: "#5da9e8" },
+  { name: "Etruscans",   lat: 43,  lon: 12,   color: "#e85d4a" },
+  { name: "Latins",      lat: 41.9,lon: 12.5, color: "#a02828" }, // proto-Romans
+  { name: "Celts",       lat: 47,  lon: 13,   color: "#6acf6a" },
+  { name: "Gauls",       lat: 47,  lon: 3,    color: "#3aaa3a" },
+  { name: "Iberians",    lat: 40,  lon: -3,   color: "#e8a04a" },
+  { name: "Germans",     lat: 52,  lon: 10,   color: "#4ae8c4" },
+  // For these northern/eastern European tribes, anchor to a real HOI4 state
+  // (state name from the .txt files) - much more reliable than lat/lon.
+  { name: "Polans",      state: "Poland",      lat: 52, lon: 19, color: "#dc143c" },
+  { name: "Balts",       state: "Kaunas",      lat: 55, lon: 24, color: "#1f5a3a" },
+  { name: "Finns",       state: "Uusima",      lat: 62, lon: 25, color: "#7ec0ee" }, // Helsinki area
+  { name: "Norse",       state: "Skåne",       lat: 60, lon: 16, color: "#3a6ad8" }, // proto-Scandinavians
+  { name: "East Slavs",  state: "Moscow Area", lat: 56, lon: 38, color: "#b8e84a" },
+  { name: "Scythians",   lat: 50,  lon: 50,   color: "#a8c44a" },
+  { name: "Thracians",   lat: 43,  lon: 25,   color: "#8a6a3c" },
+  { name: "Medes",       lat: 35,  lon: 50,   color: "#ff7d4a" },
+  { name: "Vedic India", lat: 28,  lon: 77,   color: "#ff4a8a" },
+  { name: "Dravidians",  lat: 11,  lon: 78,   color: "#c4408a" },
+  { name: "Zhou China",  lat: 35,  lon: 110,  color: "#e84a4a" },
+  { name: "Gojoseon",    lat: 39,  lon: 125,  color: "#4ae87d" },
+  { name: "Yamato",      lat: 35,  lon: 138,  color: "#ffe04a" },
+  { name: "Olmec",       lat: 18,  lon: -94,  color: "#3aa9c4" },
+  { name: "Chavin",      lat: -9,  lon: -77,  color: "#c44aa8" },
+  { name: "Kush",        lat: 18,  lon: 32,   color: "#a06bff" },
+  { name: "Berbers",     lat: 32,  lon:  0,   color: "#d4a657" },
+];
+
+// Civs that emerge during play via historical events.
+// Event types:
+//   spawn  (default): create a new civ at a tile
+//   replaces: take over an existing civ (rename + recolor)
+//   claim:    grow an existing civ to cover a lat/lon region
+//   merge:    combine two civs into a new one
+const HISTORICAL_EVENTS = [
+  // The Polans-Balts non-aggression pact is hard-coded in INITIAL_ALLIANCES
+  // (relations = 100 from game start), but we also fire it as an explicit
+  // alliance event at year -999 so the chronicle records it and any rename
+  // along the way keeps the bond intact.
+  { year: -999, type: "alliance", a: "Polans", b: "Balts", message: "Polans and Balts swear a non-aggression pact - the seed of every later Polish-Lithuanian union" },
+  // ============================================================
+  // Rise of Rome (chunk-by-chunk conquest)
+  // Each chunk has TWO events: a war declaration that triggers the actual
+  // fighting (sets relations to -100, reinforces both sides, gives Rome a
+  // goal region), and a delayed CLAIM that only fires once Rome has fully
+  // killed the relevant civ(s) in that chunk. requireDeadCivs is the gate.
+  // ============================================================
+  { year: -753, civ: { name: "Rome", lat: 42, lon: 12.5, color: "#a02828" }, replaces: "Latins", message: "Romulus founds the city of Rome" },
+  // Rome's local consolidation - no big rivals nearby, claim immediately.
+  { year: -509, type: "claim", civ: "Rome", region: { lat: [41, 43], lon: [11, 14] }, message: "Rome becomes a Republic; expels the last king" },
+  // -390 to -280: Rome fights Etruscans + Gauls + Greeks for control of Italy.
+  { year: -390, type: "war", a: "Rome", b: "Etruscans", region: { lat: [39, 44], lon: [10, 16] }, reinforce: 6, message: "Rome wars against the Etruscan league" },
+  { year: -280, type: "claim", civ: "Rome", region: { lat: [37, 46], lon: [7, 19] },
+    requireDeadCivs: ["Etruscans"],
+    message: "Rome unifies the Italian peninsula once the Etruscans fall" },
+  // First Punic War - Rome vs Carthage for Sicily.
+  { year: -264, type: "war", a: "Rome", b: "Carthage", region: { lat: [36, 42], lon: [8, 16] }, reinforce: 8, message: "First Punic War - Rome and Carthage clash over Sicily" },
+  { year: -241, type: "claim", civ: "Rome", region: { lat: [36.5, 41.5], lon: [8, 16] },
+    requireDeadCivs: ["Carthage"],
+    message: "Rome wins the Punic Wars and takes the western Mediterranean" },
+  // Second Punic War - Hannibal in Iberia.
+  { year: -218, type: "war", a: "Rome", b: "Carthage", region: { lat: [35, 44], lon: [-9, 9] }, reinforce: 10, message: "Second Punic War - Hannibal crosses the Alps" },
+  { year: -202, type: "claim", civ: "Rome", region: { lat: [35, 44], lon: [-9, 9] },
+    requireDeadCivs: ["Carthage", "Iberians"],
+    message: "Rome takes Hispania once the western tribes fall" },
+  // Third Punic + Macedonian Wars: claim only fires once Carthage AND Antigonid Macedon are gone.
+  { year: -149, type: "war", a: "Rome", b: "Carthage", region: { lat: [30, 38], lon: [-9, 16] }, reinforce: 8, message: "Third Punic War - the final destruction of Carthage" },
+  { year: -148, type: "war", a: "Rome", b: "Antigonid Macedon", region: { lat: [36, 42], lon: [19, 27] }, reinforce: 6, message: "Fourth Macedonian War - Rome marches on Greece" },
+  { year: -146, type: "claim", civ: "Rome", region: { lat: [30, 42], lon: [-9, 25] },
+    requireDeadCivs: ["Carthage", "Antigonid Macedon"],
+    message: "Carthage destroyed and Greece annexed - Rome dominates the Mediterranean" },
+  // Mithridatic Wars - Pontus.
+  { year: -88, type: "war", a: "Rome", b: "Pontus", region: { lat: [36, 44], lon: [25, 38] }, reinforce: 8, message: "Mithridatic Wars - Rome battles Pontus for Asia Minor" },
+  { year: -100, type: "claim", civ: "Rome", region: { lat: [36, 42], lon: [25, 35] },
+    requireDeadCivs: ["Pontus", "Seleucid Empire"],
+    message: "Rome takes Asia Minor and Cilicia after defeating its eastern rivals" },
+  // Caesar's Gallic Wars.
+  { year: -58, type: "war", a: "Rome", b: "Gauls", region: { lat: [42, 51], lon: [-5, 8] }, reinforce: 10, message: "Gallic Wars - Caesar invades Gaul" },
+  { year:  -50, type: "claim", civ: "Rome", region: { lat: [42, 51], lon: [-5, 8] },
+    requireDeadCivs: ["Gauls"],
+    message: "Caesar conquers Gaul" },
+  // Egypt: takes Ptolemaic Egypt.
+  { year:  -31, type: "war", a: "Rome", b: "Ptolemaic Egypt", region: { lat: [22, 32], lon: [25, 36] }, reinforce: 8, message: "Final War of the Roman Republic - Octavian invades Egypt" },
+  { year:  -27, type: "claim", civ: "Rome", region: { lat: [22, 32], lon: [25, 36] },
+    requireDeadCivs: ["Ptolemaic Egypt"],
+    message: "Augustus annexes Egypt; the Empire begins" },
+  { year:   45, type: "claim", civ: "Rome", region: { lat: [31, 36], lon: [33, 40] }, message: "Rome annexes Judea and Mauretania" },
+  // Britannia: requires defeating the Celtic resistance.
+  { year:   43, type: "war", a: "Rome", b: "Celts", region: { lat: [50, 55], lon: [-6, 2] }, reinforce: 8, message: "Roman invasion of Britain begins" },
+  { year:   80, type: "claim", civ: "Rome", region: { lat: [50, 55], lon: [-6, 2] },
+    requireDeadCivs: ["Celts"],
+    message: "Roman Britannia established" },
+  // Trajan's empire at its greatest extent: only fires once the previous
+  // chunks are sealed. We don't gate it on specific civ deaths since by
+  // 117 most rivals are already gone; we just leave it as the final
+  // territorial roundup.
+  { year:  117, type: "claim", civ: "Rome", region: { lat: [22, 55], lon: [-9, 44] }, message: "Trajan reaches the empire's greatest extent" },
+  { year:  330, civ: { name: "Byzantium", lat: 41, lon: 28.9, color: "#a050c4" }, message: "Constantine founds Constantinople - the New Rome" },
+  // Reinforce Byzantium with a starting army so they can defend Constantinople.
+  { year:  330, type: "reinforce", civ: "Byzantium", count: 6, message: "Imperial garrison stationed at Constantinople" },
+  // 395: Theodosius I dies; the empire is permanently split between his sons.
+  // Rome renames to "Western Rome" only now, when an Eastern half (Byzantium)
+  // already exists on the map - the name "Western" only makes sense once
+  // there's an Eastern.
+  { year:  395, type: "rename", from: "Rome", to: "Western Rome", color: "#7d1818", spawnIfMissing: { lat: 41.9, lon: 12.5 }, message: "Theodosius dies - the empire is permanently split between Western Rome and Byzantium" },
+  // Eastern half assembled from HOI4 1936 owner tags (Greece, Turkey, Egypt,
+  // Levant, Mesopotamia, Bulgaria, Romania) - this gives a non-rectangular,
+  // historically accurate split. Western Rome keeps Italy / Iberia / Gaul /
+  // Britain / North Africa west of Egypt.
+  // Use secede (not claim) so Byzantium spawns fresh if it died between 330
+  // and 395. byOwner secede also takes tiles from ANYONE (with my recent
+  // fix), so if Polans / Latins / etc. organically expanded into Eastern
+  // Roman territory before 395, they all lose those tiles to Byzantium.
+  { year:  395, type: "secede", target: "Western Rome", civ: "Byzantium",
+    spawn: { name: "Byzantium", lat: 41, lon: 28.9, color: "#a050c4" },
+    byOwner: ["GRE", "TUR", "EGY", "SYR", "IRQ", "ISR", "PAL", "JOR", "BUL", "ROM", "ALB", "YUG"],
+    message: "Eastern Rome (Byzantium) takes the eastern provinces - Greece, Anatolia, Levant, Egypt" },
+  // 476: Western Rome fragments - successor states secede from the dying empire.
+  { year:  476, type: "secede", target: "Western Rome", civ: "Visigoths",    spawn: { name: "Visigoths",    lat: 41, lon: -3,  color: "#a08820" }, region: { lat: [36, 45], lon: [-9, 5] },  message: "Visigothic Kingdom rises from the ruins of Rome (Iberia & S. Gaul)" },
+  { year:  476, type: "secede", target: "Western Rome", civ: "Vandals",      spawn: { name: "Vandals",      lat: 36, lon: 10, color: "#7a3a3a" }, region: { lat: [27, 38], lon: [-1, 12] }, message: "Vandals carve out North Africa" },
+  { year:  476, type: "secede", target: "Western Rome", civ: "Anglo-Saxons", spawn: { name: "Anglo-Saxons", lat: 52, lon: -1, color: "#a06030" }, region: { lat: [50, 56], lon: [-6, 2] },  message: "Anglo-Saxon kingdoms rise in Britain" },
+  // 411: Kingdom of the Suebi - Germanic people settle in northwestern Iberia.
+  { year:  411, type: "secede", target: "Western Rome", civ: "Suebi",
+    spawn: { name: "Suebi", lat: 41.7, lon: -8.6, color: "#7a8a40" },
+    region: { lat: [40, 44], lon: [-9, -6] },
+    message: "Kingdom of the Suebi founded in Galicia and northern Portugal" },
+  // 411-534: Burgundian Kingdom in modern eastern France/Switzerland.
+  { year:  411, type: "secede", target: "Western Rome", civ: "Burgundians",
+    spawn: { name: "Burgundians", lat: 47.32, lon: 5.04, color: "#a04040" },
+    region: { lat: [45, 49], lon: [4, 8] },
+    message: "Burgundian Kingdom established in the Rhône valley" },
+  // 469: Visigoths absorb the smaller Suebi kingdom.
+  { year:  585, type: "absorb", absorber: "Visigoths", target: "Suebi", message: "Leovigild conquers Galicia - the Kingdom of the Suebi falls to the Visigoths" },
+  // 534: Franks under Theudebert annex the Burgundian Kingdom.
+  { year:  534, type: "absorb", absorber: "Franks", target: "Burgundians", message: "Frankish kings absorb the Burgundian Kingdom" },
+  { year:  476, type: "rename", from: "Western Rome", to: "Romano-Goths", color: "#8a7a5a", message: "Odoacer deposes the last Western emperor; Italy under Ostrogoths" },
+  // 481: Clovis founds the Frankish Kingdom - secedes Gaul from Romano-Goths.
+  { year:  481, type: "secede", target: "Romano-Goths", civ: "Franks", spawn: { name: "Franks", lat: 49, lon: 3, color: "#4a6ae8" }, region: { lat: [44, 51], lon: [-5, 8] }, message: "Clovis I founds the Frankish Kingdom" },
+  // 482: the Germans (proto-tribe, 1000 BC start) consolidate under Frankish
+  // hegemony - their lands are absorbed into the Frankish Kingdom. Without
+  // this, Germans (centuries of unchecked AI expansion) would steamroll the
+  // Italian peninsula whenever Romano-Goths falls in 554.
+  { year:  482, type: "absorb", absorber: "Franks", target: "Germans", message: "Western Germanic tribes accept Frankish hegemony - the Germans civilization merges into Clovis's kingdom" },
+  // --- Italian fragmentation after the Ostrogothic Kingdom (553-800s) ---
+  // The Italian peninsula doesn't cleanly fall to one successor: Justinian's
+  // Byzantines retake the south + central Italy, but Lombard invasions split
+  // the north into duchies, the Papacy emerges in Rome, and Venice forms in
+  // the lagoon. We model this as a series of secessions over ~250 years.
+  // 553-554: Byzantium reconquers Italy and ends the Romano-Goth state.
+  { year:  554, type: "absorb", absorber: "Byzantium", target: "Romano-Goths", message: "Justinian's reconquest: Byzantium retakes Italy, ending the Romano-Goths" },
+  // 568: Lombards invade and seize the Po Valley + most of northern Italy.
+  { year:  568, type: "secede", target: "Byzantium", civ: "Lombards", spawn: { name: "Lombards", lat: 45.5, lon: 9.2, color: "#7a5a8a" }, region: { lat: [42, 47], lon: [7, 14] }, message: "Lombards invade Italy and carve out a kingdom in the Po Valley" },
+  // 571: Duchy of Benevento - autonomous Lombard duchy in southern Italy.
+  { year:  571, type: "secede", target: "Lombards", civ: "Duchy of Benevento",
+    spawn: { name: "Duchy of Benevento", lat: 41.13, lon: 14.78, color: "#6a4a7a" },
+    region: { lat: [40, 42], lon: [13, 16] },
+    message: "Lombard Duchy of Benevento splinters off in southern Italy" },
+  // 697: Republic of Venice - the lagoon city establishes its own elected doge.
+  { year:  697, type: "secede", target: "Byzantium", civ: "Venice",
+    spawn: { name: "Venice", lat: 45.44, lon: 12.32, color: "#a8302a" },
+    region: { lat: [45, 46], lon: [12, 13] },
+    message: "Republic of Venice elects its first doge - independent of Byzantium in all but name" },
+  // 754: Donation of Pepin - Papal States formed in central Italy from Byzantine territory.
+  { year:  754, type: "secede", target: "Byzantium", civ: "Papal States",
+    spawn: { name: "Papal States", lat: 41.90, lon: 12.50, color: "#f0e6cc" },
+    region: { lat: [41, 44], lon: [10, 14] },
+    message: "Donation of Pepin - the Papal States emerge in central Italy" },
+  // 711: Umayyad Caliphate conquers Visigothic Iberia.
+  { year:  711, type: "absorb", absorber: "Arabs", target: "Visigoths", message: "Umayyad Caliphate conquers Iberia - Visigoths fall" },
+  // 774: Charlemagne crushes the Lombards and absorbs their kingdom into the Franks.
+  { year:  774, type: "absorb", absorber: "Franks", target: "Lombards", message: "Charlemagne defeats the Lombards - their kingdom is absorbed into the Franks" },
+  // 1066: Norman Conquest - Anglo-Saxons become the Kingdom of England.
+  { year: 1066, type: "rename", from: "Anglo-Saxons",     to: "Kingdom of England", color: "#cc1f2a", spawnIfMissing: { lat: 52, lon: -1 }, message: "Norman Conquest - Kingdom of England forms" },
+  { year: 1707, type: "rename", from: "Kingdom of England", to: "Great Britain",   color: "#a01818", spawnIfMissing: { lat: 52, lon: -1 }, message: "Acts of Union: England + Scotland → Great Britain" },
+  { year: 1801, type: "rename", from: "Great Britain",     to: "United Kingdom",   color: "#921818", spawnIfMissing: { lat: 52, lon: -1 }, message: "United Kingdom of Great Britain and Ireland forms" },
+  // ============================================================
+  // Byzantine Empire decline (1054 schism -> 1071 Manzikert ->
+  // 1204 Fourth Crusade splinters -> 1261 reconquest -> 1453 final fall)
+  // ============================================================
+  // 1054: Great Schism - Eastern Orthodox / Roman Catholic split (chronicle only).
+  { year: 1054, type: "alliance", a: "Byzantium", b: "Holy Roman Empire", message: "Great Schism - the Eastern Orthodox Church formally separates from Rome" },
+  // 1071: Battle of Manzikert - Byzantium loses Anatolia to the Seljuk Turks.
+  // We use a Sultanate of Rum civ as the Seljuk stand-in.
+  { year: 1071, type: "secede", target: "Byzantium", civ: "Sultanate of Rum",
+    spawn: { name: "Sultanate of Rum", lat: 39.93, lon: 32.86, color: "#5a7a40" },
+    region: { lat: [37, 41], lon: [28, 42] },
+    message: "Battle of Manzikert - Seljuk Turks shatter the Byzantine army; Anatolia lost" },
+  // 1204: Fourth Crusade sacks Constantinople. The empire fragments into three
+  // Greek successor states + a Latin Crusader empire on the throne.
+  { year: 1204, type: "secede", target: "Byzantium", civ: "Latin Empire",
+    spawn: { name: "Latin Empire", lat: 41.01, lon: 28.98, color: "#d4a050" },
+    region: { lat: [40, 42], lon: [26, 30] },
+    message: "Fourth Crusade sacks Constantinople - the Latin Empire is established on the Bosporus" },
+  { year: 1204, type: "secede", target: "Byzantium", civ: "Empire of Nicaea",
+    spawn: { name: "Empire of Nicaea", lat: 40.43, lon: 29.72, color: "#7a4040" },
+    region: { lat: [38, 41.5], lon: [27, 32] },
+    message: "Empire of Nicaea formed - Greek Byzantine successor in Anatolia" },
+  { year: 1204, type: "secede", target: "Byzantium", civ: "Empire of Trebizond",
+    spawn: { name: "Empire of Trebizond", lat: 41.00, lon: 39.72, color: "#4a3a8a" },
+    region: { lat: [40, 42], lon: [37, 42] },
+    message: "Empire of Trebizond founded on the Black Sea coast" },
+  { year: 1204, type: "secede", target: "Byzantium", civ: "Despotate of Epirus",
+    spawn: { name: "Despotate of Epirus", lat: 39.66, lon: 20.85, color: "#8a4a4a" },
+    region: { lat: [38, 41], lon: [19, 22] },
+    message: "Despotate of Epirus founded - Greek successor in western Greece and Albania" },
+  // BUG FIX: previously we absorbed old Byzantium into Latin Empire here,
+  // which then collapsed back into Nicaea -> renamed to Byzantium = the
+  // original empire effectively reassembled itself. Instead, let Byzantium
+  // die naturally with whatever tiny remnant it has after the 4 secessions.
+  // 1261: Empire of Nicaea retakes Constantinople and absorbs the Latin Empire.
+  { year: 1261, type: "absorb", absorber: "Empire of Nicaea", target: "Latin Empire", message: "Michael VIII Palaiologos retakes Constantinople - the Latin Empire collapses" },
+  { year: 1261, type: "rename", from: "Empire of Nicaea", to: "Byzantium", color: "#a050c4", spawnIfMissing: { lat: 41, lon: 28.9 }, message: "Restored Byzantine Empire - Palaiologan dynasty returns to Constantinople" },
+  // 1479: Ottomans take the Despotate of Epirus (after Skanderbeg's death).
+  // (Previously: Byzantium absorbed it 1340 - that was wrong, made Byzantium
+  // re-absorb its own successor.)
+  { year: 1479, type: "absorb", absorber: "Ottomans", target: "Despotate of Epirus", message: "Ottomans annex the Despotate of Epirus" },
+  // 1461: Mehmed II conquers Trebizond - last Greek successor state ends.
+  { year: 1461, type: "absorb", absorber: "Ottomans", target: "Empire of Trebizond", message: "Mehmed II takes Trebizond - the last Byzantine successor state falls" },
+  // 1453: Constantinople falls - final end of the restored Byzantine Empire.
+  { year: 1453, type: "absorb", absorber: "Ottomans", target: "Byzantium", message: "Constantinople falls - Byzantium is wiped from the map by the Ottomans" },
+
+  // --- Bronze/Iron Age territorial swings ---
+  { year: -722, type: "claim", civ: "Assyria", region: { lat: [30, 38], lon: [33, 39] }, message: "Assyria conquers Israel and the northern Levant" },
+  { year: -612, type: "absorb", absorber: "Babylon", target: "Assyria", message: "Babylonians sack Nineveh - Assyria falls; Neo-Babylonian Empire rises" },
+
+  // --- Persian / Eastern empires ---
+  { year: -700, civ: { name: "Lydia",       lat: 38,  lon: 28,   color: "#e8c020" }, message: "The Lydians forge the first coins" },
+  { year: -550, civ: { name: "Persia",      lat: 32,  lon: 53,   color: "#ff7d4a" }, replaces: "Medes", message: "Cyrus the Great founds the Achaemenid Empire" },
+  { year: -539, type: "absorb", absorber: "Persia", target: "Babylon", message: "Cyrus takes Babylon - Persia inherits Mesopotamia" },
+  { year: -550, type: "goal", civ: "Persia", region: { lat: [22, 42], lon: [25, 70] }, priority: 0.9, message: "Persia sets its sights on Egypt and the Levant" },
+  { year: -400, civ: { name: "Carthage",    lat: 36.8,lon: 10.3, color: "#5a8aff" }, replaces: "Phoenicia", message: "Carthage rises as the heir of Phoenicia" },
+  { year: -336, civ: { name: "Macedon",     lat: 40.6,lon: 22.9, color: "#5d4ae8" }, message: "Alexander of Macedon ascends" },
+  { year: -336, type: "goal", civ: "Macedon", region: { lat: [20, 43], lon: [22, 75] }, priority: 1.0, message: "Alexander dreams of an empire from Greece to India" },
+  // 323 BC: Death of Alexander - Macedon fragments into the Diadochi successor states.
+  { year: -323, type: "secede", target: "Macedon", civ: "Ptolemaic Egypt", spawn: { name: "Ptolemaic Egypt",   lat: 30, lon: 31,  color: "#e8d040" }, region: { lat: [22, 33], lon: [25, 36] }, message: "Diadochi: Ptolemy takes Egypt" },
+  { year: -323, type: "secede", target: "Macedon", civ: "Seleucid Empire", spawn: { name: "Seleucid Empire",   lat: 35, lon: 45,  color: "#5d8ad8" }, region: { lat: [27, 42], lon: [33, 75] }, message: "Diadochi: Seleucus takes Mesopotamia, Persia, the East" },
+  { year: -323, type: "secede", target: "Macedon", civ: "Antigonid Macedon", spawn: { name: "Antigonid Macedon", lat: 40.6, lon: 22.9, color: "#5d4ae8" }, region: { lat: [36, 43], lon: [19, 28] }, message: "Diadochi: Antigonus retains Greece + Macedonia" },
+  { year: -250, civ: { name: "Maurya",      lat: 25,  lon: 81,   color: "#ff4a8a" }, replaces: "Vedic India", message: "Ashoka unifies India under the Maurya" },
+  // 247 BC: Parthia rises against the Seleucids
+  { year: -247, type: "secede", target: "Seleucid Empire", civ: "Parthia", spawn: { name: "Parthia", lat: 36, lon: 55, color: "#a02828" }, region: { lat: [30, 42], lon: [50, 65] }, message: "Arsaces founds the Parthian kingdom - eats away at Seleucid Persia" },
+  { year: -200, civ: { name: "Han China",   lat: 34,  lon: 109,  color: "#e84a4a" }, replaces: "Zhou China", message: "The Han dynasty rises in China" },
+  { year: -200, type: "goal", civ: "Han China", region: { lat: [22, 45], lon: [98, 122] }, priority: 0.85, message: "Han China sets its sights on westward expansion (Silk Road)" },
+
+  // --- Late antiquity & migrations ---
+  { year:  100, civ: { name: "Maya",        lat: 17,  lon: -89,  color: "#3aa9c4" }, message: "The Maya cities flourish" },
+  // 220 AD: Three Kingdoms - Han China fragments.
+  { year:  220, type: "secede", target: "Han China", civ: "Cao Wei",      spawn: { name: "Cao Wei",      lat: 35, lon: 110, color: "#c83030" }, region: { lat: [32, 42], lon: [100, 122] }, message: "Three Kingdoms: Cao Wei takes the north" },
+  { year:  220, type: "secede", target: "Han China", civ: "Eastern Wu",   spawn: { name: "Eastern Wu",   lat: 30, lon: 118, color: "#3a6ad8" }, region: { lat: [24, 33], lon: [110, 122] }, message: "Three Kingdoms: Sun Quan takes the southeast" },
+  { year:  220, type: "rename", from: "Han China", to: "Shu Han", color: "#3aa07a", message: "Three Kingdoms: Liu Bei retains the southwest as Shu Han" },
+  { year:  220, civ: { name: "Sasanians",   lat: 32,  lon: 53,   color: "#ff7d4a" }, replaces: "Persia", message: "The Sasanians revive Persia" },
+  { year:  400, civ: { name: "Goths",       lat: 50,  lon: 25,   color: "#8a8a8a" }, message: "The Gothic peoples migrate westward" },
+  // --- Scythian decline (1000 BC start -> ~370 AD final dissolution) ---
+  // 339 BC: Philip II defeats and kills King Ateas, breaking Scythian power in the Balkans.
+  { year: -339, type: "war", a: "Macedon", b: "Scythians", region: { lat: [42, 50], lon: [22, 36] }, reinforce: 8, message: "Philip II of Macedon defeats King Ateas - Scythian power in the Balkans broken" },
+  // 3rd-2nd c. BC: Sarmatians push the Scythians off the Pontic steppe into Crimea.
+  { year: -250, civ: { name: "Sarmatians", lat: 48, lon: 45, color: "#9a8a40" }, message: "Sarmatians sweep across the Pontic steppe" },
+  { year: -250, type: "goal", civ: "Sarmatians", region: { lat: [44, 55], lon: [30, 60] }, priority: 1.0, message: "Sarmatian dominance over the steppe begins" },
+  { year: -250, type: "war", a: "Sarmatians", b: "Scythians", region: { lat: [45, 55], lon: [30, 55] }, reinforce: 12, message: "Sarmatians displace the Scythians from the Pontic steppe - they retreat to Crimea" },
+  // Late 2nd c. BC: Mithridates VI of Pontus crushes the Crimean Scythian remnant.
+  { year: -100, civ: { name: "Pontus", lat: 41, lon: 36, color: "#5a3a8a" }, message: "Mithridates VI rises - the Kingdom of Pontus expands across Anatolia and the Black Sea" },
+  { year: -100, type: "war", a: "Pontus", b: "Scythians", region: { lat: [44, 47], lon: [32, 36] }, reinforce: 8, message: "Mithridates VI defeats the Crimean Scythians - their resurgence is over" },
+  // 250 AD: Gothic invasions overwhelm the last Scythian holdouts.
+  { year:  250, type: "war", a: "Goths", b: "Scythians", region: { lat: [44, 50], lon: [28, 50] }, reinforce: 8, message: "Gothic invasions overwhelm the last independent Scythian groups" },
+  // 370 AD: Huns finish the job; the Scythians as a distinct people are gone.
+  { year:  370, civ: { name: "Huns", lat: 47, lon: 50, color: "#3a3a3a" }, message: "The Huns sweep into Europe from the eastern steppe" },
+  { year:  370, type: "absorb", absorber: "Huns", target: "Scythians", message: "Hunnic invasion ends the Scythians - their last remnants are absorbed into the steppe peoples" },
+  // The Hunnic Empire collapses after Attila's death (453); their tag fades soon after.
+  { year:  453, type: "absorb", absorber: "Goths", target: "Huns", message: "Battle of Nedao - Attila's heirs fall to a Gothic-led coalition; the Hunnic Empire dissolves" },
+  { year:  570, civ: { name: "Arabs",       lat: 24,  lon: 39,   color: "#1a8a4a" }, message: "Arabia stirs - the age of the caliphates approaches" },
+  { year:  632, type: "goal", civ: "Arabs", region: { lat: [12, 40], lon: [-10, 65] }, priority: 0.95, message: "The Rashidun caliphates begin spreading Islam westward and east" },
+  { year:  800, type: "rename", from: "Franks", to: "Carolingian Empire", color: "#5a7af0", message: "Charlemagne crowned Emperor - the Carolingian Empire" },
+  { year:  900, civ: { name: "Vikings",     lat: 60,  lon: 10,   color: "#5dc4e8" }, message: "Norse longships strike the coasts" },
+
+  // --- Polish, Baltic, Livonian evolution ---
+  { year:  870, civ: { name: "Bohemia",      lat: 50, lon: 15, color: "#ff8a40" }, message: "The Přemyslid dynasty unites Bohemia" },
+  { year:  966, civ: { name: "Duchy of Poland", lat: 52, lon: 18, color: "#dc143c" }, replaces: "Polans", message: "Mieszko I baptized - the Duchy of Poland is founded" },
+  { year: 1025, civ: { name: "Kingdom of Poland", color: "#b00020" }, replaces: "Duchy of Poland", message: "Bolesław the Brave is crowned the first King of Poland" },
+  { year: 1207, civ: { name: "Livonian Order", lat: 57, lon: 25, color: "#e0e0e0" }, message: "Crusaders found the Livonian Order in Terra Mariana" },
+  { year: 1253, civ: { name: "Grand Duchy of Lithuania", lat: 55, lon: 24, color: "#1a3a8a" }, replaces: "Balts", message: "Mindaugas crowned King of Lithuania" },
+  // GDL's historical drive: conquer the territory it actually held at its
+  // peak. The province list is computed from GDLstates/ (any state tagged
+  // owner=LIT in that folder). Spans Lithuania, Belarus, parts of Ukraine,
+  // and the western Russian frontier.
+  { year: 1316, type: "goal", civ: "Grand Duchy of Lithuania", provinces: typeof HOI4_GDL_PROVINCES !== "undefined" ? HOI4_GDL_PROVINCES : [], priority: 1.0, message: "Gediminas drives Lithuania toward its peak: Ruthenia, Belarus, Black Sea coast" },
+
+  // 1400–1434: Vytautas the Great expands GDL toward its historical peak.
+  // Each staged claim grabs an additional geographic region; the final 1434
+  // event guarantees every province in HOI4_GDL_PROVINCES is GDL-owned.
+  { year: 1400, type: "claim", civ: "Grand Duchy of Lithuania", region: { lat: [54, 57], lon: [21, 28] }, message: "Vytautas consolidates the Lithuanian core" },
+  { year: 1410, type: "claim", civ: "Grand Duchy of Lithuania", region: { lat: [52, 56], lon: [24, 32] }, message: "Battle of Grunwald - GDL secures Belarus and the Niemen" },
+  { year: 1420, type: "claim", civ: "Grand Duchy of Lithuania", region: { lat: [50, 54], lon: [25, 32] }, message: "GDL extends into Volhynia and western Ruthenia" },
+  { year: 1430, type: "claim", civ: "Grand Duchy of Lithuania", region: { lat: [47, 52], lon: [27, 36] }, message: "GDL pushes south toward the Black Sea steppe" },
+  { year: 1434, type: "claim", civ: "Grand Duchy of Lithuania", provinces: typeof HOI4_GDL_PROVINCES !== "undefined" ? HOI4_GDL_PROVINCES : [], message: "Vytautas's peak: GDL spans from the Baltic to the Black Sea" },
+  { year: 1385, type: "alliance", a: "Kingdom of Poland", b: "Grand Duchy of Lithuania", message: "The Union of Krewo binds Poland and Lithuania in alliance" },
+  { year: 1561, type: "rename", from: "Livonian Order", to: "Duchy of Courland", color: "#c8c8a0", message: "The Livonian Order dissolved; Courland emerges" },
+  { year: 1569, type: "merge", from: ["Kingdom of Poland", "Grand Duchy of Lithuania"], to: { name: "Polish-Lithuanian Commonwealth", color: "#dc143c" }, message: "The Union of Lublin forms the Polish-Lithuanian Commonwealth" },
+  // 1795: Russia (and Prussia/Austria, but we abstract) absorbs the Commonwealth.
+  // The Commonwealth is wiped from the map and Russia takes its territory.
+  { year: 1772, type: "goal", civ: "Russian Empire", region: { lat: [49, 56], lon: [14, 27] }, priority: 1.0, message: "Russia begins the partition of Poland-Lithuania" },
+  { year: 1795, type: "absorb", absorber: "Russian Empire", target: "Polish-Lithuanian Commonwealth", message: "The Polish-Lithuanian Commonwealth is dissolved by partition; absorbed by Russia" },
+
+  // ---- Scramble for Africa (1830 – 1900): colonial powers carve up the continent ----
+  { year: 1830, type: "claim", civ: "Kingdom of France", region: { lat: [29, 37], lon: [-9, 12] }, message: "France invades Algiers - the French Algerian colony begins" },
+  { year: 1869, type: "claim", civ: "United Kingdom",   region: { lat: [22, 32], lon: [25, 36] }, message: "Suez Canal opens - Britain tightens its grip on Egypt" },
+  { year: 1881, type: "claim", civ: "France",            region: { lat: [30, 37], lon: [7, 12] }, message: "France establishes the Tunisian protectorate" },
+  { year: 1882, type: "claim", civ: "United Kingdom",   region: { lat: [22, 32], lon: [25, 36] }, message: "Britain occupies Egypt" },
+  { year: 1884, type: "claim", civ: "Germany",           region: { lat: [-5, 5], lon: [9, 14] }, message: "Berlin Conference - Germany claims Kamerun and SW Africa" },
+  { year: 1885, type: "claim", civ: "Belgium",           region: { lat: [-13, 6], lon: [12, 30] }, message: "Berlin Conference: Leopold II claims the Congo as personal property" },
+  { year: 1885, type: "claim", civ: "United Kingdom",   region: { lat: [-30, -15], lon: [15, 33] }, message: "Britain claims Bechuanaland and Rhodesian frontier" },
+  { year: 1890, type: "claim", civ: "Italy",             region: { lat: [10, 18], lon: [38, 52] }, message: "Italy carves out Eritrea and Italian Somaliland" },
+  { year: 1898, type: "claim", civ: "United Kingdom",   region: { lat: [-1, 22], lon: [21, 36] }, message: "Britain finishes the Cape-to-Cairo line - Sudan and East Africa" },
+  // 1900: World colonization fills any remaining unowned land based on HOI4
+  // 1936 ownership tags. The earlier staged claims have already done most of
+  // Africa; this catches the rest (Pacific islands, polar fringes, etc.).
+  { year: 1900, type: "colonize", message: "The age of empires complete: every land tile now belongs to a great power" },
+
+  // World Wars unlock global aggression. WWI + the Polish-Soviet War run as one
+  // wartime block (1914–1922) so the independence wars can play out.
+  { year: 1914, type: "wartime", on: true, message: "World War I begins - the great powers mobilize" },
+
+  // 1918: Poland and Lithuania secede from the Russian Empire. They take all
+  // HOI4 states that have the matching owner tag in 1936 (POL / LIT) - so each
+  // ends up with exactly its inter-war ethnic territory. Vilnius is naturally
+  // Polish (HOI4 1936 has it under POL), matching what actually happened.
+  { year: 1918, type: "secede", target: "Russian Empire", civ: "Republic of Poland",
+    spawn: { name: "Republic of Poland", lat: 52, lon: 19, color: "#dc143c" },
+    byOwner: "POL",
+    message: "Poland reborn after WWI - reclaims its 1918–39 ethnic territory" },
+  { year: 1918, type: "secede", target: "Russian Empire", civ: "Republic of Lithuania",
+    spawn: { name: "Republic of Lithuania", lat: 55, lon: 24, color: "#1a8a4a" },
+    byOwner: "LIT",
+    message: "Lithuania declares independence - reclaims Žemaitija, Aukštaitija, Memel, Kaunas" },
+  { year: 1918, type: "secede", target: "Russian Empire", civ: "Republic of Latvia",
+    spawn: { name: "Republic of Latvia", lat: 56.95, lon: 24.1, color: "#9e2a2a" },
+    byOwner: "LAT",
+    message: "Latvia proclaims independence - the Republic of Latvia is born in Riga" },
+  { year: 1918, type: "secede", target: "Russian Empire", civ: "Republic of Estonia",
+    spawn: { name: "Republic of Estonia", lat: 59.4, lon: 24.75, color: "#2c6db0" },
+    byOwner: "EST",
+    message: "Estonia declares independence - the Republic of Estonia rises in Tallinn" },
+
+  { year: 1922, type: "wartime", on: false, message: "Polish-Soviet War ends - interwar peace" },
+  // 1927-1949: Chinese Civil War (we use existing Republic of China + Communist faction).
+  { year: 1927, type: "secede", target: "Republic of China", civ: "Chinese Communists", spawn: { name: "Chinese Communists", lat: 36, lon: 109, color: "#e02020" }, region: { lat: [33, 40], lon: [105, 115] }, message: "Chinese Civil War begins - Mao's Communists break with the KMT" },
+  // (1949 PRC rename above represents the Communist victory.)
+
+  // 1936-1939: Spanish Civil War.
+  { year: 1936, type: "secede", target: "Kingdom of Spain", civ: "Spanish Nationalists", spawn: { name: "Spanish Nationalists", lat: 41, lon: -2, color: "#181818" }, region: { lat: [37, 43], lon: [-9, 0] }, message: "Spanish Civil War: Franco's Nationalists rise" },
+  { year: 1936, type: "wartime", on: true, message: "Spanish Civil War - wartime active in Iberia" },
+  { year: 1939, type: "absorb", absorber: "Spanish Nationalists", target: "Kingdom of Spain", message: "Franco wins - Spain unified under the Nationalists" },
+  { year: 1939, type: "rename", from: "Spanish Nationalists", to: "Francoist Spain", color: "#604030", message: "General Franco assumes dictatorship of Spain" },
+
+  // ---- World War II package ----
+  { year: 1933, type: "rename", from: "Germany", to: "Nazi Germany", color: "#222222", message: "Hitler becomes Chancellor - Germany turns Nazi" },
+  { year: 1936, type: "rename", from: "Italy", to: "Fascist Italy", color: "#1a4a1a", message: "Mussolini consolidates power - Italy under fascism" },
+  // Spanish Civil War (we don't have Spain civs split into republicans/nationalists,
+  // so just a chronicle log).
+  // 1938 March: Anschluss - Austria absorbed by Germany. (We don't have a separate
+  // Austria civ; encoded as a goal so Germany advances toward Austrian territory.)
+  { year: 1938, type: "goal", civ: "Nazi Germany", region: { lat: [46, 49], lon: [9, 17] }, priority: 1.0, message: "Anschluss: Germany annexes Austria" },
+  // 1939 Aug: Molotov-Ribbentrop Pact - Germany & Soviet Union briefly allied.
+  { year: 1939, type: "alliance", a: "Nazi Germany", b: "Soviet Union", message: "Molotov-Ribbentrop Pact: Germany and the Soviet Union sign a non-aggression pact" },
+  { year: 1939, type: "wartime", on: true, message: "World War II begins" },
+  // 1939 Sept 1: Germany invades Poland - takes western Polish territory.
+  { year: 1939, type: "secede", target: "Republic of Poland", civ: "Nazi Germany",
+    region: { lat: [49, 55], lon: [14, 21] },
+    message: "Germany invades Poland (Sept 1, 1939) - Wehrmacht overruns the west" },
+  // 1939 Sept 17: Soviets invade eastern Poland.
+  { year: 1939, type: "secede", target: "Republic of Poland", civ: "Soviet Union",
+    region: { lat: [49, 55], lon: [21, 25] },
+    message: "Soviet invasion of Poland (Sept 17) - eastern Poland falls" },
+  // 1940 June: under the Molotov-Ribbentrop secret protocol, the USSR
+  // occupies and absorbs the three Baltic republics.
+  { year: 1940, type: "absorb", absorber: "Soviet Union", target: "Republic of Lithuania", message: "Soviet occupation of Lithuania - annexed by the USSR" },
+  { year: 1940, type: "absorb", absorber: "Soviet Union", target: "Republic of Latvia",    message: "Soviet occupation of Latvia - annexed by the USSR" },
+  { year: 1940, type: "absorb", absorber: "Soviet Union", target: "Republic of Estonia",   message: "Soviet occupation of Estonia - annexed by the USSR" },
+  // 1940 May/June: Battle of France - Germany takes France.
+  { year: 1940, type: "secede", target: "France", civ: "Nazi Germany", byOwner: "FRA",
+    message: "The Battle of France: Germany overruns Paris and the metropolitan French territory" },
+  // 1941 June: Operation Barbarossa - Germany breaks the pact, attacks the USSR.
+  { year: 1941, type: "barbarossa", a: "Nazi Germany", b: "Soviet Union", message: "Operation Barbarossa: Germany invades the Soviet Union" },
+  // 1941 December: Pearl Harbor - Japan attacks the USA.
+  { year: 1941, type: "barbarossa", a: "Yamato", b: "USA", message: "Pearl Harbor: Japan attacks the United States" },
+  // 1943: Stalingrad turning point (chronicle only - Soviets later push back via wartime AI).
+  // --- 1944: Western Allies liberate Nazi-occupied territories. ---
+  // Each previously-conquered nation is RESPAWNED out of Nazi Germany via
+  // byOwner so the right HOI4 1936 territory comes back. After this runs,
+  // the 1945 Soviet absorb of Nazi Germany only takes Germany proper +
+  // Eastern-front gains, not all of Western Europe.
+  { year: 1944, type: "secede", target: "Nazi Germany", civ: "France",
+    spawn: { name: "France", lat: 48.86, lon: 2.35, color: "#1a4ba8" }, byOwner: "FRA",
+    message: "Liberation of France - Allied armies free Paris" },
+  { year: 1944, type: "secede", target: "Nazi Germany", civ: "Belgium",
+    spawn: { name: "Belgium", lat: 50.85, lon: 4.35, color: "#ffd24a" }, byOwner: "BEL",
+    message: "Belgium liberated from German occupation" },
+  { year: 1944, type: "secede", target: "Nazi Germany", civ: "Netherlands",
+    spawn: { name: "Netherlands", lat: 52.37, lon: 4.90, color: "#ff8c00" }, byOwner: "HOL",
+    message: "Netherlands liberated from German occupation" },
+  { year: 1945, type: "secede", target: "Nazi Germany", civ: "Denmark",
+    spawn: { name: "Denmark", lat: 55.68, lon: 12.57, color: "#c20020" }, byOwner: "DEN",
+    message: "Denmark liberated from German occupation" },
+  { year: 1945, type: "secede", target: "Nazi Germany", civ: "Norway",
+    spawn: { name: "Norway", lat: 59.91, lon: 10.75, color: "#a01818" }, byOwner: "NOR",
+    message: "Norway liberated from German occupation" },
+  // 1944 June: D-Day (chronicle).
+  // 1945 May: Soviets take Berlin - whatever Nazi Germany still holds (its own
+  // territory + Eastern Front gains) goes to the USSR.
+  { year: 1945, type: "absorb", absorber: "Soviet Union", target: "Nazi Germany", message: "Berlin falls - Nazi Germany is dismantled, Soviets take what remains" },
+  // --- Post-WWII division of Germany ---
+  // 1949: West Germany (Bundesrepublik) breaks free from the Soviet zone -
+  // it takes the Allied (American/British/French) occupation regions.
+  { year: 1949, type: "secede", target: "Soviet Union", civ: "West Germany",
+    spawn: { name: "West Germany", lat: 50.11, lon: 8.68, color: "#202020" },
+    region: { lat: [47, 55], lon: [5, 11] },
+    message: "West Germany (Bundesrepublik Deutschland) is founded in the Allied zones" },
+  // 1949: East Germany (DDR) - Soviet zone formally splits off as a satellite.
+  { year: 1949, type: "secede", target: "Soviet Union", civ: "East Germany",
+    spawn: { name: "East Germany", lat: 52.52, lon: 13.40, color: "#a02828" },
+    region: { lat: [50.5, 54.5], lon: [11, 15] },
+    message: "East Germany (DDR) declared - the Soviet zone becomes a separate state" },
+  // 1989-1990: Berlin Wall falls; East Germany absorbed into West Germany.
+  { year: 1989, type: "wartime", on: false, message: "Berlin Wall falls - the Cold War winds down" },
+  { year: 1990, type: "absorb", absorber: "West Germany", target: "East Germany", message: "German reunification - East Germany rejoins the West" },
+  { year: 1990, type: "rename", from: "West Germany", to: "Germany", color: "#202020", spawnIfMissing: { lat: 52.52, lon: 13.40 }, message: "Reunified Germany formed - the Federal Republic spans east and west" },
+  // 1945 August: Hiroshima/Nagasaki - Japan surrenders, USA absorbs.
+  { year: 1945, type: "absorb", absorber: "USA", target: "Yamato", message: "Hiroshima/Nagasaki - Japan surrenders to the United States" },
+  { year: 1945, type: "wartime", on: false, message: "WWII ends" },
+
+  // ---- Post-war / Cold War / decolonization ----
+  { year: 1947, type: "secede", target: "United Kingdom", civ: "India", spawn: { name: "India", lat: 22, lon: 78, color: "#ff8a3a" }, byOwner: "RAJ", message: "Partition of British India - India and Pakistan independent" },
+  { year: 1948, civ: { name: "Israel", lat: 31.8, lon: 35.0, color: "#3a6ad8" }, message: "State of Israel proclaimed" },
+  // ---- Decolonization wave 1957-1965 ----
+  { year: 1957, type: "secede", target: "United Kingdom", civ: "Ghana",          spawn: { name: "Ghana",          lat:  7.9, lon:  -1.0, color: "#e8b020" }, byOwner: "GHA", message: "Ghana - first sub-Saharan African colony to gain independence" },
+  { year: 1956, type: "secede", target: "Egypt",          civ: "Modern Egypt",   spawn: { name: "Modern Egypt",   lat: 30.0, lon:  31.2, color: "#a07020" }, byOwner: "EGY", message: "Suez Crisis - Nasser nationalizes the Suez Canal; modern Egypt asserts sovereignty" },
+  { year: 1960, type: "secede", target: "France",         civ: "Algeria",        spawn: { name: "Algeria",        lat: 36.7, lon:   3.1, color: "#1a8a4a" }, byOwner: "ALG", message: "Algeria gains independence after a brutal eight-year war" },
+  { year: 1960, type: "secede", target: "United Kingdom", civ: "Nigeria",        spawn: { name: "Nigeria",        lat:  9.1, lon:   7.5, color: "#1a8a3a" }, byOwner: "NIG", message: "Nigeria gains independence from Britain" },
+  { year: 1962, type: "secede", target: "France",         civ: "Vietnam",        spawn: { name: "Vietnam",        lat: 21.0, lon: 105.8, color: "#e02020" }, byOwner: "VIN", message: "Vietnam asserts unity after the French Indochina collapse" },
+  { year: 1964, type: "secede", target: "United Kingdom", civ: "Kenya",          spawn: { name: "Kenya",          lat: -1.3, lon:  36.8, color: "#a02020" }, byOwner: "KEN", message: "Kenya gains independence from Britain" },
+  // --- Wider African decolonization wave ---
+  { year: 1951, type: "secede", target: "Italy",          civ: "Libya",          spawn: { name: "Libya",          lat: 32.9, lon:  13.2, color: "#1a4a3a" }, byOwner: "LIB", message: "Libya gains independence from Italian rule" },
+  { year: 1956, type: "secede", target: "France",         civ: "Morocco",        spawn: { name: "Morocco",        lat: 33.97, lon: -6.85, color: "#a01818" }, byOwner: "MOR", message: "Morocco gains independence from France" },
+  { year: 1956, type: "secede", target: "France",         civ: "Tunisia",        spawn: { name: "Tunisia",        lat: 36.81, lon: 10.18, color: "#c81818" }, byOwner: "TUN", message: "Tunisia gains independence from France" },
+  { year: 1956, type: "secede", target: "United Kingdom", civ: "Sudan",          spawn: { name: "Sudan",          lat: 15.5,  lon: 32.56, color: "#3a8a4a" }, byOwner: "SUD", message: "Sudan gains independence from the British" },
+  { year: 1958, type: "secede", target: "France",         civ: "Guinea",         spawn: { name: "Guinea",         lat:  9.64, lon: -13.58, color: "#c81818" }, byOwner: "GUI", message: "Guinea gains independence from France" },
+  { year: 1960, type: "secede", target: "Belgium",        civ: "Congo",          spawn: { name: "Congo",          lat: -4.32, lon: 15.32, color: "#1a8a4a" }, byOwner: "COG", message: "Congo gains independence from Belgium" },
+  { year: 1960, type: "secede", target: "France",         civ: "Senegal",        spawn: { name: "Senegal",        lat: 14.69, lon: -17.45, color: "#1a4a8a" }, byOwner: "SEN", message: "Senegal gains independence from France" },
+  { year: 1960, type: "secede", target: "France",         civ: "Mali",           spawn: { name: "Mali",           lat: 12.65, lon: -8.0, color: "#3a8a3a" }, byOwner: "MLI", message: "Mali gains independence from France" },
+  { year: 1960, type: "secede", target: "France",         civ: "Cameroon",       spawn: { name: "Cameroon",       lat:  3.85, lon: 11.5, color: "#3a6a4a" }, byOwner: "CMR", message: "Cameroon gains independence from France" },
+  { year: 1960, type: "secede", target: "France",         civ: "Madagascar",     spawn: { name: "Madagascar",     lat: -18.88, lon: 47.51, color: "#a02828" }, byOwner: "MAD", message: "Madagascar gains independence from France" },
+  { year: 1960, type: "secede", target: "France",         civ: "Ivory Coast",    spawn: { name: "Ivory Coast",    lat:  5.32, lon: -4.03, color: "#e08820" }, byOwner: "IVO", message: "Côte d'Ivoire gains independence from France" },
+  { year: 1961, type: "secede", target: "United Kingdom", civ: "Tanzania",       spawn: { name: "Tanzania",       lat: -6.79, lon: 39.21, color: "#1a8a4a" }, byOwner: "TAN", message: "Tanganyika (later Tanzania) becomes independent" },
+  { year: 1962, type: "secede", target: "United Kingdom", civ: "Uganda",         spawn: { name: "Uganda",         lat:  0.32, lon: 32.58, color: "#202020" }, byOwner: "UGA", message: "Uganda gains independence from Britain" },
+  { year: 1962, type: "secede", target: "Belgium",        civ: "Rwanda",         spawn: { name: "Rwanda",         lat: -1.94, lon: 29.87, color: "#3a6ad8" }, byOwner: "RWA", message: "Rwanda gains independence from Belgium" },
+  { year: 1965, type: "secede", target: "United Kingdom", civ: "Zambia",         spawn: { name: "Zambia",         lat: -15.42, lon: 28.28, color: "#1a4a3a" }, byOwner: "ZAM", message: "Zambia gains independence from Britain" },
+  { year: 1965, type: "secede", target: "United Kingdom", civ: "Rhodesia",       spawn: { name: "Rhodesia",       lat: -17.83, lon: 31.05, color: "#3a8a4a" }, byOwner: "ZIM", message: "Rhodesia (later Zimbabwe) declares independence" },
+  { year: 1968, type: "secede", target: "Kingdom of Spain", civ: "Equatorial Guinea", spawn: { name: "Equatorial Guinea", lat: 3.75, lon: 8.78, color: "#1a4a4a" }, byOwner: "GNG", message: "Equatorial Guinea gains independence from Spain" },
+  { year: 1975, type: "secede", target: "Kingdom of Portugal", civ: "Angola",   spawn: { name: "Angola",         lat: -8.84, lon: 13.23, color: "#a02020" }, byOwner: "ANG", message: "Angola gains independence from Portugal" },
+  { year: 1975, type: "secede", target: "Kingdom of Portugal", civ: "Mozambique", spawn: { name: "Mozambique",   lat: -25.97, lon: 32.58, color: "#1a8a4a" }, byOwner: "MZB", message: "Mozambique gains independence from Portugal" },
+  { year: 1980, type: "secede", target: "United Kingdom", civ: "Zimbabwe",       spawn: { name: "Zimbabwe",       lat: -17.83, lon: 31.05, color: "#1a8a4a" }, byOwner: "ZIM", message: "Zimbabwe gains majority rule and full independence" },
+  { year: 1990, type: "secede", target: "South Africa",   civ: "Namibia",        spawn: { name: "Namibia",        lat: -22.56, lon: 17.08, color: "#3a6ad8" }, byOwner: "NMB", message: "Namibia gains independence from South Africa" },
+  { year: 1949, type: "rename", from: "Republic of China", to: "People's Republic of China", color: "#e8201a", message: "Mao proclaims the People's Republic of China" },
+  // 1989-1991: collapse of the Eastern Bloc + Yugoslav breakup.
+  // 1991 Baltic / Poland secedes need explicit spawn blocks because the
+  // original "Republic of X" civs were absorbed by the USSR in 1940 - dead
+  // civs can't be reused, so we have to spawn fresh ones here.
+  { year: 1991, type: "secede", target: "Soviet Union", civ: "Republic of Lithuania",
+    spawn: { name: "Republic of Lithuania", lat: 54.69, lon: 25.28, color: "#1a8a4a" },
+    byOwner: "LIT", byStateName: ["Ermland-Masuren"],
+    message: "Lithuania regains independence from the Soviet Union" },
+  { year: 1991, type: "secede", target: "Soviet Union", civ: "Republic of Latvia",
+    spawn: { name: "Republic of Latvia", lat: 56.95, lon: 24.1, color: "#9e2a2a" },
+    byOwner: "LAT", message: "Latvia restores independence from the Soviet Union" },
+  { year: 1991, type: "secede", target: "Soviet Union", civ: "Republic of Estonia",
+    spawn: { name: "Republic of Estonia", lat: 59.4, lon: 24.75, color: "#2c6db0" },
+    byOwner: "EST", message: "Estonia restores independence from the Soviet Union" },
+  { year: 1991, type: "secede", target: "Soviet Union", civ: "Republic of Poland",
+    spawn: { name: "Republic of Poland", lat: 52, lon: 19, color: "#dc143c" },
+    byOwner: "POL",
+    message: "Polish People's Republic ends - democratic Poland reborn" },
+  { year: 1991, type: "secede", target: "Soviet Union", civ: "Ukraine", spawn: { name: "Ukraine", lat: 50.4, lon: 30.5, color: "#ffd24a" }, byOwner: "UKR", message: "Ukraine declares independence" },
+  { year: 1991, type: "secede", target: "Soviet Union", civ: "Belarus", spawn: { name: "Belarus", lat: 53.9, lon: 27.6, color: "#3a8a4a" }, byOwner: "BLR", message: "Belarus declares independence" },
+  // --- Full post-Soviet collapse: every modern republic regains its
+  //     HOI4 1936 territory, and signs a non-aggression pact with Russia.
+  { year: 1991, type: "secede", target: "Soviet Union", civ: "Kazakhstan",
+    spawn: { name: "Kazakhstan", lat: 51.17, lon: 71.45, color: "#3a7ad8" }, byOwner: "KAZ",
+    message: "Kazakhstan declares independence from the Soviet Union" },
+  { year: 1991, type: "secede", target: "Soviet Union", civ: "Uzbekistan",
+    spawn: { name: "Uzbekistan", lat: 41.31, lon: 69.24, color: "#3aa840" }, byOwner: "UZB",
+    message: "Uzbekistan declares independence from the Soviet Union" },
+  { year: 1991, type: "secede", target: "Soviet Union", civ: "Turkmenistan",
+    spawn: { name: "Turkmenistan", lat: 37.95, lon: 58.38, color: "#3a8a3a" }, byOwner: "TKM",
+    message: "Turkmenistan declares independence from the Soviet Union" },
+  { year: 1991, type: "secede", target: "Soviet Union", civ: "Kyrgyzstan",
+    spawn: { name: "Kyrgyzstan", lat: 42.87, lon: 74.59, color: "#a02828" }, byOwner: "KGZ",
+    message: "Kyrgyzstan declares independence from the Soviet Union" },
+  { year: 1991, type: "secede", target: "Soviet Union", civ: "Tajikistan",
+    spawn: { name: "Tajikistan", lat: 38.56, lon: 68.79, color: "#a04040" }, byOwner: "TJK",
+    message: "Tajikistan declares independence from the Soviet Union" },
+  { year: 1991, type: "secede", target: "Soviet Union", civ: "Armenia",
+    spawn: { name: "Armenia", lat: 40.18, lon: 44.51, color: "#c83030" }, byOwner: "ARM",
+    message: "Armenia declares independence from the Soviet Union" },
+  { year: 1991, type: "secede", target: "Soviet Union", civ: "Azerbaijan",
+    spawn: { name: "Azerbaijan", lat: 40.41, lon: 49.85, color: "#3a8a8a" }, byOwner: "AZR",
+    message: "Azerbaijan declares independence from the Soviet Union" },
+  { year: 1991, type: "secede", target: "Soviet Union", civ: "Georgia",
+    spawn: { name: "Georgia", lat: 41.72, lon: 44.79, color: "#a01818" }, byOwner: "GEO",
+    message: "Georgia declares independence from the Soviet Union" },
+  { year: 1991, type: "secede", target: "Soviet Union", civ: "Moldova",
+    spawn: { name: "Moldova", lat: 47.01, lon: 28.86, color: "#3a4a8a" }, byOwner: "MOL",
+    message: "Moldova declares independence from the Soviet Union" },
+  // 1991: Russia (the renamed Soviet Union) signs non-aggression pacts with
+  // every CIS republic - they're independent but the borders stay peaceful.
+  { year: 1991, type: "alliance", a: "Russia", b: "Ukraine",      message: "Russia and Ukraine sign a non-aggression pact (CIS founding)" },
+  { year: 1991, type: "alliance", a: "Russia", b: "Belarus",      message: "Russia and Belarus sign a non-aggression pact" },
+  { year: 1991, type: "alliance", a: "Russia", b: "Kazakhstan",   message: "Russia and Kazakhstan sign a non-aggression pact" },
+  { year: 1991, type: "alliance", a: "Russia", b: "Uzbekistan",   message: "Russia and Uzbekistan sign a non-aggression pact" },
+  { year: 1991, type: "alliance", a: "Russia", b: "Turkmenistan", message: "Russia and Turkmenistan sign a non-aggression pact" },
+  { year: 1991, type: "alliance", a: "Russia", b: "Kyrgyzstan",   message: "Russia and Kyrgyzstan sign a non-aggression pact" },
+  { year: 1991, type: "alliance", a: "Russia", b: "Tajikistan",   message: "Russia and Tajikistan sign a non-aggression pact" },
+  { year: 1991, type: "alliance", a: "Russia", b: "Armenia",      message: "Russia and Armenia sign a non-aggression pact" },
+  { year: 1991, type: "alliance", a: "Russia", b: "Azerbaijan",   message: "Russia and Azerbaijan sign a non-aggression pact" },
+  { year: 1991, type: "alliance", a: "Russia", b: "Georgia",      message: "Russia and Georgia sign a non-aggression pact" },
+  { year: 1991, type: "alliance", a: "Russia", b: "Moldova",      message: "Russia and Moldova sign a non-aggression pact" },
+  { year: 1991, type: "alliance", a: "Russia", b: "Republic of Lithuania", message: "Russia and Lithuania sign a non-aggression pact" },
+  { year: 1991, type: "alliance", a: "Russia", b: "Republic of Latvia",    message: "Russia and Latvia sign a non-aggression pact" },
+  { year: 1991, type: "alliance", a: "Russia", b: "Republic of Estonia",   message: "Russia and Estonia sign a non-aggression pact" },
+
+  // ============================================================
+  // HISTORICAL WARS - drawn from Wikipedia's "List of wars" series.
+  // Each war drops relations between the named civs to -100, makes both
+  // wartime-aggressive, hands the aggressor a goal region so its troops know
+  // where to march, and reinforces both sides so they have armies to fight
+  // with. Land changes hands organically through combat instead of via
+  // instant claim events.
+  // ============================================================
+  // --- Pre-1000 ---
+  { year: -490, type: "war", a: "Persia", b: "Greeks", region: { lat: [37, 41], lon: [22, 28] }, reinforce: 8, message: "Greco-Persian Wars - Persia invades Greece (Marathon, Thermopylae, Salamis)" },
+  { year: -431, type: "war", a: "Greeks", b: "Macedon", region: { lat: [37, 42], lon: [21, 27] }, reinforce: 5, message: "Peloponnesian War - Greek city-states tear themselves apart (rivalry abstracted)" },
+  { year: -264, type: "war", a: "Rome", b: "Carthage", region: { lat: [36, 42], lon: [8, 16] }, reinforce: 8, message: "First Punic War - Rome and Carthage clash over Sicily" },
+  { year: -218, type: "war", a: "Rome", b: "Carthage", region: { lat: [35, 44], lon: [-9, 16] }, reinforce: 10, message: "Second Punic War - Hannibal crosses the Alps" },
+  { year:  -58, type: "war", a: "Rome", b: "Gauls",   region: { lat: [42, 51], lon: [-5, 8] }, reinforce: 10, message: "Gallic Wars - Caesar invades Gaul" },
+  { year:  101, type: "war", a: "Rome", b: "Thracians", region: { lat: [42, 48], lon: [22, 30] }, reinforce: 6, message: "Dacian Wars - Trajan invades Dacia" },
+  { year:  226, type: "war", a: "Sasanians", b: "Rome", region: { lat: [30, 38], lon: [38, 50] }, reinforce: 8, message: "Roman-Sasanian Wars begin - centuries of conflict in the east" },
+  { year:  632, type: "war", a: "Arabs", b: "Sasanians", region: { lat: [25, 38], lon: [38, 60] }, reinforce: 10, message: "Muslim conquest of Persia - the Sasanian Empire is shattered" },
+  { year:  636, type: "war", a: "Arabs", b: "Byzantium", region: { lat: [28, 36], lon: [33, 42] }, reinforce: 10, message: "Arab-Byzantine Wars - Byzantium loses the Levant" },
+  { year:  771, type: "war", a: "Franks", b: "Lombards", region: { lat: [42, 47], lon: [7, 14] }, reinforce: 8, message: "Charlemagne's Italian campaign - the Franks march on the Lombards" },
+  { year:  962, type: "war", a: "Holy Roman Empire", b: "Lombards", region: { lat: [42, 47], lon: [7, 14] }, reinforce: 6, message: "Otto I's Italian campaigns - the HRE asserts itself in Italy" },
+
+  // --- 1000-1499 ---
+  { year: 1066, type: "war", a: "Kingdom of England", b: "Anglo-Saxons", region: { lat: [50, 56], lon: [-6, 2] }, reinforce: 6, message: "Norman Conquest of England - William invades" },
+  { year: 1095, type: "war", a: "Kingdom of Jerusalem", b: "Arabs", region: { lat: [29, 38], lon: [33, 42] }, reinforce: 8, message: "First Crusade declared - Christian armies march for the Holy Land" },
+  { year: 1147, type: "war", a: "Kingdom of Jerusalem", b: "Arabs", region: { lat: [29, 38], lon: [33, 42] }, reinforce: 6, message: "Second Crusade - renewed campaigns in the Levant" },
+  { year: 1189, type: "war", a: "Kingdom of England", b: "Arabs", region: { lat: [29, 38], lon: [33, 42] }, reinforce: 8, message: "Third Crusade - Richard the Lionheart vs. Saladin" },
+  { year: 1206, type: "war", a: "Mongols", b: "Yuan China", region: { lat: [30, 50], lon: [98, 130] }, reinforce: 12, message: "Mongol conquest of China begins" },
+  { year: 1219, type: "war", a: "Mongols", b: "Persia", region: { lat: [25, 45], lon: [40, 75] }, reinforce: 14, message: "Mongol conquest of Khwarezm - Iran shattered" },
+  { year: 1237, type: "war", a: "Mongols", b: "Russian Empire", region: { lat: [44, 60], lon: [30, 60] }, reinforce: 12, message: "Mongol invasion of Rus' begins (Russian Empire stand-in)" },
+  { year: 1337, type: "war", a: "Kingdom of England", b: "Kingdom of France", region: { lat: [42, 51], lon: [-5, 8] }, reinforce: 10, message: "Hundred Years' War begins" },
+  { year: 1396, type: "war", a: "Ottomans", b: "Holy Roman Empire", region: { lat: [40, 48], lon: [16, 30] }, reinforce: 10, message: "Battle of Nicopolis - Ottomans crush a European crusader army" },
+  { year: 1453, type: "war", a: "Ottomans", b: "Byzantium", region: { lat: [38, 42], lon: [25, 32] }, reinforce: 12, message: "Fall of Constantinople - the final Byzantine war" },
+  { year: 1455, type: "war", a: "Kingdom of England", b: "Kingdom of France", region: { lat: [42, 51], lon: [-5, 8] }, reinforce: 6, message: "End of the Hundred Years' War sealed; Wars of the Roses bleed England (abstracted)" },
+
+  // --- 1500-1799 ---
+  { year: 1521, type: "war", a: "Holy Roman Empire", b: "Kingdom of France", region: { lat: [42, 51], lon: [4, 12] }, reinforce: 8, message: "Italian Wars - Habsburg vs. Valois struggle for Italy" },
+  { year: 1568, type: "war", a: "Dutch Republic", b: "Kingdom of Spain", region: { lat: [50, 54], lon: [3, 7] }, reinforce: 8, message: "Eighty Years' War - the Dutch Revolt against Spain" },
+  { year: 1618, type: "war", a: "Holy Roman Empire", b: "Sweden", region: { lat: [48, 56], lon: [8, 18] }, reinforce: 10, message: "Thirty Years' War begins - Catholic vs. Protestant Europe" },
+  { year: 1700, type: "war", a: "Sweden", b: "Russian Empire", region: { lat: [55, 65], lon: [22, 35] }, reinforce: 10, message: "Great Northern War - Peter the Great vs. Charles XII" },
+  { year: 1701, type: "war", a: "Holy Roman Empire", b: "Kingdom of France", region: { lat: [44, 52], lon: [3, 14] }, reinforce: 10, message: "War of the Spanish Succession" },
+  { year: 1740, type: "war", a: "Kingdom of Prussia", b: "Holy Roman Empire", region: { lat: [49, 53], lon: [13, 18] }, reinforce: 10, message: "War of Austrian Succession - Frederick II seizes Silesia" },
+  { year: 1756, type: "war", a: "Kingdom of Prussia", b: "Holy Roman Empire", region: { lat: [49, 53], lon: [13, 18] }, reinforce: 10, message: "Seven Years' War begins - global conflict between great powers" },
+  { year: 1775, type: "war", a: "USA", b: "United Kingdom", region: { lat: [25, 50], lon: [-90, -65] }, reinforce: 10, message: "American Revolutionary War" },
+  { year: 1789, type: "war", a: "Kingdom of France", b: "Holy Roman Empire", region: { lat: [44, 52], lon: [3, 14] }, reinforce: 10, message: "French Revolutionary Wars begin" },
+
+  // --- 1800-1899 ---
+  { year: 1803, type: "war", a: "Kingdom of France", b: "United Kingdom", region: { lat: [42, 56], lon: [-10, 14] }, reinforce: 14, message: "Napoleonic Wars - all of Europe at war" },
+  { year: 1812, type: "war", a: "Kingdom of France", b: "Russian Empire", region: { lat: [50, 60], lon: [25, 45] }, reinforce: 14, message: "French invasion of Russia - the disastrous march on Moscow" },
+  { year: 1846, type: "war", a: "USA", b: "Mexico", region: { lat: [25, 38], lon: [-115, -95] }, reinforce: 8, message: "Mexican-American War" },
+  { year: 1853, type: "war", a: "Russian Empire", b: "Ottomans", region: { lat: [40, 48], lon: [27, 42] }, reinforce: 10, message: "Crimean War - Russia clashes with the Ottomans, Britain and France" },
+  { year: 1861, type: "war", a: "USA", b: "Confederate States", region: { lat: [25, 40], lon: [-95, -75] }, reinforce: 10, message: "American Civil War declared" },
+  { year: 1866, type: "war", a: "Kingdom of Prussia", b: "Austria-Hungary", region: { lat: [47, 51], lon: [12, 18] }, reinforce: 10, message: "Austro-Prussian War - Prussia takes the lead in Germany" },
+  { year: 1870, type: "war", a: "Kingdom of Prussia", b: "Kingdom of France", region: { lat: [47, 52], lon: [3, 8] }, reinforce: 10, message: "Franco-Prussian War" },
+  // 1871: France becomes the Third Republic after the Franco-Prussian War
+  // and Napoleon III's capture. Without this rename, every post-1871 event
+  // that targets "France" (1881 Tunisian claim, 1914 WWI, 1940 invasion,
+  // decolonization wave, etc.) silently fails - the civ on the map is still
+  // called "Kingdom of France" all the way through. spawnIfMissing keeps
+  // the chain alive even if the kingdom died in some odd playthrough.
+  { year: 1871, type: "rename", from: "Kingdom of France", to: "France", color: "#1a4ba8", spawnIfMissing: { lat: 48.86, lon: 2.35 }, message: "French Third Republic - Napoleon III deposed, the Republic returns" },
+  { year: 1894, type: "war", a: "Yamato", b: "Qing China", region: { lat: [30, 42], lon: [115, 125] }, reinforce: 8, message: "First Sino-Japanese War" },
+  { year: 1898, type: "war", a: "USA", b: "Kingdom of Spain", region: { lat: [18, 24], lon: [-86, -65] }, reinforce: 6, message: "Spanish-American War" },
+
+  // --- 1900-1944 ---
+  { year: 1904, type: "war", a: "Yamato", b: "Russian Empire", region: { lat: [42, 50], lon: [125, 135] }, reinforce: 8, message: "Russo-Japanese War" },
+  { year: 1912, type: "war", a: "Bulgaria", b: "Ottomans", region: { lat: [40, 44], lon: [22, 30] }, reinforce: 8, message: "First Balkan War" },
+  { year: 1914, type: "war", a: "Germany", b: "France", region: { lat: [48, 52], lon: [2, 8] }, reinforce: 14, message: "World War I - Germany invades Belgium and France" },
+  { year: 1914, type: "war", a: "Austria-Hungary", b: "Serbia", region: { lat: [43, 47], lon: [18, 22] }, reinforce: 10, message: "Austria-Hungary declares war on Serbia - WWI ignites" },
+  { year: 1939, type: "war", a: "Nazi Germany", b: "Republic of Poland", region: { lat: [49, 55], lon: [14, 25] }, reinforce: 16, message: "Germany invades Poland - WWII begins" },
+  { year: 1941, type: "war", a: "Nazi Germany", b: "Soviet Union", region: { lat: [44, 60], lon: [22, 50] }, reinforce: 20, message: "Operation Barbarossa - the Eastern Front opens" },
+  { year: 1941, type: "war", a: "Yamato", b: "USA", region: { lat: [15, 35], lon: [130, -130] }, reinforce: 14, message: "Pacific War - Pearl Harbor and the fall of Southeast Asia" },
+
+  // --- 1945-1989 ---
+  { year: 1950, type: "war", a: "People's Republic of China", b: "Korea", region: { lat: [33, 43], lon: [125, 130] }, reinforce: 12, message: "Korean War" },
+  { year: 1955, type: "war", a: "USA", b: "People's Republic of China", region: { lat: [8, 23], lon: [102, 110] }, reinforce: 10, message: "Vietnam War (proxy theater)" },
+  { year: 1979, type: "war", a: "Soviet Union", b: "Saudi Arabia", region: { lat: [30, 38], lon: [60, 75] }, reinforce: 12, message: "Soviet-Afghan War (Saudi Arabia stand-in for the Mujahideen support network)" },
+
+  // --- 1990-present ---
+  { year: 1991, type: "war", a: "USA", b: "Kingdom of Iraq", region: { lat: [28, 36], lon: [40, 50] }, reinforce: 14, message: "Gulf War - coalition vs. Iraq" },
+  { year: 2003, type: "war", a: "USA", b: "Kingdom of Iraq", region: { lat: [28, 36], lon: [40, 50] }, reinforce: 14, message: "Iraq War" },
+  { year: 2022, type: "war", a: "Russia", b: "Ukraine", region: { lat: [45, 53], lon: [22, 41] }, reinforce: 16, message: "Russian invasion of Ukraine" },
+
+  // ============================================================
+  // ENDINGS for empires/tribes that historically collapsed but were
+  // previously left lingering on the map. Fixes "Phoenicia at year 2024"
+  // weirdness.
+  // ============================================================
+  // -700s: Lydia minted coins; conquered by Persia at the Battle of Halys (-547).
+  { year: -547, type: "absorb", absorber: "Persia", target: "Lydia", message: "Cyrus defeats Croesus - Lydia falls to Persia" },
+  // -550: Cyrus consolidates Persia by absorbing Media.
+  { year: -550, type: "absorb", absorber: "Persia", target: "Medes", message: "Cyrus the Great overthrows Astyages - Media is absorbed into Persia" },
+  // -539: With Babylon falling to Persia, Phoenician city-states submit too.
+  { year: -539, type: "absorb", absorber: "Persia", target: "Phoenicia", message: "Phoenician cities submit to Persian rule after the fall of Babylon" },
+  // -460: Etruscan league absorbed by Rome's expansion.
+  { year: -396, type: "absorb", absorber: "Rome", target: "Etruscans", message: "Romans sack Veii - the Etruscan civilization fades into Rome" },
+  // -330: Alexander defeats Darius III - Persia falls to Macedon.
+  { year: -330, type: "absorb", absorber: "Macedon", target: "Persia", message: "Battle of Gaugamela - Alexander destroys the Achaemenid Empire" },
+  // -184: Mauryan Empire collapses under the Sunga coup; we just rename to "Sunga".
+  { year: -184, type: "rename", from: "Maurya", to: "Sunga India", color: "#c44a8a", spawnIfMissing: { lat: 25, lon: 81 }, message: "Mauryan Empire collapses - Pushyamitra Sunga seizes power" },
+  // -148: Antigonid Macedon falls to Rome (Fourth Macedonian War).
+  { year: -148, type: "absorb", absorber: "Rome", target: "Antigonid Macedon", message: "Fourth Macedonian War - Macedonia becomes a Roman province" },
+  // -146: Rome destroys Carthage at the end of the Third Punic War.
+  { year: -146, type: "absorb", absorber: "Rome", target: "Carthage", message: "Carthage destroyed at the end of the Third Punic War" },
+  // -64: Pompey ends the Seleucid Empire and the Pontic resurgence.
+  { year:  -64, type: "absorb", absorber: "Rome", target: "Seleucid Empire", message: "Pompey ends the Seleucid Empire - Syria becomes a Roman province" },
+  { year:  -63, type: "absorb", absorber: "Rome", target: "Pontus", message: "Mithridates VI's empire falls - Pontus annexed by Rome" },
+  // -50: Caesar's Gallic Wars end - Gaul becomes Roman.
+  { year:  -50, type: "absorb", absorber: "Rome", target: "Gauls", message: "Caesar's Gallic Wars end - Gaul fully absorbed into Rome" },
+  // -30: Octavian defeats Cleopatra and Antony - end of Ptolemaic Egypt.
+  { year:  -30, type: "absorb", absorber: "Rome", target: "Ptolemaic Egypt", message: "Octavian defeats Antony and Cleopatra - Ptolemaic Egypt becomes a Roman province" },
+  // -27: Egypt the proto-tribe quietly fades into the Roman provincial system.
+  { year:  -27, type: "absorb", absorber: "Rome", target: "Egypt", message: "Augustus annexes Ptolemaic territory - the old Egyptian kingdoms vanish from the political map" },
+  // 46: Thracian client kingdom annexed under Claudius.
+  { year:   46, type: "absorb", absorber: "Rome", target: "Thracians", message: "Claudius annexes the Thracian client kingdom" },
+  // 220: Han China collapses into Three Kingdoms; Han civ ends.
+  { year:  220, type: "absorb", absorber: "Cao Wei", target: "Han China", message: "Han Dynasty collapses - Cao Wei takes the imperial seal" },
+  // 224: Sasanians replace Parthia in Persia.
+  { year:  224, type: "absorb", absorber: "Sasanians", target: "Parthia", message: "Ardashir I overthrows the Parthian Arsacids - Sasanian Empire founded" },
+  // 280: Three Kingdoms reunified under Western Jin (we collapse Wu and Shu Han into Cao Wei).
+  { year:  280, type: "absorb", absorber: "Cao Wei", target: "Eastern Wu", message: "Western Jin reunifies China - Eastern Wu absorbed" },
+  { year:  263, type: "absorb", absorber: "Cao Wei", target: "Shu Han", message: "Shu Han falls to Cao Wei" },
+  // 265: Cao Wei renames to Jin (Sima Yan founds the Jin Dynasty).
+  { year:  265, type: "rename", from: "Cao Wei", to: "Jin China", color: "#d83030", spawnIfMissing: { lat: 35, lon: 110 }, message: "Sima Yan founds the Jin Dynasty - Three Kingdoms era ends" },
+  // 280: Jin renames to "Imperial China" placeholder until Yuan arrives in 1271.
+  { year:  280, type: "rename", from: "Jin China", to: "Imperial China", color: "#d83030", spawnIfMissing: { lat: 35, lon: 110 }, message: "Western Jin reunifies the Chinese world" },
+  // 534: Justinian's Vandalic War - North Africa returns to Byzantium.
+  { year:  534, type: "absorb", absorber: "Byzantium", target: "Vandals", message: "Belisarius retakes North Africa - the Vandal Kingdom is destroyed" },
+  // 632: Sasanian Empire shattered by the early Arab caliphates.
+  { year:  651, type: "absorb", absorber: "Arabs", target: "Sasanians", message: "Last Sasanian shah killed - Persia falls to the Arabs" },
+  // 668: Han China absorbs Gojoseon's region (the Tang campaigns finalize the
+  // Korean reorganization). We collapse Gojoseon back into Han.
+  { year:   -108, type: "absorb", absorber: "Han China", target: "Gojoseon", message: "Han Wudi conquers Gojoseon - Korean peninsula falls under Chinese control" },
+  // 1100: Olmec civilization is long gone by classical Mesoamerican times.
+  { year:  -400, type: "absorb", absorber: "Maya", target: "Olmec", message: "Olmec civilization fades - Maya rises in the lowlands" },
+  // 1200: Mali Empire absorbs older West African kingdoms - and itself fades by 1670.
+  { year: 1670, type: "absorb", absorber: "Morocco", target: "Mali Empire", message: "Saadi sultans take Timbuktu - Mali Empire is no more" },
+  // 1291: The Crusader states fall.
+  { year: 1291, type: "absorb", absorber: "Arabs", target: "Kingdom of Jerusalem", message: "Mamluks take Acre - the Kingdom of Jerusalem is finished" },
+  // 1335: Ilkhanate fragments after Abu Sa'id dies.
+  { year: 1335, type: "absorb", absorber: "Persia", target: "Ilkhanate", message: "Abu Sa'id dies without an heir - the Ilkhanate fragments" },
+  // 1370: Tamerlane (we use Mongols stand-in) absorbs Golden Horde at Tokhtamysh's defeat (1395).
+  { year: 1502, type: "absorb", absorber: "Russian Empire", target: "Golden Horde", message: "Great Stand on the Ugra ends - Golden Horde shattered, Russia free" },
+  // 1227: Mongols themselves fragment into the khanates we already secede; the
+  // unified Mongol civ ends.
+  { year: 1294, type: "absorb", absorber: "Yuan China", target: "Mongols", message: "Kublai Khan dies - the unified Mongol Empire is gone, only the khanates remain" },
+  // 1453: Antigonid stays absorbed; this is the line for completeness.
+  // 1806: Napoleon dissolves the Holy Roman Empire.
+  { year: 1806, type: "absorb", absorber: "Kingdom of France", target: "Holy Roman Empire", message: "Napoleon dissolves the Holy Roman Empire - the German lands reorganize" },
+  // 1858: Last Mughal emperor exiled by the British after the Indian Mutiny.
+  { year: 1858, type: "absorb", absorber: "United Kingdom", target: "Mughal Empire", message: "Indian Mutiny crushed - Britain abolishes the Mughal throne" },
+  // 1871: Germans (the proto-tribe) coalesce into modern Germany - if Germany
+  // hasn't been spawned yet we use the existing 1871-style entry.
+  { year: 1871, type: "rename", from: "Germans", to: "Germany", color: "#202020", spawnIfMissing: { lat: 52.52, lon: 13.40 }, message: "Bismarck unifies the German states into the German Empire" },
+  // 1917: Finns subsume into the new state of Finland.
+  { year: 1917, type: "absorb", absorber: "Finland", target: "Finns", message: "Finnish proto-tribe gives way to the modern Republic of Finland" },
+  // 1453: After the Hagia Sophia falls Goths persist as a name only - rename
+  // them out so they don't show up as a present-day civ.
+  { year:  800, type: "absorb", absorber: "Holy Roman Empire", target: "Goths", message: "Charlemagne crowned - the last Gothic identity merges into the new Empire" },
+  // 1991: Yugoslav wars - Yugoslavia fragments back into its republics.
+  { year: 1991, type: "secede", target: "Yugoslavia", civ: "Croatia",
+    spawn: { name: "Croatia", lat: 45.81, lon: 15.98, color: "#a01818" }, byOwner: "CRO",
+    message: "Croatia declares independence - Yugoslavia begins dissolving" },
+  { year: 1991, type: "secede", target: "Yugoslavia", civ: "Slovenia",
+    spawn: { name: "Slovenia", lat: 46.06, lon: 14.51, color: "#3a6ad8" }, byOwner: "SLO",
+    message: "Slovenia declares independence from Yugoslavia" },
+  { year: 1992, type: "secede", target: "Yugoslavia", civ: "Bosnia",
+    spawn: { name: "Bosnia", lat: 43.86, lon: 18.41, color: "#1a8a4a" }, byOwner: "BOS",
+    message: "Bosnia and Herzegovina declares independence" },
+  { year: 1992, type: "rename", from: "Yugoslavia", to: "Serbia", color: "#a02828", spawnIfMissing: { lat: 44.8, lon: 20.46 }, message: "Yugoslavia officially reduced to Serbia and Montenegro - then just Serbia" },
+  // 1993: Czechoslovakia splits into Czech Republic and Slovakia.
+  { year: 1993, type: "secede", target: "Czechoslovakia", civ: "Slovakia",
+    spawn: { name: "Slovakia", lat: 48.15, lon: 17.11, color: "#3a4a8a" }, byOwner: "SLO",
+    message: "Velvet Divorce - Slovakia separates from Czechoslovakia" },
+  { year: 1993, type: "rename", from: "Czechoslovakia", to: "Czech Republic", color: "#a01818", spawnIfMissing: { lat: 50.08, lon: 14.43 }, message: "Velvet Divorce - Czechoslovakia renames to Czech Republic" },
+  // --- Steppe & medieval Europe ---
+  { year: 1206, civ: { name: "Mongols",     lat: 47,  lon: 106,  color: "#6a4a2a" }, message: "Genghis Khan unites the steppe" },
+  { year: 1206, type: "goal", civ: "Mongols", region: { lat: [30, 55], lon: [40, 130] }, priority: 1.0, message: "Genghis Khan eyes the world from the steppe" },
+  { year: 1299, civ: { name: "Ottomans",    lat: 40,  lon: 31,   color: "#1a4a2a" }, message: "Osman founds the Ottoman beylik" },
+  { year: 1299, type: "goal", civ: "Ottomans", region: { lat: [22, 45], lon: [20, 50] }, priority: 0.9, message: "The Ottomans aim for Anatolia, the Levant, and the Balkans" },
+  { year: 1453, type: "claim", civ: "Ottomans", region: { lat: [40, 42], lon: [28, 30] }, message: "The Ottomans take Constantinople" },
+
+  // --- New World & modern ---
+  { year: 1428, civ: { name: "Aztec",       lat: 19.4,lon: -99,  color: "#3aa9c4" }, message: "The Aztec Triple Alliance is forged" },
+  { year: 1438, civ: { name: "Inca",        lat: -13.5,lon: -71.9,color: "#c44aa8" }, replaces: "Chavin", message: "Pachacuti founds the Inca Empire" },
+  // 1037: Kingdom of Castile coalesces in northern Iberia from the Reconquista
+  // territories - rename of Iberians (spawn fresh if Iberians is gone).
+  // ============================================================
+  // Al-Andalus (Islamic Iberia, 711-1492): Emirate -> Caliphate -> Taifas
+  // -> Almoravid -> Almohad -> Granada -> Reconquista finale.
+  // ============================================================
+  { year:  756, type: "secede", target: "Arabs", civ: "Emirate of Cordoba",
+    spawn: { name: "Emirate of Cordoba", lat: 37.89, lon: -4.78, color: "#1a4a4a" },
+    region: { lat: [36, 44], lon: [-10, 0] },
+    message: "Abd al-Rahman I founds the Emirate of Cordoba - Iberia breaks from the Abbasids" },
+  { year:  929, type: "rename", from: "Emirate of Cordoba", to: "Caliphate of Cordoba", color: "#3a6a3a", spawnIfMissing: { lat: 37.89, lon: -4.78 }, message: "Abd al-Rahman III proclaims the Caliphate of Cordoba" },
+  // 1031: Caliphate fragments into Taifas after the fitna.
+  { year: 1031, type: "secede", target: "Caliphate of Cordoba", civ: "Taifa of Seville",
+    spawn: { name: "Taifa of Seville", lat: 37.39, lon: -5.99, color: "#2a8a4a" },
+    region: { lat: [36.5, 38.5], lon: [-7, -4] },
+    message: "Caliphate of Cordoba collapses - Taifa of Seville emerges" },
+  { year: 1031, type: "secede", target: "Caliphate of Cordoba", civ: "Taifa of Toledo",
+    spawn: { name: "Taifa of Toledo", lat: 39.86, lon: -4.02, color: "#3a8a8a" },
+    region: { lat: [38.5, 41], lon: [-6, -2] },
+    message: "Taifa of Toledo splits off after the fitna" },
+  { year: 1031, type: "secede", target: "Caliphate of Cordoba", civ: "Taifa of Zaragoza",
+    spawn: { name: "Taifa of Zaragoza", lat: 41.65, lon: -0.89, color: "#4a4a8a" },
+    region: { lat: [40, 43], lon: [-2, 1] },
+    message: "Taifa of Zaragoza splits off after the fitna" },
+  { year: 1031, type: "secede", target: "Caliphate of Cordoba", civ: "Taifa of Granada",
+    spawn: { name: "Taifa of Granada", lat: 37.18, lon: -3.60, color: "#7a3a4a" },
+    region: { lat: [36, 38], lon: [-4, -2] },
+    message: "Taifa of Granada splits off after the fitna" },
+  { year: 1031, type: "rename", from: "Caliphate of Cordoba", to: "Taifa of Cordoba", color: "#5a4a3a", spawnIfMissing: { lat: 37.89, lon: -4.78 }, message: "Caliphate dissolved - what remains is the Taifa of Cordoba" },
+  // 1085: Toledo falls (Castile's Reconquista claim covers the land).
+  { year: 1085, type: "absorb", absorber: "Kingdom of Castile", target: "Taifa of Toledo", message: "Toledo falls to Alfonso VI - the Taifa is no more" },
+  // 1086: Almoravids unify Iberian Muslims after Sagrajas.
+  { year: 1086, type: "secede", target: "Berbers", civ: "Almoravid Empire",
+    spawn: { name: "Almoravid Empire", lat: 31.63, lon: -7.99, color: "#a05a2a" },
+    region: { lat: [27, 33], lon: [-12, -3] },
+    message: "Almoravid sultans rise in Marrakesh - they cross to Iberia after Sagrajas" },
+  { year: 1094, type: "absorb", absorber: "Almoravid Empire", target: "Taifa of Cordoba", message: "Almoravids unify Iberian Muslims - Taifa of Cordoba absorbed" },
+  { year: 1094, type: "absorb", absorber: "Almoravid Empire", target: "Taifa of Seville", message: "Almoravids unify Iberian Muslims - Taifa of Seville absorbed" },
+  { year: 1110, type: "absorb", absorber: "Almoravid Empire", target: "Taifa of Granada", message: "Almoravids unify Iberian Muslims - Taifa of Granada absorbed" },
+  { year: 1110, type: "absorb", absorber: "Almoravid Empire", target: "Taifa of Zaragoza", message: "Almoravids unify Iberian Muslims - Taifa of Zaragoza absorbed" },
+  // 1147: Almohads replace Almoravids.
+  { year: 1147, type: "rename", from: "Almoravid Empire", to: "Almohad Caliphate", color: "#7a3030", spawnIfMissing: { lat: 31.63, lon: -7.99 }, message: "Almohads overthrow the Almoravids - reformist Berber caliphate rises" },
+  // 1232: Nasrid Emirate of Granada formed from the collapsing Almohad rump.
+  { year: 1232, type: "secede", target: "Almohad Caliphate", civ: "Emirate of Granada",
+    spawn: { name: "Emirate of Granada", lat: 37.18, lon: -3.60, color: "#9a3a3a" },
+    region: { lat: [36, 38], lon: [-5, -2] },
+    message: "Nasrid dynasty founded - Emirate of Granada is the last Muslim state in Iberia" },
+  { year: 1269, type: "absorb", absorber: "Morocco", target: "Almohad Caliphate", message: "Marinids overthrow the last Almohads - the Berber empire fragments" },
+  // 1492: Granada surrenders to Ferdinand and Isabella (Reconquista complete).
+  { year: 1492, type: "absorb", absorber: "Kingdom of Castile", target: "Emirate of Granada", message: "Boabdil surrenders Granada to the Catholic Monarchs - the Reconquista is complete" },
+
+  { year: 1037, type: "rename", from: "Iberians", to: "Kingdom of Castile", color: "#c89640", spawnIfMissing: { lat: 40.4, lon: -3.7 }, message: "Kingdom of Castile emerges from the Christian Reconquista" },
+  // The Reconquista: Castile (and Portugal after 1139) gradually retake
+  // Iberia from Arab/Moorish rule. Without these claims, Arabs hold all of
+  // Iberia until 1492 because nobody else expands into their territory.
+  { year: 1037, type: "claim", civ: "Kingdom of Castile", region: { lat: [42, 44], lon: [-9, -2] }, message: "Reconquista begins - Christian kingdoms push south from the Cantabrian mountains" },
+  { year: 1085, type: "claim", civ: "Kingdom of Castile", region: { lat: [40, 43], lon: [-9, -1] }, message: "Toledo falls to Castile - the Reconquista accelerates" },
+  { year: 1212, type: "claim", civ: "Kingdom of Castile", region: { lat: [38, 42], lon: [-9, 0] }, message: "Battle of Las Navas de Tolosa - Christian alliance crushes the Almohads" },
+  { year: 1212, type: "claim", civ: "Kingdom of Portugal", region: { lat: [37, 42], lon: [-10, -7] }, message: "Portugal completes its share of the Reconquista" },
+  { year: 1248, type: "claim", civ: "Kingdom of Castile", region: { lat: [36.5, 39], lon: [-7, 0] }, message: "Ferdinand III takes Seville - only Granada remains Muslim" },
+  { year: 1492, type: "claim", civ: "Kingdom of Castile", region: { lat: [36, 38], lon: [-6, -1] }, message: "Granada falls to Castile - the Reconquista is complete" },
+  // 1139: Afonso Henriques proclaims himself King of Portugal - secedes from Castile.
+  { year: 1139, type: "secede", target: "Kingdom of Castile", civ: "Kingdom of Portugal",
+    spawn: { name: "Kingdom of Portugal", lat: 38.7, lon: -9.1, color: "#0a6b3a" },
+    region: { lat: [37, 42.2], lon: [-9.6, -6.2] },
+    message: "Afonso I declares the Kingdom of Portugal independent of Castile" },
+  // 1492: Reconquista complete; Castile + Aragon unify under Ferdinand & Isabella into the Kingdom of Spain.
+  { year: 1492, type: "rename", from: "Kingdom of Castile", to: "Kingdom of Spain", color: "#e0c060", spawnIfMissing: { lat: 40.4, lon: -3.7 }, message: "Reconquista complete - Kingdom of Spain forms; Columbus reaches the Americas" },
+  // 1521 / 1533: Spanish conquistadors topple the New World empires.
+  { year: 1521, type: "absorb", absorber: "Kingdom of Spain", target: "Aztec", message: "Cortés conquers Tenochtitlan - Aztec Empire falls to Spain" },
+  { year: 1533, type: "absorb", absorber: "Kingdom of Spain", target: "Inca",  message: "Pizarro captures Atahualpa - Inca Empire falls to Spain" },
+  { year: 1500, civ: { name: "Muscovy",     lat: 56,  lon: 38,   color: "#5a7ab5" }, replaces: "East Slavs", message: "Muscovy throws off the Mongol yoke" },
+  { year: 1547, type: "rename", from: "Muscovy", to: "Tsardom of Russia", color: "#3d6cc4", message: "Ivan IV crowned Tsar of all Rus'" },
+  { year: 1721, type: "rename", from: "Tsardom of Russia", to: "Russian Empire", color: "#1a4ba8", message: "Peter the Great proclaims the Russian Empire" },
+  // ============================================================
+  // Russia's eastward expansion across Siberia (1582-1860). Modeled the
+  // same way as GDL/Vytautas: staged regional claims, each grabbing the
+  // SOV-tagged tiles in a particular longitude band, until the whole of
+  // Siberia is Russian. Tsardom of Russia handles the early stages;
+  // Russian Empire continues from 1721.
+  // ============================================================
+  // 1582: Yermak's Cossacks cross the Urals into the Khanate of Sibir.
+  { year: 1582, type: "claim", civ: "Tsardom of Russia", byOwner: "SOV",
+    region: { lat: [50, 72], lon: [50, 70] },
+    except: ["Polish-Lithuanian Commonwealth", "Grand Duchy of Lithuania", "Mongols", "Golden Horde", "Yuan China", "Ilkhanate"],
+    message: "Yermak crosses the Urals - Russia begins its eastward expansion" },
+  // 1640: Russian explorers reach the Pacific (Sea of Okhotsk).
+  { year: 1640, type: "claim", civ: "Tsardom of Russia", byOwner: "SOV",
+    region: { lat: [50, 75], lon: [70, 110] },
+    except: ["Polish-Lithuanian Commonwealth", "Grand Duchy of Lithuania", "Mongols", "Golden Horde", "Yuan China", "Ilkhanate"],
+    message: "Russian Cossacks push deep into central Siberia" },
+  // 1689: Treaty of Nerchinsk - Russia consolidates eastern Siberia.
+  { year: 1689, type: "claim", civ: "Tsardom of Russia", byOwner: "SOV",
+    region: { lat: [50, 75], lon: [110, 160] },
+    except: ["Polish-Lithuanian Commonwealth", "Grand Duchy of Lithuania", "Mongols", "Golden Horde", "Yuan China", "Ilkhanate"],
+    message: "Treaty of Nerchinsk - Russia secures eastern Siberia up to the Amur" },
+  // 1721: existing rename to Russian Empire.
+  // 1735-1760: Russia annexes the steppe khanates (Kazakh territory).
+  { year: 1750, type: "claim", civ: "Russian Empire", byOwner: "SOV",
+    region: { lat: [40, 55], lon: [50, 90] },
+    except: ["Polish-Lithuanian Commonwealth", "Grand Duchy of Lithuania", "Mongols", "Golden Horde", "Yuan China", "Ilkhanate"],
+    message: "Russia annexes the Kazakh and Bashkir steppes" },
+  // 1860: Treaty of Aigun/Beijing - Russia takes the Amur basin and Pacific
+  // coast (Vladivostok founded 1860).
+  { year: 1860, type: "claim", civ: "Russian Empire", byOwner: "SOV",
+    region: { lat: [40, 75], lon: [115, 180] },
+    except: ["Polish-Lithuanian Commonwealth", "Grand Duchy of Lithuania", "Mongols", "Golden Horde", "Yuan China", "Ilkhanate"],
+    message: "Treaty of Aigun/Beijing - Russia takes the Amur basin and the Pacific coast" },
+  // Final cleanup: any SOV-tagged tile not yet absorbed by 1900 is now Russian.
+  { year: 1900, type: "claim", civ: "Russian Empire", byOwner: "SOV",
+    except: ["Polish-Lithuanian Commonwealth", "Grand Duchy of Lithuania", "Mongols", "Golden Horde", "Yuan China", "Ilkhanate"],
+    message: "Russia's eastward expansion is complete - the empire stretches from the Baltic to the Pacific" },
+  { year: 1776, civ: { name: "USA",         lat: 39,  lon: -77,  color: "#5da9e8" }, message: "The Thirteen Colonies declare independence" },
+  // ============================================================
+  // USA's westward expansion (Manifest Destiny). Staged by longitude band
+  // - same approach as Russia's Siberian conquest. Each step grabs the
+  // USA-tagged HOI4 1936 tiles inside the listed lat/lon box.
+  // ============================================================
+  // 1783: Treaty of Paris - Britain recognizes the original 13 colonies.
+  { year: 1783, type: "claim", civ: "USA", byOwner: "USA",
+    region: { lat: [24, 50], lon: [-82, -66] },
+    message: "Treaty of Paris - Britain recognizes the original Thirteen States" },
+  // 1803: Louisiana Purchase - Jefferson buys the Mississippi basin from France.
+  { year: 1803, type: "claim", civ: "USA", byOwner: "USA",
+    region: { lat: [28, 50], lon: [-104, -82] },
+    message: "Louisiana Purchase - Jefferson doubles the size of the United States" },
+  // 1819: Adams-Onís Treaty - Florida ceded by Spain.
+  { year: 1819, type: "claim", civ: "USA", byOwner: "USA",
+    region: { lat: [24, 31], lon: [-88, -79] },
+    message: "Adams-Onís Treaty - Spain cedes Florida to the United States" },
+  // 1845: Texas annexation - the Republic of Texas joins the Union.
+  { year: 1845, type: "claim", civ: "USA", byOwner: "USA",
+    region: { lat: [25, 37], lon: [-107, -93] },
+    message: "Texas annexed - the Lone Star Republic joins the Union" },
+  // 1846 war USA vs Mexico already fires at the existing event below; by
+  // this point the two are neighboring after the Texas annexation.
+  // 1846: Oregon Treaty - Pacific Northwest border with Britain at the 49th parallel.
+  { year: 1846, type: "claim", civ: "USA", byOwner: "USA",
+    region: { lat: [42, 49], lon: [-125, -107] },
+    message: "Oregon Treaty - the Pacific Northwest joins the United States" },
+  // 1848: Treaty of Guadalupe Hidalgo - Mexican Cession (California, NM, AZ).
+  { year: 1848, type: "claim", civ: "USA", byOwner: "USA",
+    region: { lat: [31, 42], lon: [-125, -103] },
+    message: "Treaty of Guadalupe Hidalgo - Mexican Cession adds California, NM, and Arizona" },
+  // 1867: Alaska Purchase from Russia.
+  { year: 1867, type: "claim", civ: "USA", byOwner: "USA",
+    region: { lat: [51, 72], lon: [-180, -130] },
+    message: "Alaska Purchase - Seward buys Alaska from Russia" },
+  // 1898: Spanish-American War - Hawaii annexed, Puerto Rico taken.
+  { year: 1898, type: "claim", civ: "USA", byOwner: "USA",
+    region: { lat: [17, 23], lon: [-160, -65] },
+    message: "Hawaii annexed and Puerto Rico taken from Spain" },
+  // 1810s-1820s: Latin American independence wars - Spanish/Portuguese
+  // empires fragment into the modern Latin American republics.
+  { year: 1810, type: "secede", target: "Kingdom of Spain", civ: "Argentina",
+    spawn: { name: "Argentina", lat: -34.6, lon: -58.4, color: "#7ab5e8" }, byOwner: "ARG",
+    message: "May Revolution: Argentina declares independence from Spain" },
+  { year: 1810, type: "secede", target: "Kingdom of Spain", civ: "Chile",
+    spawn: { name: "Chile", lat: -33.45, lon: -70.66, color: "#9a2828" }, byOwner: "CHL",
+    message: "Chile begins its independence struggle from Spain" },
+  { year: 1811, type: "secede", target: "Kingdom of Spain", civ: "Venezuela",
+    spawn: { name: "Venezuela", lat: 10.5, lon: -66.9, color: "#d4a020" }, byOwner: "VEN",
+    message: "Venezuela proclaims independence from Spain" },
+  { year: 1811, type: "secede", target: "Kingdom of Spain", civ: "Paraguay",
+    spawn: { name: "Paraguay", lat: -25.3, lon: -57.6, color: "#8a3a4a" }, byOwner: "PAR",
+    message: "Paraguay declares independence from Spain" },
+  { year: 1819, type: "secede", target: "Kingdom of Spain", civ: "Colombia",
+    spawn: { name: "Colombia", lat: 4.7, lon: -74.1, color: "#f0d020" }, byOwner: "COL",
+    message: "Battle of Boyacá - Gran Colombia secures independence from Spain" },
+  { year: 1821, type: "secede", target: "Kingdom of Spain", civ: "Mexico", spawn: { name: "Mexico", lat: 19, lon: -99, color: "#26823f" }, byOwner: "MEX", message: "Mexico declares independence from Spain" },
+  { year: 1821, type: "secede", target: "Kingdom of Spain", civ: "Peru",
+    spawn: { name: "Peru", lat: -12.05, lon: -77.05, color: "#c83030" }, byOwner: "PRU",
+    message: "San Martín proclaims Peruvian independence from Spain" },
+  { year: 1822, type: "secede", target: "Kingdom of Spain", civ: "Ecuador",
+    spawn: { name: "Ecuador", lat: -0.18, lon: -78.5, color: "#f0c020" }, byOwner: "ECU",
+    message: "Battle of Pichincha - Ecuador secures independence from Spain" },
+  { year: 1822, civ: { name: "Brazil",      lat: -15, lon: -47,  color: "#3a8a3a" }, message: "Brazil declares independence from Portugal" },
+  { year: 1825, type: "secede", target: "Kingdom of Spain", civ: "Bolivia",
+    spawn: { name: "Bolivia", lat: -16.5, lon: -68.15, color: "#3a7a3a" }, byOwner: "BOL",
+    message: "Sucre defeats the last royalist stronghold - Bolivia is born" },
+  { year: 1828, type: "secede", target: "Brazil", civ: "Uruguay",
+    spawn: { name: "Uruguay", lat: -34.9, lon: -56.2, color: "#5da9e8" }, byOwner: "URG",
+    message: "Cisplatine War ends - Uruguay independent of Brazil" },
+  // --- Caribbean & Central American independence ---
+  // 1804: Haitian Revolution - first successful slave revolt becomes a free republic.
+  { year: 1804, type: "secede", target: "Kingdom of France", civ: "Haiti",
+    spawn: { name: "Haiti", lat: 18.54, lon: -72.34, color: "#c8302a" }, byOwner: "HAI",
+    message: "Haitian Revolution succeeds - Haiti becomes the first independent Black republic" },
+  // 1821: Federal Republic of Central America declares independence from Spain
+  // (briefly unified, then splinters into the modern five states by 1841).
+  { year: 1821, type: "secede", target: "Kingdom of Spain", civ: "Central America",
+    spawn: { name: "Central America", lat: 14.6, lon: -90.5, color: "#3a6ad8" },
+    region: { lat: [8, 18], lon: [-92, -83] },
+    message: "Federal Republic of Central America breaks from Spain" },
+  // 1838-1841: the federation splinters into individual republics.
+  { year: 1838, type: "secede", target: "Central America", civ: "Guatemala",
+    spawn: { name: "Guatemala", lat: 14.63, lon: -90.51, color: "#3a8aff" }, byOwner: "GUA",
+    message: "Guatemala secedes from the Central American Federation" },
+  { year: 1838, type: "secede", target: "Central America", civ: "Honduras",
+    spawn: { name: "Honduras", lat: 14.07, lon: -87.19, color: "#0066cc" }, byOwner: "HON",
+    message: "Honduras secedes from the Central American Federation" },
+  { year: 1838, type: "secede", target: "Central America", civ: "Nicaragua",
+    spawn: { name: "Nicaragua", lat: 12.13, lon: -86.27, color: "#005ec0" }, byOwner: "NIC",
+    message: "Nicaragua secedes from the Central American Federation" },
+  { year: 1838, type: "secede", target: "Central America", civ: "Costa Rica",
+    spawn: { name: "Costa Rica", lat: 9.93, lon: -84.08, color: "#1a4ba8" }, byOwner: "COS",
+    message: "Costa Rica secedes from the Central American Federation" },
+  { year: 1841, type: "rename", from: "Central America", to: "El Salvador", color: "#1a4080",
+    spawnIfMissing: { lat: 13.69, lon: -89.19 },
+    message: "El Salvador becomes the last Central American republic standing alone" },
+  // 1844: Dominican Republic gains independence from Haiti.
+  { year: 1844, type: "secede", target: "Haiti", civ: "Dominican Republic",
+    spawn: { name: "Dominican Republic", lat: 18.47, lon: -69.91, color: "#c64a40" }, byOwner: "DOM",
+    message: "Dominican Republic declares independence from Haiti" },
+  // 1867: Canadian Confederation - dominion under the British crown.
+  { year: 1867, type: "secede", target: "United Kingdom", civ: "Canada",
+    spawn: { name: "Canada", lat: 45.42, lon: -75.7, color: "#c83030" }, byOwner: "CAN",
+    message: "Canadian Confederation - the Dominion of Canada is formed" },
+  // 1901: Australian Federation - the six British colonies join into the Commonwealth.
+  { year: 1901, type: "secede", target: "United Kingdom", civ: "Australia",
+    spawn: { name: "Australia", lat: -35.28, lon: 149.13, color: "#1a4ba8" }, byOwner: "AST",
+    message: "Australian Federation - the Commonwealth of Australia is born" },
+  // 1907: New Zealand becomes a Dominion of the British Empire.
+  { year: 1907, type: "secede", target: "United Kingdom", civ: "New Zealand",
+    spawn: { name: "New Zealand", lat: -41.29, lon: 174.78, color: "#2c2c2c" }, byOwner: "NZL",
+    message: "New Zealand becomes a Dominion of the British Empire" },
+  // 1975: Papua New Guinea independent of Australia.
+  { year: 1975, type: "secede", target: "Australia", civ: "Papua New Guinea",
+    spawn: { name: "Papua New Guinea", lat: -9.44, lon: 147.18, color: "#a02828" }, byOwner: "PNG",
+    message: "Papua New Guinea gains independence from Australia" },
+  // 1898: Spanish-American War - Cuba and Puerto Rico move out of Spanish hands.
+  { year: 1902, type: "secede", target: "Kingdom of Spain", civ: "Cuba",
+    spawn: { name: "Cuba", lat: 23.13, lon: -82.36, color: "#1a4ba8" }, byOwner: "CUB",
+    message: "Republic of Cuba is established under US oversight" },
+  // 1903: Panama secedes from Colombia (with US naval support, Canal era begins).
+  { year: 1903, type: "secede", target: "Colombia", civ: "Panama",
+    spawn: { name: "Panama", lat: 8.98, lon: -79.52, color: "#1a3a8a" }, byOwner: "PAN",
+    message: "Panama secedes from Colombia - Canal construction begins" },
+  // 1962: Jamaica gains independence from the UK.
+  { year: 1962, type: "secede", target: "United Kingdom", civ: "Jamaica",
+    spawn: { name: "Jamaica", lat: 18.01, lon: -76.79, color: "#1a8a4a" }, byOwner: "JAM",
+    message: "Jamaica gains independence from the United Kingdom" },
+  // 1981: Belize independent of the UK.
+  { year: 1981, type: "secede", target: "United Kingdom", civ: "Belize",
+    spawn: { name: "Belize", lat: 17.5, lon: -88.2, color: "#1a4a3a" }, byOwner: "BLZ",
+    message: "Belize gains independence from the United Kingdom" },
+  // 1821: Greek War of Independence - Greece secedes from Ottomans.
+  { year: 1821, type: "secede", target: "Ottomans", civ: "Greece", spawn: { name: "Greece", lat: 38, lon: 23, color: "#3a6ad8" }, byOwner: "GRE", message: "Greek War of Independence - Greece secedes from the Ottomans" },
+  // 1830: Belgian independence from the Netherlands.
+  { year: 1830, type: "secede", target: "France", civ: "Belgium", spawn: { name: "Belgium", lat: 50.8, lon: 4.4, color: "#ffd24a" }, byOwner: "BEL", message: "Belgium gains independence" },
+  // --- Balkan independence from the Ottomans (pre-WWI) ---
+  { year: 1817, type: "secede", target: "Ottomans", civ: "Serbia",
+    spawn: { name: "Serbia", lat: 44.8, lon: 20.46, color: "#c83030" }, byOwner: "SER",
+    message: "Second Serbian Uprising - Serbia gains autonomy from the Ottomans" },
+  { year: 1878, type: "secede", target: "Ottomans", civ: "Romania",
+    spawn: { name: "Romania", lat: 44.43, lon: 26.1, color: "#3a4a8a" }, byOwner: "ROM",
+    message: "Treaty of Berlin - Romania gains full independence from the Ottomans" },
+  { year: 1878, type: "secede", target: "Ottomans", civ: "Bulgaria",
+    spawn: { name: "Bulgaria", lat: 42.7, lon: 23.3, color: "#3a8a4a" }, byOwner: "BUL",
+    message: "Treaty of Berlin - Bulgaria becomes a principality, free of the Ottomans" },
+  // 1867: Austria-Hungary forms.
+  { year: 1867, civ: { name: "Austria-Hungary", lat: 47.5, lon: 14, color: "#c83030" }, message: "Compromise of 1867: the Austro-Hungarian Dual Monarchy is formed" },
+  // 1867 Austria-Hungary should claim its 1867-1918 territory from neighbors.
+  { year: 1867, type: "claim", civ: "Austria-Hungary", region: { lat: [44, 51], lon: [9, 27] }, message: "Austria-Hungary consolidates its dual monarchy across central Europe" },
+  // --- 1918: Austria-Hungary collapses into successor states. ---
+  { year: 1918, type: "secede", target: "Austria-Hungary", civ: "Austria",
+    spawn: { name: "Austria", lat: 48.21, lon: 16.37, color: "#a01818" }, byOwner: "AUS",
+    message: "Austria-Hungary dissolves - the Republic of Austria proclaims itself in Vienna" },
+  { year: 1918, type: "secede", target: "Austria-Hungary", civ: "Hungary",
+    spawn: { name: "Hungary", lat: 47.5, lon: 19.04, color: "#3a8a4a" }, byOwner: "HUN",
+    message: "Hungarian Republic declared in Budapest - the dual monarchy is finished" },
+  { year: 1918, type: "secede", target: "Austria-Hungary", civ: "Czechoslovakia",
+    spawn: { name: "Czechoslovakia", lat: 50.08, lon: 14.43, color: "#1a4a8a" }, byOwner: "CZE",
+    message: "Czechoslovakia proclaims independence in Prague" },
+  { year: 1918, type: "secede", target: "Austria-Hungary", civ: "Yugoslavia",
+    spawn: { name: "Yugoslavia", lat: 44.8, lon: 20.46, color: "#2a4a8a" }, byOwner: "YUG",
+    message: "Kingdom of Serbs, Croats and Slovenes formed - the seed of Yugoslavia" },
+  // 1918: Yugoslavia absorbs Serbia (which had existed since 1817).
+  { year: 1918, type: "absorb", absorber: "Yugoslavia", target: "Serbia", message: "Serbia merges into the Kingdom of Serbs, Croats and Slovenes" },
+  // --- 1923: Ottoman Empire collapses into the Republic of Turkey + Mandates. ---
+  { year: 1923, type: "rename", from: "Ottomans", to: "Turkey", color: "#c81818", message: "Atatürk founds the Republic of Turkey - the Ottoman Empire is no more" },
+  { year: 1920, type: "secede", target: "Ottomans", civ: "Saudi Arabia",
+    spawn: { name: "Saudi Arabia", lat: 24.7, lon: 46.7, color: "#1a5a3a" }, byOwner: "SAU",
+    message: "Ibn Saud begins consolidating the Arabian peninsula - the seed of Saudi Arabia" },
+  { year: 1920, type: "secede", target: "Ottomans", civ: "British Mandate of Iraq",
+    spawn: { name: "British Mandate of Iraq", lat: 33.3, lon: 44.4, color: "#9a6a3a" }, byOwner: "IRQ",
+    message: "League of Nations grants Britain the Mandate for Mesopotamia (Iraq)" },
+  { year: 1920, type: "secede", target: "Ottomans", civ: "French Mandate of Syria",
+    spawn: { name: "French Mandate of Syria", lat: 33.5, lon: 36.3, color: "#6a5a8a" }, byOwner: "SYR",
+    message: "France takes the Mandate for Syria & Lebanon" },
+  // --- 1934: Ibn Saud unifies the peninsula into the Kingdom of Saudi Arabia. ---
+  { year: 1932, type: "rename", from: "Saudi Arabia", to: "Kingdom of Saudi Arabia", color: "#1a6a3a", message: "Kingdom of Saudi Arabia proclaimed by Ibn Saud" },
+  // --- 1932: Iraq becomes independent of British Mandate. ---
+  { year: 1932, type: "rename", from: "British Mandate of Iraq", to: "Kingdom of Iraq", color: "#a04030", message: "Iraq independent of the British Mandate - Kingdom of Iraq formed" },
+  // --- 1946: Syria independent of France. ---
+  { year: 1946, type: "rename", from: "French Mandate of Syria", to: "Syria", color: "#3a4a6a", message: "Syria gains independence from France" },
+  // 1861: American Civil War - Confederate States secede from the USA.
+  { year: 1861, type: "secede", target: "USA", civ: "Confederate States", spawn: { lat: 33, lon: -84, color: "#7a5030" }, region: { lat: [25, 38], lon: [-105, -75] }, message: "American Civil War begins - Confederate States secede" },
+  { year: 1861, type: "barbarossa", a: "USA", b: "Confederate States", message: "Open war between Union and Confederacy" },
+  { year: 1861, type: "wartime", on: true, message: "American Civil War - wartime aggression unlocked" },
+  { year: 1865, type: "absorb", absorber: "USA", target: "Confederate States", message: "Confederacy defeated - Lee surrenders at Appomattox" },
+  { year: 1865, type: "wartime", on: false, message: "American Civil War ends" },
+  // Carolingian Empire fragments at the Treaty of Verdun (843); we collapse
+  // West Francia → Kingdom of France into a single rename here.
+  { year:  843, type: "rename", from: "Carolingian Empire", to: "Kingdom of France", color: "#4a6ae8", message: "Treaty of Verdun: Carolingian Empire splits - West Francia → Kingdom of France" },
+  // 962: Otto I crowned - Holy Roman Empire forms in the East Frankish lands.
+  { year:  962, civ: { name: "Holy Roman Empire", lat: 50, lon: 11, color: "#e8b020" }, message: "Otto I crowned - Holy Roman Empire begins" },
+  // --- Scandinavian chain ---
+  // 793: Viking age begins - Norse become a unified raiding power.
+  { year:  793, type: "rename", from: "Norse", to: "Vikings", color: "#1a3a6a", spawnIfMissing: { lat: 60, lon: 16 }, message: "Lindisfarne raid - the Viking Age begins" },
+  // 1397: Kalmar Union - Sweden, Denmark, Norway, Iceland, Finland under Margaret I.
+  { year: 1397, type: "rename", from: "Vikings", to: "Kalmar Union", color: "#c8302a", spawnIfMissing: { lat: 60, lon: 16 }, message: "Margaret I forges the Kalmar Union of Denmark, Norway and Sweden" },
+  // The Kalmar Union should expand to cover all Scandinavia.
+  // Kalmar Union covered Denmark, Norway, Sweden, Iceland, Finland - NOT
+  // the Baltic states or Russia. Use byOwner so we strictly grab the right
+  // historical territory and stay out of Estonia/Latvia/Lithuania.
+  { year: 1397, type: "claim", civ: "Kalmar Union", byOwner: "DEN", message: "Denmark unified into the Kalmar Union" },
+  { year: 1397, type: "claim", civ: "Kalmar Union", byOwner: "NOR", message: "Norway unified into the Kalmar Union" },
+  { year: 1397, type: "claim", civ: "Kalmar Union", byOwner: "SWE", message: "Sweden unified into the Kalmar Union" },
+  { year: 1397, type: "claim", civ: "Kalmar Union", byOwner: "FIN", message: "Finland unified under the Kalmar Union" },
+  // 1523: Gustav Vasa breaks Sweden away from the Kalmar Union.
+  { year: 1523, type: "secede", target: "Kalmar Union", civ: "Sweden",
+    spawn: { name: "Sweden", lat: 59.33, lon: 18.07, color: "#2c6db0" }, byOwner: "SWE",
+    message: "Gustav Vasa is crowned - Sweden secedes from the Kalmar Union" },
+  // Sweden also held Finland in this era - grant FIN-tagged tiles too.
+  { year: 1523, type: "claim", civ: "Sweden", byOwner: "FIN",
+    message: "Sweden's grip on Finland - Finland remains under the Swedish crown" },
+  // 1523: The remainder renames to Denmark-Norway (the Oldenburg dual realm).
+  { year: 1523, type: "rename", from: "Kalmar Union", to: "Denmark-Norway", color: "#c20020", spawnIfMissing: { lat: 55.68, lon: 12.57 }, message: "What remains of the Kalmar Union becomes Denmark-Norway" },
+  // 1809: Russia takes Finland from Sweden (HOI4 FIN-tagged tiles only -
+  // staying away from mainland Sweden so Sweden survives).
+  { year: 1809, type: "secede", target: "Sweden", civ: "Russian Empire",
+    byOwner: "FIN",
+    message: "Finnish War - Russia annexes Finland from Sweden as the Grand Duchy" },
+  // 1814: Treaty of Kiel - Norway transferred from Denmark-Norway to Sweden.
+  // 1814 Treaty of Kiel: Sweden takes ALL Norwegian-tagged tiles BEFORE the
+  // rename, so when Denmark-Norway renames to "Denmark" it has only its own
+  // Danish heartland (and Greenland) left. byOwner is much tighter than a
+  // lat/lon box - guarantees we don't accidentally leave Norway with Denmark.
+  { year: 1814, type: "claim", civ: "Sweden", byOwner: "NOR", message: "Sweden gains Norway under the Treaty of Kiel" },
+  { year: 1814, type: "rename", from: "Denmark-Norway", to: "Denmark", color: "#c20020", spawnIfMissing: { lat: 55.68, lon: 12.57 }, message: "Treaty of Kiel - Norway leaves the Danish crown for Sweden" },
+  // 1905: Norway secedes from Sweden.
+  { year: 1905, type: "secede", target: "Sweden", civ: "Norway",
+    spawn: { name: "Norway", lat: 59.91, lon: 10.75, color: "#a01818" }, byOwner: "NOR",
+    message: "Dissolution of the Swedish-Norwegian union - Norway is sovereign" },
+  // 1917: Finland declares independence from the Russian Empire.
+  { year: 1917, type: "secede", target: "Russian Empire", civ: "Finland",
+    spawn: { name: "Finland", lat: 60.17, lon: 24.94, color: "#7ec0ee" }, byOwner: "FIN",
+    message: "Finland declares independence from a collapsing Russia" },
+  // 1099: Crusader states established after the First Crusade.
+  { year: 1099, civ: { name: "Kingdom of Jerusalem", lat: 31.8, lon: 35.2, color: "#f0e6cc" }, message: "First Crusade succeeds - Kingdom of Jerusalem founded" },
+  // 1230: Mali Empire rises from the gold-rich Niger valley.
+  { year: 1230, civ: { name: "Mali Empire", lat: 13.4, lon: -8.0, color: "#e8c020" }, message: "Sundiata founds the Mali Empire" },
+  // 1240: Mongol khanates fragment - multiple successor states from the unified empire.
+  { year: 1240, type: "secede", target: "Mongols", civ: "Golden Horde",     spawn: { name: "Golden Horde",     lat: 48, lon: 50,  color: "#d8c040" }, region: { lat: [44, 56], lon: [38, 75] },  message: "Mongol fragmentation: Golden Horde rises in the western steppe" },
+  { year: 1271, type: "secede", target: "Mongols", civ: "Yuan China",       spawn: { name: "Yuan China",       lat: 39.9, lon: 116, color: "#d83030" }, region: { lat: [22, 50], lon: [98, 130] }, message: "Kublai Khan founds the Yuan dynasty in China" },
+  { year: 1256, type: "secede", target: "Mongols", civ: "Ilkhanate",        spawn: { name: "Ilkhanate",        lat: 35, lon: 53,  color: "#a05a30" }, region: { lat: [28, 42], lon: [40, 65] },  message: "Hulagu founds the Ilkhanate (Persia & the Levant)" },
+  // 1368: Yuan falls, Ming rises.
+  { year: 1368, type: "rename", from: "Yuan China", to: "Ming China", color: "#e84a4a", message: "Zhu Yuanzhang founds the Ming Dynasty - Yuan expelled" },
+  { year: 1644, type: "rename", from: "Ming China", to: "Qing China", color: "#a02828", message: "Manchu conquest - the Qing Dynasty rules China" },
+  { year: 1912, type: "rename", from: "Qing China", to: "Republic of China", color: "#a06030", message: "Xinhai Revolution - Qing falls, Republic of China is born" },
+  // (1949 PRC rename will fail unless we rewrite earlier; let's update the existing rename below.)
+  // 1526: Babur founds the Mughal Empire.
+  { year: 1526, civ: { name: "Mughal Empire", lat: 28.6, lon: 77.2, color: "#80a040" }, message: "Babur founds the Mughal Empire in northern India" },
+  // 1581: Dutch Republic declares independence from Spain.
+  { year: 1581, type: "secede", target: "Kingdom of Spain", civ: "Dutch Republic", spawn: { name: "Dutch Republic", lat: 52.4, lon: 4.9, color: "#ff8c00" }, region: { lat: [50.5, 53.6], lon: [3, 7] }, message: "Act of Abjuration - Dutch Republic declares independence from Spain" },
+  // 1701: Brandenburg-Prussia rises into Kingdom of Prussia.
+  { year: 1701, civ: { name: "Kingdom of Prussia", lat: 52.5, lon: 13.4, color: "#202020" }, message: "Frederick I crowned - Kingdom of Prussia formed" },
+  { year: 1871, type: "absorb", absorber: "Germany", target: "Kingdom of Prussia", message: "Prussia leads German unification - absorbed into the German Empire" },
+  { year: 1804, type: "rename", from: "Kingdom of France", to: "France", color: "#3a5ad8", message: "Napoleon proclaims the French Empire" },
+  // ============================================================
+  // Napoleonic Wars (1803-1815) - France dominates Europe, then collapses.
+  // ============================================================
+  { year: 1805, type: "war", a: "France", b: "Austria-Hungary", region: { lat: [46, 50], lon: [11, 18] }, reinforce: 12, message: "War of the Third Coalition - Napoleon crushes the Austrians at Austerlitz" },
+  { year: 1806, type: "war", a: "France", b: "Kingdom of Prussia", region: { lat: [50, 55], lon: [10, 22] }, reinforce: 14, message: "War of the Fourth Coalition - Napoleon shatters Prussia at Jena-Auerstedt" },
+  { year: 1807, type: "claim", civ: "France", region: { lat: [48, 55], lon: [4, 16] }, message: "Treaty of Tilsit - France dominates the German states" },
+  { year: 1808, type: "war", a: "France", b: "Kingdom of Spain", region: { lat: [36, 44], lon: [-9, 3] }, reinforce: 12, message: "Peninsular War - Napoleon installs his brother on the Spanish throne" },
+  { year: 1809, type: "war", a: "France", b: "Austria-Hungary", region: { lat: [46, 50], lon: [11, 18] }, reinforce: 10, message: "War of the Fifth Coalition - Wagram, the Austrian Empire bends" },
+  { year: 1810, type: "claim", civ: "France", region: { lat: [40, 53], lon: [-3, 14] }, message: "Napoleon at his peak - the French Empire spans most of Western Europe" },
+  // 1813: Battle of Leipzig - the coalition wins, Napoleon retreats.
+  { year: 1813, type: "war", a: "Kingdom of Prussia", b: "France", region: { lat: [48, 53], lon: [6, 15] }, reinforce: 14, message: "Battle of the Nations (Leipzig) - the Sixth Coalition shatters Napoleon's army" },
+  // 1814: Napoleon abdicates - France reverts to a kingdom under Louis XVIII.
+  { year: 1814, type: "rename", from: "France", to: "Kingdom of France", color: "#4a6ae8", spawnIfMissing: { lat: 48.86, lon: 2.35 }, message: "Napoleon abdicates - the Bourbon Restoration brings Louis XVIII to the throne" },
+  // 1815: The Hundred Days - Napoleon returns, then is finally defeated at Waterloo.
+  { year: 1815, type: "war", a: "United Kingdom", b: "Kingdom of France", region: { lat: [49, 52], lon: [3, 6] }, reinforce: 12, message: "Hundred Days - Napoleon returns from Elba but loses at Waterloo" },
+
+  // ============================================================
+  // HRE petty states - the Holy Roman Empire was made of hundreds of small
+  // territories. We add the most consequential ones as actual civs around
+  // the early modern era so the German lands aren't just one undifferentiated
+  // HRE blob until Napoleon dissolves it in 1806.
+  // ============================================================
+  { year: 1356, type: "secede", target: "Holy Roman Empire", civ: "Bavaria",
+    spawn: { name: "Bavaria", lat: 48.14, lon: 11.58, color: "#3a8ad8" },
+    region: { lat: [47, 50], lon: [10, 14] }, byOwner: "BAY",
+    message: "Golden Bull of 1356 codifies the prince-electors - Bavaria emerges as a major HRE state" },
+  { year: 1356, type: "secede", target: "Holy Roman Empire", civ: "Saxony",
+    spawn: { name: "Saxony", lat: 51.05, lon: 13.74, color: "#7a9a3a" },
+    region: { lat: [50, 52], lon: [11, 15] }, byOwner: "SAX",
+    message: "Saxony confirmed as a prince-electorate of the HRE" },
+  { year: 1415, type: "secede", target: "Holy Roman Empire", civ: "Brandenburg",
+    spawn: { name: "Brandenburg", lat: 52.41, lon: 12.55, color: "#1a3a4a" },
+    region: { lat: [52, 53.5], lon: [11, 16] }, byOwner: "BRA",
+    message: "Hohenzollerns granted Brandenburg - the seed of future Prussia" },
+  { year: 1495, type: "secede", target: "Holy Roman Empire", civ: "Württemberg",
+    spawn: { name: "Württemberg", lat: 48.77, lon: 9.18, color: "#a02828" },
+    region: { lat: [48, 50], lon: [8, 10] },
+    message: "Württemberg elevated to a duchy in the HRE" },
+  { year: 1714, type: "secede", target: "Holy Roman Empire", civ: "Hannover",
+    spawn: { name: "Hannover", lat: 52.37, lon: 9.74, color: "#9a6a3a" },
+    region: { lat: [51, 54], lon: [7, 11] },
+    message: "Personal union with Britain - Electorate of Hannover gains prominence" },
+  // 1701: Brandenburg becomes Kingdom of Prussia (rename, not new civ).
+  { year: 1701, type: "rename", from: "Brandenburg", to: "Kingdom of Prussia", color: "#202020", spawnIfMissing: { lat: 52.5, lon: 13.4 }, message: "Frederick I crowned in Königsberg - Brandenburg becomes the Kingdom of Prussia" },
+  // 1806: When Napoleon dissolves the HRE, the petty states reorganize. We
+  // simulate this by absorbing many of them into the strongest German power
+  // available at that moment (Prussia for the north, France for the west,
+  // Austria for the south).
+  { year: 1806, type: "absorb", absorber: "Kingdom of Prussia", target: "Hannover", message: "Napoleon's reorganization - Hannover folded into the new German order" },
+  { year: 1806, type: "absorb", absorber: "Bavaria", target: "Württemberg", message: "Napoleon's reorganization - Württemberg confirmed as a kingdom under Bavarian regional dominance" },
+  // 1871: Bismarck's German unification absorbs the major remaining German states.
+  { year: 1871, type: "absorb", absorber: "Germany", target: "Bavaria", message: "Bavaria joins the German Empire" },
+  { year: 1871, type: "absorb", absorber: "Germany", target: "Saxony", message: "Saxony joins the German Empire" },
+  { year: 1871, civ: { name: "Germany",     lat: 52,  lon: 13,   color: "#3a3a3a" }, replaces: "Germans", message: "Germany unified under Bismarck" },
+  { year: 1861, civ: { name: "Italy",       lat: 42,  lon: 12.5, color: "#10c450" }, replaces: "Etruscans", message: "Italy unified under Garibaldi & Cavour" },
+  // 1917: Russian Revolution - Bolsheviks seize power. Civil War: Whites vs Reds.
+  { year: 1917, type: "secede", target: "Russian Empire", civ: "White Movement", spawn: { name: "White Movement", lat: 47, lon: 39, color: "#e8e8e8" }, region: { lat: [44, 56], lon: [35, 60] }, message: "Russian Civil War: counter-revolutionary White armies rise" },
+  { year: 1917, type: "wartime", on: true, message: "Russian Revolution - Reds vs Whites" },
+  { year: 1922, type: "absorb", absorber: "Russian Empire", target: "White Movement", message: "Bolsheviks crush the White Movement" },
+  { year: 1922, type: "wartime", on: false, message: "Russian Civil War ends" },
+  { year: 1922, type: "rename", from: "Russian Empire", to: "Soviet Union", color: "#c81818", message: "The Soviet Union forms" },
+  { year: 1991, type: "rename", from: "Soviet Union", to: "Russia", color: "#2855c2", message: "The Soviet Union dissolves" },
+];
+
+function latLonToTile(lat, lon) {
+  const col = Math.floor((lon + 180) / 360 * COLS);
+  // HOI4 covers latitudes from LAT_TOP down to LAT_BOTTOM (Antarctica truncated)
+  const clampedLat = Math.max(LAT_BOTTOM, Math.min(LAT_TOP, lat));
+  const row = Math.floor((LAT_TOP - clampedLat) / LAT_SPAN * ROWS);
+  return { col: ((col % COLS) + COLS) % COLS, row: Math.max(0, Math.min(ROWS - 1, row)) };
+}
+
+// Find nearest land tile to a given coord
+function nearestLand(col, row) {
+  if (PASSABLE(MAP[row][col])) return { col, row };
+  for (let radius = 1; radius < 10; radius++) {
+    for (let dr = -radius; dr <= radius; dr++) {
+      for (let dc = -radius; dc <= radius; dc++) {
+        if (Math.abs(dr) !== radius && Math.abs(dc) !== radius) continue;
+        const r = row + dr;
+        if (r < 0 || r >= ROWS) continue;
+        const c = ((col + dc) % COLS + COLS) % COLS;
+        if (PASSABLE(MAP[r][c])) return { col: c, row: r };
+      }
+    }
+  }
+  return { col, row };
+}
+
+// =================== STATE ===================
+const state = {
+  year: START_YEAR,
+  turn: 0,
+  civs: [],            // all civs (player at index 0)
+  selectedTile: null,  // {col, row}
+  moveMode: null,      // {armyId} when selecting destination
+  log: [],             // chronicle
+  phase: "placement",  // "placement" | "playing" | "gameover"
+  ownership: null,     // 2D array, civ id or -1
+  hoverTile: null,
+  speed: 0,            // 0 = paused, 1-5 = active
+  lastTickAt: 0,       // ms timestamp of last completed tick
+  debug: false,        // observer mode
+  selectedProvince: 0, // HOI4 province ID picked by last click; 0 = none
+  selectedState: 0,    // parent state of the selected province; 0 = none
+  isWartime: false,    // true during world wars - unlocks aggressive AI
+  // "loading" while fetching, "ready" after success, "failed:reason" on error.
+  provinceStatus: "loading",
+};
+
+function updateProvinceStatusOverlay() {
+  const el = document.getElementById("province-status");
+  if (!el) return;
+  const detail = document.getElementById("ps-detail");
+  if (state.provinceStatus === "ready") {
+    el.classList.add("hidden");
+    el.classList.remove("failed");
+  } else if (state.provinceStatus === "loading") {
+    el.classList.remove("hidden");
+    el.classList.remove("failed");
+    detail.textContent = "Fetching map/provinces.bmp (~34 MB) and map/definition.csv …";
+    el.querySelector(".ps-title").textContent = "Loading HOI4 province grid…";
+  } else {
+    // "failed:..." message
+    const reason = state.provinceStatus.startsWith("failed:")
+      ? state.provinceStatus.substring(7)
+      : "unknown";
+    el.classList.remove("hidden");
+    el.classList.add("failed");
+    el.querySelector(".ps-title").textContent = "Province grid failed to load";
+    detail.textContent =
+      "Reason:\n  " + reason + "\n\n" +
+      "Required files (must be served via the local server):\n" +
+      "  • map/provinces.bmp\n" +
+      "  • map/definition.csv\n\n" +
+      "Open via http://localhost:8765/index.html - NOT by double-clicking index.html (file:// blocks image/CSV loading).\n\n" +
+      "If the server isn't running, restart it:\n" +
+      "  cd \"/Users/kiprassperauskas/Downloads/country colonise\"\n" +
+      "  python3 -m http.server 8765 &";
+  }
+}
+
+const view = {
+  zoom: 1,
+  panX: 0,
+  panY: 0,
+};
+
+let biomeCache = null;          // OffscreenCanvas-like with biomes pre-rendered
+let tintCacheCanvas = null;     // pre-rendered civ ownership tints
+let tintCacheDirty = true;
+
+let nextCivId = 0;
+let nextArmyId = 0;
+let nextSettlementId = 0;
+
+function makeCiv(opts) {
+  return {
+    id: nextCivId++,
+    name: opts.name,
+    color: opts.color,
+    isPlayer: !!opts.isPlayer,
+    alive: true,
+    settlements: [],   // {id, col, row, name, pop, food, prod, queue:[{type, progress}], walls:false}
+    armies: [],        // {id, col, row, type, count, civId, moves}
+    relations: {},     // civId -> -100..100
+    stability: 80,
+    techPoints: 0,
+    era: 0,
+    age: 0,            // turns alive
+    capitulatedTo: null,
+    // Expansion goals: AI biases settling/conquering toward these regions.
+    // [{ region: {lat: [s, n], lon: [w, e]}, priority: 0..1, since: year, label }]
+    expansionGoals: [],
+  };
+}
+
+function settlementName(civ, idx) {
+  const samples = {
+    "Egypt":      ["Memphis","Thebes","Heliopolis","Alexandria","Giza","Avaris","Luxor","Abydos"],
+    "Phoenicia":  ["Tyre","Sidon","Byblos","Carthage","Gadir","Utica"],
+    "Assyria":    ["Nineveh","Ashur","Nimrud","Khorsabad","Harran"],
+    "Babylon":    ["Babylon","Ur","Eridu","Uruk","Nippur","Lagash"],
+    "Greeks":     ["Athens","Sparta","Corinth","Thebes","Argos","Delphi","Mycenae"],
+    "Etruscans":  ["Veii","Tarquinii","Caere","Volterra","Populonia"],
+    "Celts":      ["Hallstatt","Bibracte","Alesia","Gergovia","Avaricum"],
+    "Iberians":   ["Numantia","Saguntum","Tartessos","Gades","Emporion"],
+    "Germans":    ["Aachen","Trier","Worms","Köln","Hamburg","Lübeck"],
+    "Slavs":      ["Kiev","Novgorod","Smolensk","Polotsk","Pskov"],
+    "Scythians":  ["Gelonus","Olbia","Neapolis","Kamenka"],
+    "Medes":      ["Ecbatana","Rhagae","Aspadana","Susa"],
+    "Persia":     ["Persepolis","Susa","Pasargadae","Ecbatana","Babylon"],
+    "Vedic India":["Indraprastha","Hastinapura","Magadha","Kosala","Avanti"],
+    "Maurya":     ["Pataliputra","Taxila","Ujjain","Kalinga","Vidisha"],
+    "Zhou China": ["Haojing","Luoyi","Linzi","Ying","Xianyang"],
+    "Han China":  ["Chang'an","Luoyang","Chengdu","Jiankang","Kaifeng"],
+    "Gojoseon":   ["Wanggeom","Asadal","Pyongyang"],
+    "Yamato":     ["Yamato","Asuka","Heijokyo","Heiankyo","Kamakura"],
+    "Olmec":      ["La Venta","San Lorenzo","Tres Zapotes","Laguna"],
+    "Maya":       ["Tikal","Palenque","Calakmul","Chichen Itza","Uxmal"],
+    "Chavin":     ["Chavin de Huantar","Sechin","Caral"],
+    "Inca":       ["Cuzco","Machu Picchu","Ollantaytambo","Quito","Vilcabamba"],
+    "Kush":       ["Napata","Meroe","Kerma","Faras"],
+    "Berbers":    ["Volubilis","Carthago","Lixus","Iol"],
+    "Rome":       ["Roma","Ostia","Capua","Tarentum","Mediolanum","Ravenna","Aquileia"],
+    "Lydia":      ["Sardis","Smyrna","Ephesus","Pergamon"],
+    "Carthage":   ["Carthago","Utica","Hippo","Saguntum","Gades"],
+    "Macedon":    ["Pella","Aigai","Thessalonica","Amphipolis"],
+    "Goths":      ["Adrianople","Toledo","Ravenna","Pavia"],
+    "Arabs":      ["Mecca","Medina","Damascus","Baghdad","Cairo","Cordoba"],
+    "Franks":     ["Aachen","Paris","Reims","Tours","Lyon"],
+    "Vikings":    ["Hedeby","Birka","Jorvik","Dublin","Reykjavik"],
+    "Mongols":    ["Karakorum","Khanbaliq","Sarai","Tabriz"],
+    "Ottomans":   ["Constantinople","Bursa","Edirne","Izmir","Damascus"],
+    "Aztec":      ["Tenochtitlan","Texcoco","Tlacopan","Cholula"],
+    "Russia":     ["Moscow","St. Petersburg","Kazan","Novgorod","Tver"],
+    "USA":        ["Philadelphia","Boston","New York","Washington","Charleston"],
+  };
+  const list = samples[civ.name] || [civ.name];
+  if (idx < list.length) return list[idx];
+  return list[idx % list.length] + " " + (Math.floor(idx / list.length) + 1);
+}
+
+function tribalNameFromBiome(biome) {
+  const adj = {
+    plains:   ["Grass","Wind","Stone","Sun","Bison","Wolf"],
+    forest:   ["Pine","Oak","Stag","Fox","Wolf","Birch"],
+    jungle:   ["River","Jaguar","Vine","Sun","Monkey"],
+    desert:   ["Sand","Sun","Falcon","Snake","Salt"],
+    tundra:   ["Ice","Bear","Wolf","Snow","Frost"],
+    mountain: ["Eagle","Stone","Cloud","Iron"],
+  };
+  const noun = ["Walkers","People","Folk","Tribe","Kin","Children","Ones"];
+  const a = (adj[biome] || ["Free"])[Math.floor(Math.random() * (adj[biome] || ["Free"]).length)];
+  const n = noun[Math.floor(Math.random() * noun.length)];
+  return a + " " + n;
+}
+
+// =================== INITIALIZATION ===================
+function placeCivOnMap(civ, capitalCol, capitalRow, isStarting = true) {
+  // Find a passable tile
+  const { col, row } = nearestLand(capitalCol, capitalRow);
+  const settlement = {
+    id: nextSettlementId++,
+    col, row,
+    name: settlementName(civ, civ.settlements.length),
+    pop: isStarting ? 2 : 3,
+    food: 0,
+    prod: 0,
+    queue: [],
+    walls: false,
+  };
+  civ.settlements.push(settlement);
+  // Claim tile + adjacent passable tiles
+  state.ownership[row][col] = civ.id;
+  for (const [nc, nr] of neighbors(col, row)) {
+    if (PASSABLE(MAP[nr][nc]) && state.ownership[nr][nc] === -1) {
+      state.ownership[nr][nc] = civ.id;
+    }
+  }
+  // Starting army
+  if (isStarting) {
+    civ.armies.push({
+      id: nextArmyId++, col, row,
+      type: "warrior", count: 2, civId: civ.id, moves: 1,
+    });
+  }
+  return settlement;
+}
+
+function initOwnership() {
+  state.ownership = Array.from({ length: ROWS }, () => new Array(COLS).fill(-1));
+}
+
+// Map a HOI4 state name to a game tile via HOI4_CITIES (uses the actual HOI4
+// pixel coords of that state's capital).
+function tileFromHoi4State(name) {
+  if (typeof HOI4_CITIES === "undefined") return null;
+  const city = HOI4_CITIES.find(c => c.name === name);
+  if (!city) return null;
+  return {
+    col: Math.max(0, Math.min(COLS - 1, Math.floor(city.x / TILE))),
+    row: Math.max(0, Math.min(ROWS - 1, Math.floor(city.y / TILE))),
+  };
+}
+
+function spawnHistoricalCivs() {
+  for (const h of HISTORICAL_CIVS) {
+    let pos = h.state ? tileFromHoi4State(h.state) : null;
+    if (!pos) pos = latLonToTile(h.lat, h.lon);
+    const civ = makeCiv({ name: h.name, color: h.color });
+    state.civs.push(civ);
+    placeCivOnMap(civ, pos.col, pos.row);
+  }
+  // Initialize neutral relations
+  for (const a of state.civs) {
+    for (const b of state.civs) {
+      if (a.id !== b.id) a.relations[b.id] = 0;
+    }
+  }
+  // Apply hardcoded pre-game alliances. Survives rename chains because the
+  // civ objects keep the same id when renamed.
+  for (const [nameA, nameB] of INITIAL_ALLIANCES) {
+    const a = state.civs.find(c => c.name === nameA);
+    const b = state.civs.find(c => c.name === nameB);
+    if (a && b) {
+      a.relations[b.id] = 100;
+      b.relations[a.id] = 100;
+    }
+  }
+}
+
+function spawnPlayer(col, row) {
+  const biome = MAP[row][col];
+  const player = makeCiv({
+    name: tribalNameFromBiome(biome),
+    color: "#ffffff",
+    isPlayer: true,
+  });
+  state.civs.unshift(player);
+  // re-id everyone for stable ordering? No - id stays unique. But put player at index 0.
+  placeCivOnMap(player, col, row);
+  // Set up relations
+  for (const c of state.civs) {
+    if (c.id !== player.id) {
+      player.relations[c.id] = 0;
+      c.relations[player.id] = 0;
+    }
+  }
+  state.phase = "playing";
+  log("event", `${player.name} settle the land. Their chieftain dreams of empire.`);
+}
+
+// =================== HISTORICAL EVENTS ===================
+function processEvents() {
+  for (const ev of HISTORICAL_EVENTS) {
+    if (ev._fired) continue;
+    if (state.year < ev.year) continue;
+    // requireDeadCivs: the event only fires once ALL named civs are gone.
+    // Used for chunked conquest like Rome - the territorial claim waits for
+    // the AI war to actually kill the resident civs before the chunk flips.
+    if (Array.isArray(ev.requireDeadCivs)) {
+      const stillAlive = ev.requireDeadCivs.some(name => {
+        const c = state.civs.find(c => c.alive && c.name === name);
+        return !!c;
+      });
+      if (stillAlive) continue;   // re-check next tick
+    }
+    ev._fired = true;
+    try {
+      fireEvent(ev);
+    } catch (e) {
+      console.error("EVENT FAILED at year", state.year, "type=", ev.type || "spawn",
+        "civ=", typeof ev.civ === "string" ? ev.civ : ev.civ && ev.civ.name,
+        "region=", JSON.stringify(ev.region || null), "\nev=", JSON.stringify(ev), "\n", e);
+      log("death", "Event failed: " + (ev.message || JSON.stringify(ev)));
+    }
+  }
+}
+
+function fireEvent(ev) {
+  const playerCiv = state.civs[0]?.isPlayer ? state.civs[0] : null;
+
+  // CLAIM: extend an existing civ. Supports lat/lon region OR byOwner=TAG
+  // (claim every tile that belongs to a HOI4 state with that 1936 owner tag).
+  if (ev.type === "claim") {
+    const civ = state.civs.find(c => c.alive && c.name === ev.civ);
+    if (!civ) return;
+    // Build a set of civ-ids that are protected from this claim (their
+    // territory is preserved instead of overwritten). ev.except is a list
+    // of civ names.
+    const exceptIds = new Set();
+    if (Array.isArray(ev.except)) {
+      for (const name of ev.except) {
+        const c = state.civs.find(x => x.alive && x.name === name);
+        if (c) exceptIds.add(c.id);
+      }
+    }
+    // byOwner accepts a string OR an array of tag strings.
+    const byOwnerTags = Array.isArray(ev.byOwner) ? ev.byOwner
+                       : (ev.byOwner ? [ev.byOwner] : null);
+    // If only `region` is set (no byOwner), run the legacy region expansion.
+    if (ev.region && !byOwnerTags) expandCivToRegion(civ, ev.region, playerCiv);
+    // Combined: when BOTH region and byOwner are set, the region acts as a
+    // CONSTRAINT - only byOwner tiles inside the box transfer. Lets us stage
+    // a big multi-tag claim (e.g. Russia's Siberian conquest) by longitude
+    // bands across decades.
+    if (byOwnerTags && typeof HOI4_CITIES !== "undefined" && provinceTile && provinceGrid) {
+      const tagSet = new Set(byOwnerTags);
+      const pidToTag = {};
+      for (const sd of HOI4_CITIES) {
+        if (!sd.owner || !tagSet.has(sd.owner)) continue;
+        for (const pid of sd.provinces || []) pidToTag[pid] = sd.owner;
+      }
+      // Optional region constraint.
+      let rLo = 0, rHi = ROWS - 1, cLo = 0, cHi = COLS - 1;
+      let useRegion = false;
+      if (ev.region) {
+        useRegion = true;
+        const t1 = latLonToTile(ev.region.lat[1], ev.region.lon[0]);
+        const t2 = latLonToTile(ev.region.lat[0], ev.region.lon[0]);
+        const t3 = latLonToTile(0, ev.region.lon[0]);
+        const t4 = latLonToTile(0, ev.region.lon[1]);
+        rLo = Math.min(t1.row, t2.row); rHi = Math.max(t1.row, t2.row);
+        cLo = Math.min(t3.col, t4.col); cHi = Math.max(t3.col, t4.col);
+      }
+      for (let r = rLo; r <= rHi; r++) {
+        for (let c = cLo; c <= cHi; c++) {
+          const cc = useRegion ? (((c % COLS) + COLS) % COLS) : c;
+          const owner = state.ownership[r][cc];
+          if (playerCiv && owner === playerCiv.id) continue;
+          if (owner === civ.id) continue;
+          if (ev.onlyUnowned && owner !== -1) continue;
+          if (exceptIds.has(owner)) continue;
+          if (!PASSABLE(MAP[r][cc])) continue;
+          const px = cc * TILE + (TILE >> 1);
+          const py = r * TILE + (TILE >> 1);
+          const pid = provinceGrid[py * MAP_W + px];
+          if (pid === 0 || !pidToTag[pid]) continue;
+          state.ownership[r][cc] = civ.id;
+        }
+      }
+      reassignSettlementsByTileOwner();
+    }
+    // Explicit province ID list (e.g. HOI4_GDL_PROVINCES). Lets us claim
+    // hand-picked sets of historical provinces.
+    if (Array.isArray(ev.provinces) && provinceTile) {
+      for (const pid of ev.provinces) {
+        const col = provinceTile[pid * 2];
+        const row = provinceTile[pid * 2 + 1];
+        if (col < 0 || row < 0) continue;
+        const owner = state.ownership[row][col];
+        if (playerCiv && owner === playerCiv.id) continue;
+        if (owner === civ.id) continue;
+        if (ev.onlyUnowned && owner !== -1) continue;
+        if (exceptIds.has(owner)) continue;
+        state.ownership[row][col] = civ.id;
+      }
+    }
+    log("event", ev.message);
+    invalidateTintCache();
+    return;
+  }
+
+  // COLONIZE: fill every unowned passable tile based on the underlying HOI4
+  // state's 1936 owner tag. We look up which game-civ has that tag (via
+  // CIV_TAGS) and assign the tile. Tiles whose 1936 owner has no game-civ
+  // counterpart stay unowned. Used for the ~1900 "world is fully colonized" event.
+  if (ev.type === "colonize") {
+    if (typeof HOI4_CITIES === "undefined" || !provinceGrid) return;
+    // Build TAG → game civ
+    const tagToCiv = new Map();
+    for (const civ of state.civs) {
+      if (!civ.alive) continue;
+      const flagTag = CIV_TAGS[civ.name] || "";
+      const tag = flagTag.split("_")[0];
+      if (tag.length === 3) tagToCiv.set(tag, civ);
+    }
+    // Build pid → 1936 owner tag
+    const pidToOwner = new Map();
+    for (const stateData of HOI4_CITIES) {
+      if (!stateData.owner) continue;
+      for (const pid of stateData.provinces || []) {
+        pidToOwner.set(pid, stateData.owner);
+      }
+    }
+    let filled = 0;
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (state.ownership[r][c] !== -1) continue;
+        if (!PASSABLE(MAP[r][c])) continue;
+        const px = c * TILE + (TILE >> 1);
+        const py = r * TILE + (TILE >> 1);
+        const pid = provinceGrid[py * MAP_W + px];
+        if (pid === 0) continue;
+        const ownerTag = pidToOwner.get(pid);
+        if (!ownerTag) continue;
+        const civ = tagToCiv.get(ownerTag);
+        if (!civ) continue;
+        state.ownership[r][c] = civ.id;
+        filled++;
+      }
+    }
+    log("event", ev.message + ` (${filled} provinces colonized)`);
+    invalidateTintCache();
+    return;
+  }
+
+  // RENAME: rename an existing civ + recolor (no territory change).
+  // Optional spawnIfMissing { lat, lon } - if the source civ is gone, spawn a
+  // fresh civ at that location with the new name so the chain keeps going.
+  if (ev.type === "rename") {
+    const civ = state.civs.find(c => c.alive && c.name === ev.from);
+    if (civ) {
+      civ.name = ev.to;
+      if (ev.color) civ.color = ev.color;
+      civ._flagColorApplied = false;   // new name -> new flag -> re-derive avg color
+      applyFlagColor(civ);
+      log("event", ev.message);
+      invalidateTintCache();
+      return;
+    }
+    if (ev.spawnIfMissing && typeof ev.spawnIfMissing.lat === "number") {
+      const { col, row } = latLonToTile(ev.spawnIfMissing.lat, ev.spawnIfMissing.lon);
+      const fresh = makeCiv({ name: ev.to, color: ev.color || "#888888" });
+      state.civs.push(fresh);
+      for (const c of state.civs) {
+        if (c.id !== fresh.id) {
+          fresh.relations[c.id] = 0;
+          c.relations[fresh.id] = 0;
+        }
+      }
+      placeCivOnMap(fresh, col, row);
+      log("event", ev.message + " (revived from absent predecessor)");
+      invalidateTintCache();
+      return;
+    }
+    log("event", ev.message + " - predecessor missing, skipped.");
+    return;
+  }
+
+  // MERGE: combine two civs into one new civ (e.g., Polish-Lithuanian Commonwealth).
+  if (ev.type === "merge") {
+    const civs = ev.from.map(name => state.civs.find(c => c.alive && c.name === name)).filter(Boolean);
+    // Both partners must be alive - otherwise the union cannot form. The
+    // surviving partner (if any) keeps its own identity.
+    if (civs.length < ev.from.length) {
+      const missing = ev.from.filter(n => !state.civs.find(c => c.alive && c.name === n));
+      log("event", ev.message + ` - but the union could not form (missing: ${missing.join(", ")}).`);
+      return;
+    }
+    const merged = makeCiv({ name: ev.to.name, color: ev.to.color });
+    state.civs.push(merged);
+    for (const c of state.civs) {
+      if (c.id !== merged.id) {
+        merged.relations[c.id] = 0;
+        c.relations[merged.id] = 0;
+      }
+    }
+    // Transfer all tiles, settlements, and armies
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (civs.some(civ => state.ownership[r][c] === civ.id)) {
+          state.ownership[r][c] = merged.id;
+        }
+      }
+    }
+    for (const civ of civs) {
+      for (const s of civ.settlements) merged.settlements.push(s);
+      for (const a of civ.armies) merged.armies.push({ ...a, civId: merged.id });
+      civ.settlements = [];
+      civ.armies = [];
+      civ.alive = false;
+      civ.capitulatedTo = merged.id;
+    }
+    merged.era = Math.max(...civs.map(c => c.era));
+    merged.techPoints = civs.reduce((s, c) => s + c.techPoints, 0);
+    log("event", ev.message);
+    invalidateTintCache();
+    return;
+  }
+
+  // BARBAROSSA: break an existing alliance and set hostile relations. Used
+  // for treacherous attacks like Operation Barbarossa or Pearl Harbor.
+  if (ev.type === "barbarossa") {
+    const a = state.civs.find(c => c.alive && c.name === ev.a);
+    const b = state.civs.find(c => c.alive && c.name === ev.b);
+    if (a && b) {
+      a.relations[b.id] = -100;
+      b.relations[a.id] = -100;
+      showWarPopup(a, b);
+    }
+    log("war", ev.message);
+    return;
+  }
+
+  // ALLIANCE: lock relations to the alliance ceiling (100). Both AIs will
+  // never attack each other while relations are this high.
+  if (ev.type === "alliance") {
+    const a = state.civs.find(c => c.alive && c.name === ev.a);
+    const b = state.civs.find(c => c.alive && c.name === ev.b);
+    if (a && b) {
+      a.relations[b.id] = 100;
+      b.relations[a.id] = 100;
+    }
+    log("peace", ev.message);
+    return;
+  }
+
+  // WAR: a historical declaration of war between two civs. Drops relations to
+  // -100 so the two sides aggressively attack each other (the shouldAttack()
+  // peacetime branch still allows attacks at rel < -50), but does NOT flip
+  // global wartime - that would make ALL civs hostile and crush bystanders
+  // like the Visigoths. Optionally adds expansion goals + reinforces both
+  // sides so they have armies to fight the war.
+  if (ev.type === "war") {
+    const a = state.civs.find(c => c.alive && c.name === ev.a);
+    const b = state.civs.find(c => c.alive && c.name === ev.b);
+    if (!a || !b) {
+      log("event", ev.message + " - one of the belligerents is missing.");
+      return;
+    }
+    a.relations[b.id] = -100;
+    b.relations[a.id] = -100;
+    // Aggressor goal: where they want to expand into. Defender gets the same
+    // region as a goal too (defending it matters).
+    if (ev.region) {
+      if (!a.expansionGoals) a.expansionGoals = [];
+      a.expansionGoals.push({ region: ev.region, priority: ev.priority || 1.0 });
+    }
+    // Reinforce both sides so they have armies to fight the war.
+    const boost = ev.reinforce || 6;
+    function reinforce(civ, count) {
+      if (!civ.settlements.length) return;
+      const cap = civ.settlements[0];
+      civ.armies.push({
+        id: nextArmyId++, col: cap.col, row: cap.row,
+        type: bestUnitForEra(civ.era), count, civId: civ.id, moves: 1,
+      });
+    }
+    reinforce(a, boost);
+    reinforce(b, Math.max(2, Math.floor(boost * 0.6)));
+    log("war", ev.message);
+    showWarPopup(a, b);
+    return;
+  }
+
+  // REINFORCE: spawn an army at the named civ's capital. Useful for boosting
+  // a civ before/during a major war so they have the units to actually push.
+  if (ev.type === "reinforce") {
+    const civ = state.civs.find(c => c.alive && c.name === ev.civ);
+    if (!civ || !civ.settlements.length) {
+      log("event", ev.message + " - civ has no capital to reinforce.");
+      return;
+    }
+    const cap = civ.settlements[0];
+    civ.armies.push({
+      id: nextArmyId++, col: cap.col, row: cap.row,
+      type: bestUnitForEra(civ.era), count: ev.count || 6, civId: civ.id, moves: 1,
+    });
+    log("event", ev.message);
+    return;
+  }
+
+  // SECEDE: transfer a lat/lon region of `target` civ to a new (or existing)
+  // civ. Used for fragmentations (Rome → Visigoths/Vandals/etc.) and
+  // independence movements (Poland/Lithuania seceding from Russia).
+  // Format: { type: "secede", target: "Western Rome", civ: "Visigoths",
+  //           spawn: { name, color, lat, lon }, region: {lat,lon}, message }
+  if (ev.type === "secede") {
+    const target = state.civs.find(c => c.alive && c.name === ev.target);
+    let newCiv = state.civs.find(c => c.alive && c.name === ev.civ);
+    if (!newCiv && ev.spawn) {
+      // Always use ev.civ as the canonical civ name (it's what later events
+      // look up by). spawn just supplies color/lat/lon.
+      newCiv = makeCiv({ name: ev.civ || ev.spawn.name, color: ev.spawn.color || "#888888" });
+      state.civs.push(newCiv);
+      applyFlagColor(newCiv);   // pull avg color from the flag if there's a tag
+      for (const c of state.civs) {
+        if (c.id !== newCiv.id) {
+          newCiv.relations[c.id] = 0;
+          c.relations[newCiv.id] = 0;
+        }
+      }
+      // Place a starting capital at lat/lon (or first transferred tile).
+      if (typeof ev.spawn.lat === "number" && typeof ev.spawn.lon === "number") {
+        const { col, row } = latLonToTile(ev.spawn.lat, ev.spawn.lon);
+        placeCivOnMap(newCiv, col, row, true);
+      }
+    }
+    if (!newCiv) {
+      log("event", ev.message + " - but the seceding state could not form.");
+      return;
+    }
+    let transferred = 0;
+    // Mode A: transfer all tiles whose underlying HOI4 state has owner that
+    // matches ev.byOwner (string OR array). The array form lets us secede
+    // multi-country regions in one event.
+    const sByOwnerTags = Array.isArray(ev.byOwner) ? ev.byOwner
+                       : (ev.byOwner ? [ev.byOwner] : null);
+    if (sByOwnerTags && typeof HOI4_CITIES !== "undefined" && provinceTile && provinceGrid) {
+      const sTagSet = new Set(sByOwnerTags);
+      const sPidToTag = {};
+      for (const sd of HOI4_CITIES) {
+        if (!sd.owner || !sTagSet.has(sd.owner)) continue;
+        for (const pid of sd.provinces || []) sPidToTag[pid] = sd.owner;
+      }
+      // For byOwner secedes (independence events) we transfer EVERY tagged
+      // tile regardless of who currently owns it. So if France or anyone
+      // else has been holding chunks of the seceding state's homeland, they
+      // lose them too. The newly independent country always gets its full
+      // HOI4 1936 territory. The player's own tiles are still preserved.
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const owner = state.ownership[r][c];
+          if (owner === newCiv.id) continue;
+          if (playerCiv && owner === playerCiv.id) continue;
+          if (!PASSABLE(MAP[r][c])) continue;
+          const px = c * TILE + (TILE >> 1);
+          const py = r * TILE + (TILE >> 1);
+          const pid = provinceGrid[py * MAP_W + px];
+          if (pid === 0 || !sPidToTag[pid]) continue;
+          state.ownership[r][c] = newCiv.id;
+          transferred++;
+        }
+      }
+      reassignSettlementsByTileOwner();
+    }
+    // Mode A2: explicit HOI4 state names. Used to add specific extra states
+    // (e.g. Ermland-Masuren given to Lithuania alongside its byOwner tiles).
+    if (Array.isArray(ev.byStateName) && typeof HOI4_CITIES !== "undefined" && provinceGrid) {
+      const stateNameSet = new Set(ev.byStateName);
+      const sPidSet = new Set();
+      for (const sd of HOI4_CITIES) {
+        if (!stateNameSet.has(sd.name)) continue;
+        for (const pid of sd.provinces || []) sPidSet.add(pid);
+      }
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (!PASSABLE(MAP[r][c])) continue;
+          const px = c * TILE + (TILE >> 1);
+          const py = r * TILE + (TILE >> 1);
+          const pid = provinceGrid[py * MAP_W + px];
+          if (pid === 0 || !sPidSet.has(pid)) continue;
+          state.ownership[r][c] = newCiv.id;
+          transferred++;
+        }
+      }
+      reassignSettlementsByTileOwner();
+    }
+    // Mode B: lat/lon region transfer.
+    if (ev.region) {
+      const r1 = latLonToTile(ev.region.lat[1], ev.region.lon[0]).row;
+      const r2 = latLonToTile(ev.region.lat[0], ev.region.lon[0]).row;
+      const c1 = latLonToTile(0, ev.region.lon[0]).col;
+      const c2 = latLonToTile(0, ev.region.lon[1]).col;
+      const rLo = Math.min(r1, r2), rHi = Math.max(r1, r2);
+      const cLo = Math.min(c1, c2), cHi = Math.max(c1, c2);
+      for (let r = rLo; r <= rHi; r++) {
+        for (let c = cLo; c <= cHi; c++) {
+          const cc = ((c % COLS) + COLS) % COLS;
+          if (!PASSABLE(MAP[r][cc])) continue;
+          const owner = state.ownership[r][cc];
+          if (target ? owner === target.id : owner === -1) {
+            state.ownership[r][cc] = newCiv.id;
+            transferred++;
+          }
+        }
+      }
+    }
+    // Transfer settlements located in newly-owned tiles + set hostile relations.
+    if (target) {
+      const remaining = [];
+      for (const s of target.settlements) {
+        if (state.ownership[s.row][s.col] === newCiv.id) {
+          newCiv.settlements.push(s);
+        } else {
+          remaining.push(s);
+        }
+      }
+      target.settlements = remaining;
+      target.relations[newCiv.id] = -80;
+      newCiv.relations[target.id] = -80;
+    }
+    // Give the new civ a starting army if it has nothing else.
+    if (newCiv.armies.length === 0 && newCiv.settlements.length > 0) {
+      const cap = newCiv.settlements[0];
+      newCiv.armies.push({
+        id: nextArmyId++, col: cap.col, row: cap.row,
+        type: bestUnitForEra(newCiv.era), count: 3, civId: newCiv.id, moves: 1,
+      });
+    }
+    log("event", ev.message);
+    invalidateTintCache();
+    return;
+  }
+
+  // ABSORB: target civ is wiped from the map; absorber civ takes all its
+  // territory, settlements, and armies. Used for events like the 1795 partition.
+  if (ev.type === "absorb") {
+    const absorber = state.civs.find(c => c.alive && c.name === ev.absorber);
+    const target = state.civs.find(c => c.alive && c.name === ev.target);
+    if (!target) {
+      log("event", ev.message + " - target civ is already gone.");
+      return;
+    }
+    // If target exists but absorber is missing, find the nearest living
+    // neighbor for each target tile so the territory becomes occupied land
+    // (whoever is closest steps in) rather than orphaned no-man's land.
+    if (absorber) {
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (state.ownership[r][c] === target.id) state.ownership[r][c] = absorber.id;
+        }
+      }
+      for (const s of target.settlements) absorber.settlements.push(s);
+      for (const a of target.armies) absorber.armies.push({ ...a, civId: absorber.id });
+      target.capitulatedTo = absorber.id;
+    } else {
+      // Pick the alive civ with the most adjacent tiles to each lost tile,
+      // tile by tile. Falls back to nearest living capital if no neighbour.
+      const aliveCivs = state.civs.filter(c => c.alive && c.id !== target.id);
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (state.ownership[r][c] !== target.id) continue;
+          // Tally neighbour ownership.
+          const tally = {};
+          for (const [nc, nr] of neighbors(c, r)) {
+            const o = state.ownership[nr][nc];
+            if (o >= 0 && o !== target.id) tally[o] = (tally[o] || 0) + 1;
+          }
+          let bestId = -1, bestN = 0;
+          for (const [k, v] of Object.entries(tally)) {
+            if (v > bestN) { bestN = v; bestId = +k; }
+          }
+          if (bestId < 0 && aliveCivs.length > 0) {
+            // No neighbour - assign to the alive civ whose first settlement is closest.
+            let nearest = null, nearestD = Infinity;
+            for (const cv of aliveCivs) {
+              if (!cv.settlements.length) continue;
+              const s = cv.settlements[0];
+              const d = Math.abs(s.col - c) + Math.abs(s.row - r);
+              if (d < nearestD) { nearestD = d; nearest = cv; }
+            }
+            if (nearest) bestId = nearest.id;
+          }
+          state.ownership[r][c] = bestId >= 0 ? bestId : -1;
+        }
+      }
+    }
+    target.settlements = [];
+    target.armies = [];
+    target.alive = false;
+    log("death", ev.message + (absorber ? "" : " - territory returns to no-man's land."));
+    invalidateTintCache();
+    return;
+  }
+
+  // WARTIME: toggle global aggression. During wartime, civs attack each other
+  // freely. Outside wartime, the AI sticks to conquering no-man's land and
+  // only attacks deeply hostile neighbours (rel < -50).
+  if (ev.type === "wartime") {
+    state.isWartime = !!ev.on;
+    log(ev.on ? "war" : "peace", ev.message);
+    return;
+  }
+
+  // GOAL: give a civ an expansion target. AI prioritizes settling and
+  // conquering tiles inside this region.
+  // Accepts:
+  //   region: { lat: [s,n], lon: [w,e] }      - bounding box
+  //   byOwner: "LIT" / "POL" / etc.            - every HOI4 state with matching owner tag
+  if (ev.type === "goal") {
+    const civ = state.civs.find(c => c.alive && c.name === ev.civ);
+    if (!civ) return;
+    if (!civ.expansionGoals) civ.expansionGoals = [];
+    const goal = {
+      region: ev.region,
+      priority: typeof ev.priority === "number" ? ev.priority : 0.7,
+      since: state.year,
+      label: ev.label || ev.message,
+    };
+    // Pre-compute the tile set for fast AI scoring. Sources (any/all):
+    //   byOwner: "TAG"     - every HOI4 state with this owner tag
+    //   provinces: [pid…]  - explicit province ID list (e.g. HOI4_GDL_PROVINCES for GDL's peak)
+    if ((ev.byOwner || ev.provinces) && provinceTile) {
+      goal.tiles = new Set();
+      const addPid = (pid) => {
+        const col = provinceTile[pid * 2];
+        const row = provinceTile[pid * 2 + 1];
+        if (col >= 0 && row >= 0) goal.tiles.add(row * COLS + col);
+      };
+      if (ev.byOwner && typeof HOI4_CITIES !== "undefined") {
+        for (const stateData of HOI4_CITIES) {
+          if (stateData.owner !== ev.byOwner) continue;
+          for (const pid of stateData.provinces || []) addPid(pid);
+        }
+      }
+      if (Array.isArray(ev.provinces)) {
+        for (const pid of ev.provinces) addPid(pid);
+      }
+    }
+    civ.expansionGoals.push(goal);
+    log("event", ev.message);
+    return;
+  }
+
+  // SPAWN (default): create or replace a civ at a lat/lon.
+  if (ev.replaces) {
+    const old = state.civs.find(c => c.alive && c.name === ev.replaces);
+    if (old) {
+      old.name = ev.civ.name;
+      if (ev.civ.color) old.color = ev.civ.color;
+      log("event", ev.message);
+      invalidateTintCache();
+      return;
+    }
+  }
+  // Fresh spawn
+  if (!ev.civ) return;
+  const lat = ev.civ.lat, lon = ev.civ.lon;
+  // Some "replaces" events only carry name+color (e.g. "Kingdom of Poland"
+  // replaces "Duchy of Poland"). If the predecessor is already extinct we'd
+  // try to spawn at undefined → NaN tile coords. Skip cleanly instead.
+  if (typeof lat !== "number" || typeof lon !== "number") {
+    log("event", ev.message + " - but no successor state could form (predecessor is gone).");
+    return;
+  }
+  const { col, row } = latLonToTile(lat, lon);
+  // Used to bail when the tile was already claimed - that meant historical
+  // foundings (e.g. Constantine founding Constantinople on Roman soil)
+  // would silently fail. Now we just let the founding succeed and seize
+  // the tile from the previous owner.
+  const civ = makeCiv({ name: ev.civ.name, color: ev.civ.color });
+  state.civs.push(civ);
+  applyFlagColor(civ);   // pull avg color from the flag if there's a tag
+  for (const c of state.civs) {
+    if (c.id !== civ.id) {
+      civ.relations[c.id] = 0;
+      c.relations[civ.id] = 0;
+    }
+  }
+  const s = placeCivOnMap(civ, col, row);
+  s.pop = 4;
+  civ.armies.push({
+    id: nextArmyId++, col: s.col, row: s.row,
+    type: bestUnitForEra(civ.era), count: 3, civId: civ.id, moves: 1,
+  });
+  log("event", ev.message);
+  invalidateTintCache();
+}
+
+// Expand a civ's territory to fill a lat/lon bounding region.
+// Won't override the player's tiles; will absorb other AI civs' territory in the region.
+// Walk every settlement and reassign it to whoever owns the tile under it.
+// Used after any bulk ownership change (byOwner claim/secede) so cities
+// don't disappear when their parent country loses the territory - the city
+// just changes hands. This also means a newly independent country auto-
+// inherits the cities sitting on its land, so it isn't capitulated for
+// having zero settlements the moment after it spawns.
+function reassignSettlementsByTileOwner() {
+  // Build civId -> civ index for quick lookup.
+  const byId = {};
+  for (const c of state.civs) byId[c.id] = c;
+  // Collect every settlement first (so we can reassign across civs in one pass).
+  const all = [];
+  for (const c of state.civs) {
+    if (!c.alive) continue;
+    for (const s of c.settlements) all.push({ s, owner: c });
+  }
+  // Clear settlements lists; we'll rebuild them based on tile ownership.
+  for (const c of state.civs) c.settlements = [];
+  for (const { s, owner } of all) {
+    const tileOwner = state.ownership[s.row][s.col];
+    let host = null;
+    if (tileOwner >= 0 && byId[tileOwner] && byId[tileOwner].alive) {
+      host = byId[tileOwner];
+    } else {
+      // Tile is unowned or owner gone - keep the settlement with its
+      // original civ (which keeps the city alive even on neutral land).
+      host = owner;
+    }
+    host.settlements.push(s);
+  }
+}
+
+function expandCivToRegion(civ, region, playerCiv) {
+  const { row: r1 } = latLonToTile(region.lat[1], region.lon[0]);
+  const { row: r2 } = latLonToTile(region.lat[0], region.lon[0]);
+  const { col: c1 } = latLonToTile(0, region.lon[0]);
+  const { col: c2 } = latLonToTile(0, region.lon[1]);
+  const rLo = Math.min(r1, r2), rHi = Math.max(r1, r2);
+  const cLo = Math.min(c1, c2), cHi = Math.max(c1, c2);
+  // Pre-compute which provinces have their CENTROID inside the region. Then
+  // for each tile we check whole-province eligibility. This makes the
+  // resulting territory follow province / state boundaries instead of a
+  // perfect rectangle - so empires no longer have suspiciously straight
+  // borders following lat/lon lines.
+  const provinceInRegion = (typeof HOI4_MAX_PROVINCE_ID !== "undefined")
+    ? new Uint8Array(HOI4_MAX_PROVINCE_ID + 1)
+    : null;
+  if (provinceInRegion && provinceTile) {
+    for (let pid = 1; pid <= HOI4_MAX_PROVINCE_ID; pid++) {
+      const col = provinceTile[pid * 2];
+      const row = provinceTile[pid * 2 + 1];
+      if (col < 0) continue;
+      // Wrap-aware col check.
+      let inLat = row >= rLo && row <= rHi;
+      let inLon = false;
+      if (cLo <= cHi) {
+        inLon = col >= cLo && col <= cHi;
+      } else {
+        inLon = col >= cLo || col <= cHi;   // wrap-around
+      }
+      if (inLat && inLon) provinceInRegion[pid] = 1;
+    }
+  }
+  const captured = new Set();
+  for (let r = rLo; r <= rHi; r++) {
+    for (let c = cLo; c <= cHi; c++) {
+      const cc = ((c % COLS) + COLS) % COLS;
+      if (!PASSABLE(MAP[r][cc])) continue;
+      const owner = state.ownership[r][cc];
+      if (playerCiv && owner === playerCiv.id) continue; // never override player
+      if (owner === civ.id) continue;
+      // Province-aware filter: if we have province data, only claim a tile
+      // when its underlying province centroid is also in the region. This
+      // breaks the rectangular pattern - a province that straddles the
+      // box edge is taken whole or not at all based on its centroid.
+      if (provinceInRegion && provinceGrid) {
+        const px = cc * TILE + (TILE >> 1);
+        const py = r * TILE + (TILE >> 1);
+        const pid = provinceGrid[py * MAP_W + px];
+        if (pid > 0 && !provinceInRegion[pid]) continue;
+      }
+      if (owner >= 0) captured.add(owner);
+      state.ownership[r][cc] = civ.id;
+    }
+  }
+  // Hand any caught settlements over to the expanding civ
+  for (const otherId of captured) {
+    const other = state.civs[civIndexById(otherId)];
+    if (!other || !other.alive) continue;
+    const remaining = [];
+    for (const s of other.settlements) {
+      if (state.ownership[s.row][s.col] === civ.id) {
+        civ.settlements.push(s);
+      } else {
+        remaining.push(s);
+      }
+    }
+    other.settlements = remaining;
+    if (other.settlements.length === 0) {
+      other.alive = false;
+      other.capitulatedTo = civ.id;
+      log("death", `${other.name} fades from history, absorbed by ${civ.name}.`);
+    }
+  }
+}
+
+function bestUnitForEra(era) {
+  const order = ["warrior", "archer", "legion", "knight", "musketeer", "rifleman", "tank", "modern"];
+  for (let i = order.length - 1; i >= 0; i--) {
+    if (UNITS[order[i]].era <= era) return order[i];
+  }
+  return "warrior";
+}
+
+// =================== TURN LOGIC ===================
+function tick() {
+  if (state.phase !== "playing") return;
+  // Block ticks while the province grid is loading or failed.
+  if (state.provinceStatus !== "ready") return;
+  const _tickStart = performance.now();
+
+  // 1. Resolve build queues + city growth
+  for (const civ of state.civs) {
+    if (!civ.alive) continue;
+    civ.age++;
+    for (const s of civ.settlements) {
+      // Food production
+      const tileFood = (BIOME_FOOD[MAP[s.row][s.col]] || 0) + 2;  // base + biome
+      // Surrounding tile bonus
+      let nearby = 0;
+      for (const [nc, nr] of neighbors(s.col, s.row)) {
+        if (state.ownership[nr][nc] === civ.id) nearby += BIOME_FOOD[MAP[nr][nc]] || 0;
+      }
+      const foodGain = tileFood + Math.floor(nearby * 0.3);
+      s.food += foodGain - s.pop;  // each pop eats 1
+      // Growth
+      if (s.food >= 10 + s.pop * 2) {
+        s.food = 0;
+        s.pop++;
+      } else if (s.food < 0) {
+        // famine
+        s.food = 0;
+        if (Math.random() < 0.4 && s.pop > 1) {
+          s.pop--;
+        }
+      }
+      // Production
+      const prod = 1 + Math.floor(s.pop / 2);
+      s.prod += prod;
+      // Tech
+      civ.techPoints += 1 + Math.floor(s.pop / 3);
+      // Process queue
+      if (s.queue.length > 0) {
+        const item = s.queue[0];
+        item.progress = (item.progress || 0) + s.prod;
+        const cost = item.type === "settler" ? SETTLER_COST : (UNITS[item.type]?.cost || 999);
+        if (item.progress >= cost) {
+          s.prod = 0;
+          s.queue.shift();
+          if (item.type === "settler") {
+            // Spawn settler army (count=1, special "settler" type)
+            civ.armies.push({
+              id: nextArmyId++, col: s.col, row: s.row,
+              type: "settler", count: 1, civId: civ.id, moves: 1,
+            });
+            if (civ.isPlayer) log("peace", `${s.name} produces a Settler.`);
+          } else {
+            // Find/make army at this tile
+            let army = civ.armies.find(a => a.col === s.col && a.row === s.row && a.type === item.type);
+            if (army) {
+              army.count++;
+            } else {
+              civ.armies.push({
+                id: nextArmyId++, col: s.col, row: s.row,
+                type: item.type, count: 1, civId: civ.id, moves: 1,
+              });
+            }
+            if (civ.isPlayer) log("peace", `${s.name} trains ${UNITS[item.type].name}.`);
+          }
+        } else {
+          s.prod = 0;
+        }
+      } else {
+        s.prod = 0;
+      }
+    }
+    // Era progression. Only chronicle the FIRST civ globally to reach each
+    // era — that's the historically meaningful moment. The player always
+    // gets their personal "you entered X" line.
+    while (civ.era < ERAS.length - 1 && civ.techPoints >= ERAS[civ.era + 1].threshold) {
+      civ.era++;
+      const newEra = civ.era;
+      if (!state.eraFirsts) state.eraFirsts = {};
+      const isFirst = !state.eraFirsts[newEra];
+      if (isFirst) state.eraFirsts[newEra] = civ.name;
+      if (civ.isPlayer) {
+        log("event", `Your people enter the ${ERAS[newEra].name}!`);
+      } else if (isFirst) {
+        log("event", `${civ.name} is the first to enter the ${ERAS[newEra].name}.`);
+      }
+    }
+    // Reset army moves
+    for (const a of civ.armies) a.moves = (UNITS[a.type] && UNITS[a.type].maxMoves) || 1;
+  }
+
+  // 2. AI turn - at high game speeds we round-robin: each civ acts every Nth
+  // tick instead of every tick. Keeps the per-tick AI cost flat as more civs
+  // accumulate later in history.
+  const aiPeriod = state.speed >= 5 ? 3 : (state.speed >= 4 ? 2 : 1);
+  for (const civ of state.civs) {
+    if (!civ.alive || civ.isPlayer) continue;
+    if (((civ.id + state.turn) % aiPeriod) !== 0) continue;
+    aiTurn(civ);
+  }
+
+  // 2b. Leader assist - if the player has any "leader" units alive, run a
+  // dedicated, more aggressive helper that builds settlers/colonizers/troops
+  // and actively expands and attacks on the player's behalf.
+  const leaderAssistCiv = state.civs[0];
+  if (leaderAssistCiv && leaderAssistCiv.isPlayer && leaderAssistCiv.alive &&
+      leaderAssistCiv.armies.some(a => a.type === "leader" && a.count > 0)) {
+    playerLeaderAssist(leaderAssistCiv);
+  }
+
+  // 2c. Enforce: no civ may own water tiles. Bulk-claim event handlers and
+  // older code paths can leak ocean tiles into ownership; sweep them clean.
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (MAP[r][c] === "ocean" && state.ownership[r][c] !== -1) {
+        state.ownership[r][c] = -1;
+      }
+    }
+  }
+
+  // 3. Civil wars / capitulation / splintering
+  for (const civ of state.civs.slice()) {
+    if (!civ.alive) continue;
+    checkInternalChaos(civ);
+  }
+
+  // 4. Stability drift
+  for (const civ of state.civs) {
+    if (!civ.alive) continue;
+    const expected = 80 - Math.max(0, civ.settlements.length - 4) * 3;
+    if (civ.stability < expected) civ.stability += 1;
+    else if (civ.stability > expected) civ.stability -= 1;
+  }
+
+  // 5. Year + events
+  state.turn++;
+  state.year += YEARS_PER_TURN;
+  processEvents();
+
+  // 6. Win/lose check
+  const player = state.civs[0];
+  if (player && player.isPlayer && player.settlements.length === 0 && player.armies.length === 0) {
+    state.phase = "gameover";
+    log("death", "Your people have been wiped from history. Game over.");
+  }
+
+  invalidateTintCache();
+  render();
+  updateUI();
+  const _tickMs = performance.now() - _tickStart;
+  if (_tickMs > 80) {
+    const aliveCivs = state.civs.filter(c => c.alive).length;
+    const armies = state.civs.reduce((s, c) => s + (c.alive ? c.armies.length : 0), 0);
+    console.warn(`slow tick: ${_tickMs.toFixed(1)}ms · year ${state.year} · ${aliveCivs} civs · ${armies} armies`);
+  }
+}
+
+// =================== AI ===================
+function aiTurn(civ) {
+  // Build priorities at each settlement. Colonizer + Leader are PLAYER-ONLY
+  // units, so the AI only queues settlers and combat units here.
+  for (const s of civ.settlements) {
+    if (s.queue.length > 0) continue;
+    const totalUnits = civ.armies.reduce((a, b) => a + b.count, 0);
+    const settlements = civ.settlements.length;
+    const wantsExpand = settlements < 3 + civ.era && Math.random() < 0.4;
+    const wantsArmy = totalUnits < settlements * 3 + civ.era * 2;
+    if (wantsExpand) {
+      s.queue.push({ type: "settler", progress: 0 });
+    } else if (wantsArmy || Math.random() < 0.7) {
+      s.queue.push({ type: bestUnitForEra(civ.era), progress: 0 });
+    }
+  }
+
+  // Per-tick set of (col,row) keys that other colonizers in this civ are
+  // already heading toward - keeps them from clustering on the same tile.
+  const claimedTargets = new Set();
+
+  // When the AI is assisting the human, leave the army the player has
+  // currently selected alone - they're about to issue a move/attack order.
+  let manualArmyIds = null;
+  if (civ.isPlayer && state.selectedTile) {
+    const { col, row } = state.selectedTile;
+    manualArmyIds = new Set(
+      civ.armies.filter(a => a.col === col && a.row === row).map(a => a.id)
+    );
+  }
+
+  // Move armies
+  for (const army of civ.armies.slice()) {
+    if (army.moves <= 0) continue;
+    // Leaders are stationary advisors - they shouldn't wander off.
+    if (army.type === "leader") continue;
+    // Don't override an army the player has selected.
+    if (manualArmyIds && manualArmyIds.has(army.id)) continue;
+    if (army.type === "colonizer") {
+      // Colonizers actively seek unowned land. Each picks a different target so
+      // they spread out across the frontier rather than all stacking up.
+      const target = findExpansionTile(civ, army.col, army.row, claimedTargets);
+      if (!target) continue;
+      claimedTargets.add(target.row * COLS + target.col);
+      // Colonizers may have multiple moves per turn - step until exhausted or
+      // they hit their target.
+      while (army.moves > 0) {
+        if (army.col === target.col && army.row === target.row) break;
+        const step = stepTowards(army.col, army.row, target.col, target.row, civ.id, true);
+        if (!step) break;
+        const before = army.moves;
+        // tryMoveOrAttack handles ownership flip + the claimsProvince hook.
+        tryMoveOrAttack(army, step.col, step.row);
+        // Safety: if move count didn't decrement (blocked), bail out.
+        if (army.moves >= before) break;
+      }
+      continue;
+    }
+    if (army.type === "settler") {
+      // Find a tile within 5 to settle
+      const target = findExpansionTile(civ, army.col, army.row);
+      if (target) {
+        const step = stepTowards(army.col, army.row, target.col, target.row, civ.id, true);
+        if (step) {
+          army.col = step.col; army.row = step.row;
+          army.moves = 0;
+          // If we reached target, settle
+          if (army.col === target.col && army.row === target.row && state.ownership[army.row][army.col] !== civ.id) {
+            placeCivOnMap(civ, army.col, army.row, false);
+            // remove settler
+            const i = civ.armies.indexOf(army);
+            if (i >= 0) civ.armies.splice(i, 1);
+          } else if (army.col === target.col && army.row === target.row) {
+            placeCivOnMap(civ, army.col, army.row, false);
+            const i = civ.armies.indexOf(army);
+            if (i >= 0) civ.armies.splice(i, 1);
+          }
+        }
+      }
+    } else {
+      // Combat unit: find nearby enemy or wander
+      const enemy = findNearbyEnemy(civ, army.col, army.row, 6);
+      if (enemy && shouldAttack(civ, enemy.civ, army)) {
+        const step = stepTowards(army.col, army.row, enemy.col, enemy.row, civ.id, false);
+        if (step) {
+          tryMoveOrAttack(army, step.col, step.row);
+        }
+      } else {
+        // Defensive: move towards weakest border or stay
+        if (Math.random() < 0.3) {
+          const opts = neighbors(army.col, army.row).filter(([c, r]) => PASSABLE(MAP[r][c]));
+          if (opts.length) {
+            const [nc, nr] = opts[Math.floor(Math.random() * opts.length)];
+            tryMoveOrAttack(army, nc, nr);
+          }
+        }
+      }
+    }
+  }
+}
+
+// Dedicated leader-unit assist for the player. More aggressive than aiTurn:
+//  - always queues something useful (cycles settlers, colonizers, troops)
+//  - attacks ANY non-ally civ in range (skips the peacetime gate that AI uses)
+//  - settlers found a city the moment they reach unowned land
+//  - naval movement works because tryMoveOrAttack already permits ocean tiles
+//    once civ.era >= 1 (same rule the player gets)
+function playerLeaderAssist(civ) {
+  // ---- Build queues ----
+  const colonizerCount = civ.armies.reduce((s, a) => s + (a.type === "colonizer" ? a.count : 0), 0);
+  const settlerCount   = civ.armies.reduce((s, a) => s + (a.type === "settler"   ? a.count : 0), 0);
+  const combatCount    = civ.armies.reduce((s, a) => s + (a.type !== "settler" && a.type !== "colonizer" && a.type !== "leader" ? a.count : 0), 0);
+  // Is there reachable unowned land for any settlement?
+  let hasFrontier = false;
+  for (const s of civ.settlements) {
+    if (findExpansionTile(civ, s.col, s.row)) { hasFrontier = true; break; }
+  }
+  // Is there any non-ally civ within reach?
+  let hasEnemy = false;
+  for (const s of civ.settlements) {
+    if (findNearbyEnemy(civ, s.col, s.row, 10)) { hasEnemy = true; break; }
+  }
+  for (const s of civ.settlements) {
+    if (s.queue.length > 0) continue;
+    const settlements = civ.settlements.length;
+    // Priority: enemies → fight units; frontier land → mix of colonizer + settler; otherwise → fight units.
+    if (hasEnemy && combatCount < settlements * 4 + civ.era * 2) {
+      s.queue.push({ type: bestUnitForEra(civ.era), progress: 0 });
+    } else if (hasFrontier && colonizerCount < settlements * 2 + 2 && Math.random() < 0.5) {
+      s.queue.push({ type: "colonizer", progress: 0 });
+    } else if (hasFrontier && settlerCount < 2 && Math.random() < 0.5) {
+      s.queue.push({ type: "settler", progress: 0 });
+    } else {
+      // Default: keep stockpiling combat power.
+      s.queue.push({ type: bestUnitForEra(civ.era), progress: 0 });
+    }
+  }
+
+  // ---- Move armies ----
+  // Don't override the unit the player has selected (they may be about to
+  // issue a manual order).
+  let manualArmyIds = null;
+  if (state.selectedTile) {
+    const { col, row } = state.selectedTile;
+    manualArmyIds = new Set(
+      civ.armies.filter(a => a.col === col && a.row === row).map(a => a.id)
+    );
+  }
+  const claimedTargets = new Set();
+
+  for (const army of civ.armies.slice()) {
+    if (army.moves <= 0) continue;
+    if (army.type === "leader") continue;                       // leaders sit in cities
+    if (manualArmyIds && manualArmyIds.has(army.id)) continue;  // respect manual control
+
+    if (army.type === "colonizer") {
+      const target = findExpansionTile(civ, army.col, army.row, claimedTargets);
+      if (!target) continue;
+      claimedTargets.add(target.row * COLS + target.col);
+      while (army.moves > 0) {
+        if (army.col === target.col && army.row === target.row) break;
+        const step = stepTowards(army.col, army.row, target.col, target.row, civ.id, true);
+        if (!step) break;
+        const before = army.moves;
+        tryMoveOrAttack(army, step.col, step.row);   // claimsProvince fires here
+        if (army.moves >= before) break;
+      }
+      continue;
+    }
+
+    if (army.type === "settler") {
+      // Settle on the first unowned tile we can reach; if we're already
+      // standing on unowned land, drop a city right here.
+      if (state.ownership[army.row][army.col] === -1 && PASSABLE(MAP[army.row][army.col])) {
+        placeCivOnMap(civ, army.col, army.row, false);
+        const i = civ.armies.indexOf(army);
+        if (i >= 0) civ.armies.splice(i, 1);
+        continue;
+      }
+      const target = findExpansionTile(civ, army.col, army.row);
+      if (!target) continue;
+      const step = stepTowards(army.col, army.row, target.col, target.row, civ.id, true);
+      if (!step) continue;
+      army.col = step.col; army.row = step.row;
+      army.moves = 0;
+      if (army.col === target.col && army.row === target.row) {
+        placeCivOnMap(civ, army.col, army.row, false);
+        const i = civ.armies.indexOf(army);
+        if (i >= 0) civ.armies.splice(i, 1);
+      }
+      continue;
+    }
+
+    // Combat units - aggressive: attack any non-ally civ in range.
+    const enemy = findNearbyEnemy(civ, army.col, army.row, 10);
+    if (enemy && (civ.relations[enemy.civ.id] || 0) < 80) {
+      const step = stepTowards(army.col, army.row, enemy.col, enemy.row, civ.id, false);
+      if (step) tryMoveOrAttack(army, step.col, step.row);
+      continue;
+    }
+    // No enemy - claim unowned land instead.
+    const target = findExpansionTile(civ, army.col, army.row);
+    if (target) {
+      const step = stepTowards(army.col, army.row, target.col, target.row, civ.id, true);
+      if (step) tryMoveOrAttack(army, step.col, step.row);
+    }
+  }
+}
+
+function shouldAttack(myCiv, theirCiv, myArmy) {
+  if (theirCiv.id === myCiv.id) return false;
+  // WAR-FOCUS override: if this civ has declared war on the player AND the
+  // target IS the player, attack with full commitment regardless of stability
+  // or peacetime.
+  if (state.warFocus && state.warFocus[myCiv.id] === theirCiv.id) return true;
+  const rel = myCiv.relations[theirCiv.id] || 0;
+  if (rel >= 80) return false;             // allies never attack
+  if (rel > 30) return false;              // friends - diplomatic peace
+  // PEACETIME (most of history): only attack deeply-hostile neighbours.
+  // The AI focuses on no-man's land instead of triggering wars.
+  if (!state.isWartime) {
+    return rel < -50;
+  }
+  // WARTIME: aggressive - random attacks, with stability-based aggression.
+  const aggression = 0.3 + (myCiv.stability < 50 ? 0.2 : 0);
+  if (rel < -30) return true;
+  return Math.random() < aggression;
+}
+
+// Is the (col, row) tile inside the lat/lon region of an expansion goal?
+function tileInGoalRegion(c, r, region) {
+  if (!region) return false;
+  const lat = LAT_TOP - (r + 0.5) * (LAT_SPAN / ROWS);
+  const lon = -180 + (c + 0.5) * (360 / COLS);
+  if (lat < region.lat[0] || lat > region.lat[1]) return false;
+  if (lon < region.lon[0] || lon > region.lon[1]) return false;
+  return true;
+}
+
+// Sum the priority bonuses for a tile from all of a civ's expansion goals.
+function goalScore(civ, c, r) {
+  if (!civ.expansionGoals || civ.expansionGoals.length === 0) return 0;
+  let bonus = 0;
+  for (const goal of civ.expansionGoals) {
+    if (tileInGoalRegion(c, r, goal.region)) bonus += goal.priority * 30;
+  }
+  return bonus;
+}
+
+function findExpansionTile(civ, col, row, claimedTargets) {
+  let best = null, bestScore = -1;
+  // Wider search radius when civ has goals (so they can reach toward them).
+  const RADIUS = civ.expansionGoals && civ.expansionGoals.length > 0 ? 10 : 6;
+  // HOMELAND CAP: peacetime expansion is hard-capped at N tiles from the
+  // civ's capital so 1000 BC tribes can't slowly creep across continents
+  // (Polans -> Rome, Norse -> Baltics, etc). Civs with explicit expansion
+  // goals can reach further (their goal regions); everyone else stays close.
+  const CAPITAL_RANGE = civ.expansionGoals && civ.expansionGoals.length > 0 ? 24 : 12;
+  const cap = civ.settlements && civ.settlements.length > 0 ? civ.settlements[0] : null;
+  for (let dr = -RADIUS; dr <= RADIUS; dr++) {
+    for (let dc = -RADIUS; dc <= RADIUS; dc++) {
+      const r = row + dr;
+      if (r < 0 || r >= ROWS) continue;
+      const c = ((col + dc) % COLS + COLS) % COLS;
+      if (!PASSABLE(MAP[r][c])) continue;
+      if (state.ownership[r][c] !== -1) continue;
+      if (claimedTargets && claimedTargets.has(r * COLS + c)) continue;
+      // Skip if this tile is too far from the civ's capital (homeland cap).
+      if (cap) {
+        const capDist = Math.abs(cap.col - c) + Math.abs(cap.row - r);
+        if (capDist > CAPITAL_RANGE) continue;
+      }
+      const food = BIOME_FOOD[MAP[r][c]] || 0;
+      const dist = Math.abs(dr) + Math.abs(dc);
+      const score = food * 4 - dist;
+      // Distance bonus from existing settlements
+      let near = 0;
+      for (const s of civ.settlements) {
+        const sd = Math.abs(s.col - c) + Math.abs(s.row - r);
+        if (sd < 4) near -= (4 - sd) * 3; // too close penalty
+      }
+      // Penalty for settling adjacent to ally tiles - keeps friends from
+      // crowding each other's borders.
+      let allyPenalty = 0;
+      for (const [nc, nr] of neighbors(c, r)) {
+        const o = state.ownership[nr][nc];
+        if (o >= 0 && o !== civ.id && (civ.relations[o] || 0) >= 80) {
+          allyPenalty += 8;
+        }
+      }
+      const total = score + near + goalScore(civ, c, r) - allyPenalty;
+      if (total > bestScore) { bestScore = total; best = { col: c, row: r }; }
+    }
+  }
+  return best;
+}
+
+function findNearbyEnemy(civ, col, row, maxDist) {
+  // WAR-FOCUS: if the player has declared war on this civ, ignore everyone
+  // else - the at-war AI focuses 100% on attacking the player. We pick the
+  // closest player settlement (without distance cap) so even far-away armies
+  // march toward the player.
+  if (state.warFocus && state.warFocus[civ.id] !== undefined) {
+    const player = state.civs.find(c => c.id === state.warFocus[civ.id] && c.alive);
+    if (player) {
+      let best = null, bestD = Infinity;
+      for (const s of player.settlements) {
+        const d = Math.abs(s.col - col) + Math.abs(s.row - row);
+        if (d < bestD) { bestD = d; best = { col: s.col, row: s.row, civ: player }; }
+      }
+      if (best) return best;
+    } else {
+      // Player gone - clear the focus.
+      delete state.warFocus[civ.id];
+    }
+  }
+  let best = null, bestScore = -Infinity;
+  for (const other of state.civs) {
+    if (!other.alive || other.id === civ.id) continue;
+    // Don't target allies as enemies.
+    if ((civ.relations[other.id] || 0) >= 80) continue;
+    for (const s of other.settlements) {
+      const d = Math.abs(s.col - col) + Math.abs(s.row - row);
+      if (d > maxDist) continue;
+      // Score: closer + bonus if in our goal region
+      const score = -d + goalScore(civ, s.col, s.row);
+      if (score > bestScore) {
+        best = { col: s.col, row: s.row, civ: other };
+        bestScore = score;
+      }
+    }
+  }
+  return best;
+}
+
+function stepTowards(fromC, fromR, toC, toR, civId, preferOwn) {
+  const civ = state.civs[civIndexById(civId)];
+  let best = null, bestScore = Infinity;
+  for (const [nc, nr] of neighbors(fromC, fromR)) {
+    if (!canMoveInto(civ, MAP[nr][nc])) continue;
+    const owner = state.ownership[nr][nc];
+    const d = Math.abs(nc - toC) + Math.abs(nr - toR);
+    let penalty = 0;
+    if (preferOwn && owner !== civId && owner !== -1) penalty = 10;
+    // Slight cost for ocean transit so armies prefer land routes when available.
+    if (MAP[nr][nc] === "ocean") penalty += 2;
+    if (d + penalty < bestScore) { bestScore = d + penalty; best = { col: nc, row: nr }; }
+  }
+  return best;
+}
+
+function tryMoveOrAttack(army, toC, toR) {
+  const civ = state.civs[civIndexById(army.civId)];
+  if (!canMoveInto(civ, MAP[toR][toC])) return false;
+  const unitDef = UNITS[army.type];
+  // Naval transit: ocean tiles are never owned and never trigger combat.
+  if (MAP[toR][toC] === "ocean") {
+    army.col = toC; army.row = toR;
+    army.moves = Math.max(0, army.moves - 1);
+    return true;
+  }
+  const owner = state.ownership[toR][toC];
+  if (owner === army.civId || owner === -1) {
+    army.col = toC; army.row = toR;
+    army.moves = Math.max(0, army.moves - 1);
+    if (owner === -1) {
+      state.ownership[toR][toC] = army.civId;
+      // Colonizers also claim every other unowned tile that belongs to the
+      // SAME province as the tile they entered - the whole province flips at once.
+      if (unitDef && unitDef.claimsProvince) {
+        claimProvinceForCiv(toC, toR, army.civId);
+      }
+    }
+    return true;
+  }
+  // Don't accidentally invade allies. If the tile's owner is an ally
+  // (rel >= 80), the unit just stops short - no combat, no relation hit.
+  if (civ && (civ.relations[owner] || 0) >= 80) {
+    army.moves = 0;   // burn the move so we don't loop forever
+    return false;
+  }
+  // PLAYER ATTACK GUARD: the only way to invade is to formally declare war.
+  // We use an explicit `state.playerWars` set populated by the Declare War
+  // button - relation drift from combat doesn't unlock invasions, only the
+  // formal declaration does.
+  if (civ && civ.isPlayer && (!state.playerWars || !state.playerWars.has(owner))) {
+    army.moves = 0;
+    return false;
+  }
+  // Enemy tile - combat (always ends the unit's turn).
+  resolveCombat(army, toC, toR);
+  army.moves = 0;
+  return true;
+}
+
+// Claim every unowned tile whose underlying HOI4 province matches the one at
+// (col, row). Used by colonizer units. Cheap because we use province bounding
+// boxes precomputed in computeProvinceBoxes().
+function claimProvinceForCiv(col, row, civId) {
+  if (!provinceGrid || !provinceBoxes) return;
+  const px = col * TILE + (TILE >> 1);
+  const py = row * TILE + (TILE >> 1);
+  const pid = provinceGrid[py * MAP_W + px];
+  if (pid === 0) return;
+  const off = pid * 4;
+  const x0 = provinceBoxes[off], y0 = provinceBoxes[off + 1];
+  const x1 = provinceBoxes[off + 2], y1 = provinceBoxes[off + 3];
+  if (x1 < 0) return;
+  // Walk every game-tile whose center lies inside the province bounding box.
+  const cLo = Math.max(0, Math.floor(x0 / TILE));
+  const cHi = Math.min(COLS - 1, Math.floor(x1 / TILE));
+  const rLo = Math.max(0, Math.floor(y0 / TILE));
+  const rHi = Math.min(ROWS - 1, Math.floor(y1 / TILE));
+  for (let r = rLo; r <= rHi; r++) {
+    for (let c = cLo; c <= cHi; c++) {
+      if (state.ownership[r][c] !== -1) continue;
+      if (MAP[r][c] === "ocean") continue;   // never claim water tiles
+      const ppx = c * TILE + (TILE >> 1);
+      const ppy = r * TILE + (TILE >> 1);
+      if (provinceGrid[ppy * MAP_W + ppx] === pid) {
+        state.ownership[r][c] = civId;
+      }
+    }
+  }
+}
+
+// =================== COMBAT ===================
+function resolveCombat(attackerArmy, toC, toR) {
+  const defenderCivId = state.ownership[toR][toC];
+  if (defenderCivId < 0) return;
+  const defenderCiv = state.civs[civIndexById(defenderCivId)];
+  const attackerCiv = state.civs[civIndexById(attackerArmy.civId)];
+  if (!defenderCiv || !defenderCiv.alive) return;
+  if (!attackerCiv || !attackerCiv.alive) return;   // attacker's civ vanished mid-combat
+
+  // Find any defending armies on this tile
+  const defArmies = defenderCiv.armies.filter(a => a.col === toC && a.row === toR && a.type !== "settler");
+  const defSettlement = defenderCiv.settlements.find(s => s.col === toC && s.row === toR);
+
+  let attStr = attackerArmy.count * (UNITS[attackerArmy.type]?.str || 1);
+  attStr *= 1 + 0.15 * attackerCiv.era;
+  let defStr = defArmies.reduce((sum, a) => sum + a.count * (UNITS[a.type]?.str || 1), 0);
+  defStr *= 1 + 0.15 * defenderCiv.era;
+  defStr += BIOME_DEFENSE[MAP[toR][toC]] * 5;
+  if (defSettlement) {
+    defStr += defSettlement.pop * 3;
+    if (defSettlement.walls) defStr *= 1.5;
+  }
+
+  const roll = 0.7 + Math.random() * 0.6;
+  const attackerWins = attStr * roll > defStr;
+
+  // Apply casualties
+  const attLoss = Math.max(1, Math.floor(attackerArmy.count * (attackerWins ? 0.25 : 0.55)));
+  attackerArmy.count = Math.max(0, attackerArmy.count - attLoss);
+
+  if (attackerWins) {
+    // Defender loses tile + settlement (if any) + all defending armies on tile
+    state.ownership[toR][toC] = attackerArmy.civId;
+    for (const a of defArmies) {
+      const i = defenderCiv.armies.indexOf(a);
+      if (i >= 0) defenderCiv.armies.splice(i, 1);
+    }
+    if (defSettlement) {
+      const i = defenderCiv.settlements.indexOf(defSettlement);
+      if (i >= 0) defenderCiv.settlements.splice(i, 1);
+      // Captured!
+      const captured = { ...defSettlement, pop: Math.max(1, Math.floor(defSettlement.pop * 0.6)), queue: [], walls: false };
+      attackerCiv.settlements.push(captured);
+      // (skipping "X sacks Y from Z" - chronicle should only carry big events)
+      // Stability hit
+      defenderCiv.stability -= 15;
+      attackerCiv.stability += 3;
+    }
+    // Skipping non-settlement skirmishes - "X pushes back Y" was just noise.
+    // Move attacker into tile
+    if (attackerArmy.count > 0) {
+      attackerArmy.col = toC; attackerArmy.row = toR;
+    }
+    // Set hostile relations
+    setRelation(attackerCiv, defenderCiv, -50);
+  } else {
+    // Defender holds. Defenders lose some too.
+    const defLossPct = 0.2;
+    for (const a of defArmies) {
+      const loss = Math.max(1, Math.floor(a.count * defLossPct));
+      a.count = Math.max(0, a.count - loss);
+      if (a.count === 0) {
+        const i = defenderCiv.armies.indexOf(a);
+        if (i >= 0) defenderCiv.armies.splice(i, 1);
+      }
+    }
+    // Skipping "X repels an attack" - cluttered the log; relation hit stays.
+    setRelation(attackerCiv, defenderCiv, -30);
+  }
+
+  // Remove attacker if wiped
+  if (attackerArmy.count <= 0) {
+    const i = attackerCiv.armies.indexOf(attackerArmy);
+    if (i >= 0) attackerCiv.armies.splice(i, 1);
+  }
+
+  // Capitulation check
+  checkCapitulation(defenderCiv, attackerCiv);
+  checkCapitulation(attackerCiv, defenderCiv);
+}
+
+function setRelation(a, b, delta) {
+  a.relations[b.id] = Math.max(-100, Math.min(100, (a.relations[b.id] || 0) + delta));
+  b.relations[a.id] = Math.max(-100, Math.min(100, (b.relations[a.id] || 0) + delta));
+}
+
+// Count tiles in a civ's territory grouped by HOI4 1936 owner tag.
+// Returns { TAG: tileCount }. Used by the fragmentation system - each
+// distinct tag becomes a successor state when the civ collapses.
+function countTilesByOwnerTag(civ) {
+  if (typeof HOI4_CITIES === "undefined" || !provinceTile) return {};
+  // Build pid -> owner tag lookup.
+  const pidToOwner = {};
+  for (const sd of HOI4_CITIES) {
+    if (!sd.owner) continue;
+    for (const pid of sd.provinces || []) pidToOwner[pid] = sd.owner;
+  }
+  // Walk every tile owned by this civ; classify by owner tag.
+  const counts = {};
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (state.ownership[r][c] !== civ.id) continue;
+      // Find which province this tile belongs to (centroid match).
+      // Easiest path: iterate provinceTile for any pid whose centroid matches
+      // (col,row). That's expensive; instead, we use the province grid directly.
+      const px = c * TILE + (TILE >> 1);
+      const py = r * TILE + (TILE >> 1);
+      const pid = provinceGrid ? provinceGrid[py * MAP_W + px] : 0;
+      const tag = pidToOwner[pid];
+      if (!tag) continue;
+      counts[tag] = (counts[tag] || 0) + 1;
+    }
+  }
+  return counts;
+}
+
+// Fragment a dying civ's territory along its HOI4 1936 owner-tag lines.
+// Each tag with notable tiles becomes a (new or existing) successor civ.
+// `winner` keeps its own tag's share - the conqueror at least gets the bit
+// that historically belonged to it (or to its modern equivalent).
+function fragmentCivByOwnerTag(loser, tilesByTag, winner) {
+  // Reverse CIV_TAGS lookup: which existing alive civs claim a given tag?
+  const tagToCiv = {};
+  for (const cv of state.civs) {
+    if (!cv.alive) continue;
+    const t = CIV_TAGS[cv.name];
+    if (t && !tagToCiv[t]) tagToCiv[t] = cv;
+  }
+
+  // Best-effort tag -> human name. Strips ideology suffixes like
+  // "POL_KINGDOM_neutrality" -> "POL". Fall back to tag itself.
+  const tagToName = (tag) => {
+    // Reverse-lookup any existing civ with a CIV_TAGS prefix matching this tag.
+    for (const [name, t] of Object.entries(CIV_TAGS)) {
+      if (t === tag) return name;
+    }
+    return tag;
+  };
+
+  for (const [tag, tileCount] of Object.entries(tilesByTag)) {
+    if (tileCount < 3) continue;   // ignore tiny scraps
+    let target = tagToCiv[tag];
+    if (!target) {
+      // Spawn a fresh successor civ named after this tag.
+      const successorName = tagToName(tag);
+      // Pick a representative tile to place a capital.
+      let capCol = -1, capRow = -1;
+      outer: for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (state.ownership[r][c] !== loser.id) continue;
+          const px = c * TILE + (TILE >> 1);
+          const py = r * TILE + (TILE >> 1);
+          const pid = provinceGrid ? provinceGrid[py * MAP_W + px] : 0;
+          const sd = (typeof HOI4_CITIES !== "undefined")
+            ? HOI4_CITIES.find(s => (s.provinces || []).indexOf(pid) >= 0)
+            : null;
+          if (sd && sd.owner === tag && PASSABLE(MAP[r][c])) {
+            capCol = c; capRow = r; break outer;
+          }
+        }
+      }
+      if (capCol < 0) continue;   // couldn't find a passable tile, skip
+      target = makeCiv({ name: successorName, color: shiftColor(loser.color) });
+      state.civs.push(target);
+      applyFlagColor(target);
+      // Initialize relations with everyone.
+      for (const c of state.civs) {
+        if (c.id !== target.id) {
+          target.relations[c.id] = 0;
+          c.relations[target.id] = 0;
+        }
+      }
+      placeCivOnMap(target, capCol, capRow, false);
+      tagToCiv[tag] = target;
+    }
+    // Transfer tiles tagged with this tag to the target civ.
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (state.ownership[r][c] !== loser.id) continue;
+        const px = c * TILE + (TILE >> 1);
+        const py = r * TILE + (TILE >> 1);
+        const pid = provinceGrid ? provinceGrid[py * MAP_W + px] : 0;
+        const sd = (typeof HOI4_CITIES !== "undefined")
+          ? HOI4_CITIES.find(s => (s.provinces || []).indexOf(pid) >= 0)
+          : null;
+        if (sd && sd.owner === tag) state.ownership[r][c] = target.id;
+      }
+    }
+  }
+  // Anything left untagged goes to the conqueror as a fallback.
+  if (winner && winner.alive) {
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (state.ownership[r][c] === loser.id) state.ownership[r][c] = winner.id;
+      }
+    }
+    loser.capitulatedTo = winner.id;
+  }
+}
+
+function checkCapitulation(loser, winner) {
+  if (!loser.alive) return;
+  if (loser.settlements.length === 0) {
+    // Big civs that lose their last settlement should fragment into the
+    // historical successor states (each chunk of territory tagged for a
+    // different HOI4 1936 country goes to that country). Small civs (one
+    // tag, or barely any territory) just go to the conqueror like before.
+    const tilesByTag = countTilesByOwnerTag(loser);
+    const tagCount = Object.keys(tilesByTag).length;
+    if (tagCount >= 2 && winner && winner.alive) {
+      // Fragment: territory split among historical owners. The conqueror
+      // (winner) gets only its own tag's share.
+      fragmentCivByOwnerTag(loser, tilesByTag, winner);
+      loser.armies = [];
+      loser.alive = false;
+      log("death", `${loser.name} fragments into its historical successor states.`);
+      invalidateTintCache();
+      return;
+    }
+    // Single-tag or no winner -> old behavior (transfer to winner).
+    if (winner && winner.alive) {
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (state.ownership[r][c] === loser.id) state.ownership[r][c] = winner.id;
+        }
+      }
+      loser.capitulatedTo = winner.id;
+    }
+    loser.alive = false;
+    // Hand over remaining armies (they vanish)
+    loser.armies = [];
+    log("death", `${loser.name} is destroyed and fades from history.`);
+    invalidateTintCache();
+    return;
+  }
+  // If lost over 70% of original size and recently
+  const totalTiles = countTiles(loser);
+  if (totalTiles <= 1 && loser.settlements.length === 1) {
+    if (Math.random() < 0.3) {
+      log("death", `${loser.name} capitulates to ${winner.name}.`);
+      // Transfer remaining settlement
+      for (const s of loser.settlements) winner.settlements.push(s);
+      for (const a of loser.armies) winner.armies.push({ ...a, civId: winner.id });
+      // Repaint ownership
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (state.ownership[r][c] === loser.id) state.ownership[r][c] = winner.id;
+        }
+      }
+      loser.settlements = [];
+      loser.armies = [];
+      loser.alive = false;
+      loser.capitulatedTo = winner.id;
+    }
+  }
+}
+
+function countTiles(civ) {
+  let n = 0;
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (state.ownership[r][c] === civ.id) n++;
+    }
+  }
+  return n;
+}
+
+function civIndexById(id) {
+  return state.civs.findIndex(c => c.id === id);
+}
+
+// =================== INTERNAL CHAOS ===================
+function checkInternalChaos(civ) {
+  // Rebel/civil-war/splinter system temporarily disabled per user request.
+  // (Stability still drifts; just no rebellion triggers.)
+  return;
+}
+
+function triggerCivilWar(civ) {
+  // Half the settlements rebel into a new civ
+  const half = Math.floor(civ.settlements.length / 2);
+  if (half < 1) return;
+  // Pick the further-from-capital half
+  const capital = civ.settlements[0];
+  const sorted = civ.settlements.slice(1).sort((a, b) => {
+    const da = Math.abs(a.col - capital.col) + Math.abs(a.row - capital.row);
+    const db = Math.abs(b.col - capital.col) + Math.abs(b.row - capital.row);
+    return db - da;
+  });
+  const rebels = sorted.slice(0, half);
+  const rebelCiv = makeCiv({
+    name: "Rebel " + civ.name,
+    color: shiftColor(civ.color),
+  });
+  state.civs.push(rebelCiv);
+  // Init relations
+  for (const c of state.civs) {
+    if (c.id !== rebelCiv.id) {
+      rebelCiv.relations[c.id] = c.id === civ.id ? -80 : 0;
+      c.relations[rebelCiv.id] = c.id === civ.id ? -80 : 0;
+    }
+  }
+  for (const s of rebels) {
+    civ.settlements.splice(civ.settlements.indexOf(s), 1);
+    rebelCiv.settlements.push(s);
+    state.ownership[s.row][s.col] = rebelCiv.id;
+    // Repaint nearby tiles
+    for (const [nc, nr] of neighbors(s.col, s.row)) {
+      if (state.ownership[nr][nc] === civ.id) state.ownership[nr][nc] = rebelCiv.id;
+    }
+  }
+  // Some armies go with rebels
+  const myArmies = civ.armies.slice();
+  for (const a of myArmies) {
+    if (rebels.some(s => Math.abs(s.col - a.col) + Math.abs(s.row - a.row) < 5)) {
+      civ.armies.splice(civ.armies.indexOf(a), 1);
+      rebelCiv.armies.push({ ...a, civId: rebelCiv.id });
+    }
+  }
+  rebelCiv.era = civ.era;
+  rebelCiv.techPoints = Math.floor(civ.techPoints * 0.5);
+  civ.stability = 50;
+  log("war", `Civil war! Rebel ${civ.name} breaks away.`);
+}
+
+function triggerSplinter(civ) {
+  // One distant settlement becomes independent
+  const capital = civ.settlements[0];
+  const distant = civ.settlements.slice(1).sort((a, b) => {
+    const da = Math.abs(a.col - capital.col) + Math.abs(a.row - capital.row);
+    const db = Math.abs(b.col - capital.col) + Math.abs(b.row - capital.row);
+    return db - da;
+  })[0];
+  if (!distant) return;
+  const splinterCiv = makeCiv({
+    name: distant.name + " (free)",
+    color: shiftColor(civ.color),
+  });
+  state.civs.push(splinterCiv);
+  for (const c of state.civs) {
+    if (c.id !== splinterCiv.id) {
+      splinterCiv.relations[c.id] = c.id === civ.id ? -40 : 0;
+      c.relations[splinterCiv.id] = c.id === civ.id ? -40 : 0;
+    }
+  }
+  civ.settlements.splice(civ.settlements.indexOf(distant), 1);
+  splinterCiv.settlements.push(distant);
+  state.ownership[distant.row][distant.col] = splinterCiv.id;
+  for (const [nc, nr] of neighbors(distant.col, distant.row)) {
+    if (state.ownership[nr][nc] === civ.id) state.ownership[nr][nc] = splinterCiv.id;
+  }
+  splinterCiv.era = civ.era;
+  log("event", `${distant.name} declares independence from ${civ.name}!`);
+}
+
+function shiftColor(hex) {
+  // Rotate hue slightly
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  // simple rotation
+  const out = [g, b, r].map(v => Math.min(255, Math.floor(v * 0.85 + 30)));
+  return "#" + out.map(v => v.toString(16).padStart(2, "0")).join("");
+}
+
+// =================== RENDERING ===================
+const canvas = document.getElementById("map");
+const ctx = canvas.getContext("2d");
+const overlay = document.getElementById("overlay");
+const octx = overlay.getContext("2d");
+
+function setupCanvas() {
+  const wrap = document.getElementById("map-wrap");
+  const w = wrap.clientWidth;
+  const h = wrap.clientHeight;
+  // High-DPI: render the canvas at native device resolution and scale CSS down.
+  // Otherwise the browser bilinearly upscales the canvas, which looks blurry.
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.floor(w * dpr);
+  canvas.height = Math.floor(h * dpr);
+  canvas.style.width = w + "px";
+  canvas.style.height = h + "px";
+  overlay.width = Math.floor(w * dpr);
+  overlay.height = Math.floor(h * dpr);
+  overlay.style.width = w + "px";
+  overlay.style.height = h + "px";
+  // Bake DPR into the default transform so the rest of the code works in CSS pixels.
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  state._dpr = dpr;
+  fitToView();
+  buildCornerCache();
+  buildBiomeCache();
+}
+
+function fitToView() {
+  // CSS-pixel viewport (since base transform pre-multiplies dpr)
+  const dpr = state._dpr || 1;
+  const w = canvas.width / dpr;
+  const h = canvas.height / dpr;
+  view.zoom = Math.min(w / MAP_W, h / MAP_H);
+  view.panX = (w - MAP_W * view.zoom) / 2;
+  view.panY = (h - MAP_H * view.zoom) / 2;
+}
+
+// =================== PROCEDURAL PROVINCE SHAPES ===================
+// Each tile is rendered as an irregular polygon with jittered corners.
+// Adjacent tiles share corners (same hash key), so polygons fit perfectly.
+// + edge midpoints add organic curves (octagonal, not square).
+// Result: each tile is its own "province" with a unique shape, like HOI4.
+
+let cornerCache = null;       // Float32Array of corner positions, indexed by row*(COLS+1)+col
+let edgeMidHCache = null;     // horizontal edge midpoints (col, row): edge between (c,r) and (c+1,r)
+let edgeMidVCache = null;     // vertical edge midpoints: edge between (c,r) and (c,r+1)
+
+function _hash(a, b, salt) {
+  let h = (Math.imul(a | 0, 73856093) ^ Math.imul(b | 0, 19349663) ^ (salt | 0)) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35) >>> 0;
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h / 0x100000000;
+}
+
+function buildCornerCache() {
+  // Corners: indexed by (col, row), col in [0..COLS], row in [0..ROWS]
+  // Wraparound: c=COLS shares jitter with c=0.
+  const N = (COLS + 1) * (ROWS + 1);
+  cornerCache = new Float32Array(N * 2);
+  const CORNER_JITTER = 0.46;   // up to 46% of a tile size
+  for (let r = 0; r <= ROWS; r++) {
+    for (let c = 0; c <= COLS; c++) {
+      let x = c, y = r;
+      const cWrap = c === COLS ? 0 : c;       // wraparound on global longitude
+      // Pin top/bottom row of map
+      if (r > 0 && r < ROWS) {
+        x += (_hash(cWrap, r, 0xa17c) - 0.5) * CORNER_JITTER;
+        y += (_hash(cWrap, r, 0xb24d) - 0.5) * CORNER_JITTER;
+      }
+      const i = (r * (COLS + 1) + c) * 2;
+      cornerCache[i] = x;
+      cornerCache[i + 1] = y;
+    }
+  }
+  // Edge midpoints - horizontal: (c, r) and (c+1, r) share this midpoint
+  edgeMidHCache = new Float32Array(COLS * (ROWS + 1) * 2);
+  const EDGE_JITTER = 0.22;
+  for (let r = 0; r <= ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      let mx = c + 0.5, my = r;
+      if (r > 0 && r < ROWS) {
+        mx += (_hash(c, r, 0xc189) - 0.5) * EDGE_JITTER;
+        my += (_hash(c, r, 0xd2a4) - 0.5) * EDGE_JITTER;
+      }
+      const i = (r * COLS + c) * 2;
+      edgeMidHCache[i] = mx;
+      edgeMidHCache[i + 1] = my;
+    }
+  }
+  // Edge midpoints - vertical: (c, r) and (c, r+1) share this midpoint
+  edgeMidVCache = new Float32Array((COLS + 1) * ROWS * 2);
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c <= COLS; c++) {
+      const cWrap = c === COLS ? 0 : c;
+      let mx = c, my = r + 0.5;
+      mx += (_hash(cWrap, r, 0xe315) - 0.5) * EDGE_JITTER;
+      my += (_hash(cWrap, r, 0xf426) - 0.5) * EDGE_JITTER;
+      const i = (r * (COLS + 1) + c) * 2;
+      edgeMidVCache[i] = mx;
+      edgeMidVCache[i + 1] = my;
+    }
+  }
+}
+
+function _corner(c, r, out) {
+  const i = (r * (COLS + 1) + c) * 2;
+  out[0] = cornerCache[i] * TILE;
+  out[1] = cornerCache[i + 1] * TILE;
+}
+function _edgeH(c, r, out) {
+  const i = (r * COLS + c) * 2;
+  out[0] = edgeMidHCache[i] * TILE;
+  out[1] = edgeMidHCache[i + 1] * TILE;
+}
+function _edgeV(c, r, out) {
+  const i = (r * (COLS + 1) + c) * 2;
+  out[0] = edgeMidVCache[i] * TILE;
+  out[1] = edgeMidVCache[i + 1] * TILE;
+}
+
+// Trace the 8-vertex path for tile (c, r) onto the given context
+// Order: TL → topMid → TR → rightMid → BR → bottomMid → BL → leftMid
+const _tmp = [0, 0];
+function pathTile(ctx, c, r) {
+  _corner(c, r, _tmp);     ctx.moveTo(_tmp[0], _tmp[1]);
+  _edgeH(c, r, _tmp);      ctx.lineTo(_tmp[0], _tmp[1]);
+  _corner(c + 1, r, _tmp); ctx.lineTo(_tmp[0], _tmp[1]);
+  _edgeV(c + 1, r, _tmp);  ctx.lineTo(_tmp[0], _tmp[1]);
+  _corner(c + 1, r + 1, _tmp); ctx.lineTo(_tmp[0], _tmp[1]);
+  _edgeH(c, r + 1, _tmp);  ctx.lineTo(_tmp[0], _tmp[1]);
+  _corner(c, r + 1, _tmp); ctx.lineTo(_tmp[0], _tmp[1]);
+  _edgeV(c, r, _tmp);      ctx.lineTo(_tmp[0], _tmp[1]);
+}
+
+// =================== HOI4 PROVINCE GRID ===================
+// Per-pixel province ID lookup, decoded from hoi4_province_ids.png at startup.
+// Indexed [y * MAP_W + x]. 0 = ocean / no province.
+let provinceGrid = null;            // Uint32Array - province ID per pixel
+let provinceTile = null;            // Int16Array (pid*2 = col, pid*2+1 = row); -1 = no tile
+let provinceInfo = null;            // Array<{id, r, g, b, type, coastal, terrain, continent}>
+let provinceToState = null;         // Int32Array - pid → HOI4 state id
+let hoi4ProvinceImg = null;
+
+// Load HOI4 province grid. Tries the preprocessed `hoi4_province_ids.png`
+// first (~500 KB, IDs RGB-encoded). Falls back to the raw `map/provinces.bmp`
+// (~34 MB) + RGB→pid lookup from `map/definition.csv`.
+async function loadProvinceGrid() {
+  state.provinceStatus = "loading";
+  updateProvinceStatusOverlay();
+  try {
+    // 1. definition.csv → provinceInfo (terrain + type per pid). Always
+    //    parsed so click-info / biome MAP have terrain regardless of which
+    //    grid path we use.
+    const defResp = await fetch("map/definition.csv");
+    if (!defResp.ok) throw new Error("HTTP " + defResp.status + " fetching map/definition.csv");
+    const defText = await defResp.text();
+    const rgbToPid = new Map();
+    provinceInfo = [];
+    for (const line of defText.split("\n")) {
+      const parts = line.split(";");
+      if (parts.length < 4) continue;
+      const pid = parseInt(parts[0], 10);
+      const r = parseInt(parts[1], 10);
+      const g = parseInt(parts[2], 10);
+      const b = parseInt(parts[3], 10);
+      if (isNaN(pid) || isNaN(r) || isNaN(g) || isNaN(b)) continue;
+      rgbToPid.set((r << 16) | (g << 8) | b, pid);
+      provinceInfo[pid] = {
+        id: pid,
+        r, g, b,
+        type: parts[4] ? parts[4].trim() : "unknown",
+        coastal: parts[5] ? parts[5].trim() === "true" : false,
+        terrain: parts[6] ? parts[6].trim() : "unknown",
+        continent: parts[7] ? parseInt(parts[7], 10) : 0,
+      };
+    }
+    console.log("[provinces] definition.csv:", rgbToPid.size, "provinces");
+
+    provinceGrid = new Uint32Array(MAP_W * MAP_H);
+
+    // 2a. Fast path: preprocessed PNG (IDs already in RGB).
+    let usedFast = false;
+    try {
+      const fastImg = await new Promise((res, rej) => {
+        const im = new Image();
+        im.onload = () => res(im);
+        im.onerror = () => rej(new Error("hoi4_province_ids.png missing"));
+        im.src = "hoi4_province_ids.png";
+      });
+      if (fastImg.naturalWidth === MAP_W && fastImg.naturalHeight === MAP_H) {
+        const c = document.createElement("canvas");
+        c.width = MAP_W; c.height = MAP_H;
+        const cx = c.getContext("2d");
+        cx.imageSmoothingEnabled = false;
+        cx.drawImage(fastImg, 0, 0);
+        const data = cx.getImageData(0, 0, MAP_W, MAP_H).data;
+        // R=pid&0xff, G=(pid>>8)&0xff, B=(pid>>16)&0xff
+        for (let i = 0, j = 0; i < provinceGrid.length; i++, j += 4) {
+          provinceGrid[i] = data[j] | (data[j + 1] << 8) | (data[j + 2] << 16);
+        }
+        usedFast = true;
+        console.log("[provinces] fast path: hoi4_province_ids.png decoded");
+      }
+    } catch (err) {
+      console.warn("[provinces] fast path unavailable:", err.message, "- falling back to BMP");
+    }
+
+    // 2b. Fallback: raw BMP via RGB→pid map.
+    if (!usedFast) {
+      const img = await new Promise((res, rej) => {
+        const im = new Image();
+        im.onload = () => res(im);
+        im.onerror = () => rej(new Error("Image load failed for map/provinces.bmp (browser may not support BMP, file may be missing, or the canvas was tainted)."));
+        im.src = "map/provinces.bmp";
+      });
+      console.log("[provinces] provinces.bmp:", img.naturalWidth, "x", img.naturalHeight);
+
+      const c = document.createElement("canvas");
+      c.width = MAP_W;
+      c.height = MAP_H;
+      const cx = c.getContext("2d");
+      cx.imageSmoothingEnabled = false;
+      cx.drawImage(img, 0, 0, MAP_W, MAP_H);
+      const data = cx.getImageData(0, 0, MAP_W, MAP_H).data;
+
+      let matched = 0, unmatched = 0;
+      for (let i = 0, j = 0; i < provinceGrid.length; i++, j += 4) {
+        const r = data[j], g = data[j + 1], b = data[j + 2];
+        const rgb = (r << 16) | (g << 8) | b;
+        const pid = rgbToPid.get(rgb);
+        if (pid !== undefined) { provinceGrid[i] = pid; matched++; }
+        else unmatched++;
+      }
+      console.log("[provinces] BMP decoded:", matched, "matched /", unmatched, "unmatched");
+    }
+
+    // 4. Compute province centroids → game-tile mapping
+    const N = 20000;
+    const sxArr = new Float64Array(N), syArr = new Float64Array(N);
+    const snArr = new Uint32Array(N);
+    let maxPid = 0;
+    for (let y = 0; y < MAP_H; y++) {
+      const rowOff = y * MAP_W;
+      for (let x = 0; x < MAP_W; x++) {
+        const pid = provinceGrid[rowOff + x];
+        if (pid === 0 || pid >= N) continue;
+        sxArr[pid] += x; syArr[pid] += y; snArr[pid]++;
+        if (pid > maxPid) maxPid = pid;
+      }
+    }
+    provinceTile = new Int16Array((maxPid + 1) * 2);
+    for (let pid = 0; pid <= maxPid; pid++) {
+      if (snArr[pid] === 0) {
+        provinceTile[pid * 2] = -1;
+        provinceTile[pid * 2 + 1] = -1;
+      } else {
+        const ccx = sxArr[pid] / snArr[pid];
+        const ccy = syArr[pid] / snArr[pid];
+        provinceTile[pid * 2] = Math.min(COLS - 1, Math.max(0, Math.floor(ccx / TILE)));
+        provinceTile[pid * 2 + 1] = Math.min(ROWS - 1, Math.max(0, Math.floor(ccy / TILE)));
+      }
+    }
+    window.HOI4_MAX_PROVINCE_ID = maxPid;
+    console.log("[provinces] centroids ready, max pid =", maxPid);
+
+    computeProvinceBoxes();
+
+    // Build province → state lookup from hoi4_data.js (HOI4_CITIES has each
+    // state's province list).
+    if (typeof HOI4_CITIES !== "undefined") {
+      provinceToState = new Int32Array(maxPid + 1);
+      for (const s of HOI4_CITIES) {
+        if (!s.provinces) continue;
+        for (const pid of s.provinces) {
+          if (pid >= 0 && pid <= maxPid) provinceToState[pid] = s.id;
+        }
+      }
+      console.log("[provinces] state lookup built");
+    }
+
+    // Build the per-tile biome MAP from province terrains now that we have
+    // both the province grid and the terrain info from definition.csv.
+    const provinceTerrain = [];
+    for (const p of provinceInfo) {
+      if (p) provinceTerrain[p.id] = p.terrain;
+    }
+    MAP = buildMapFromProvinces(provinceTerrain);
+    console.log("[provinces] biome MAP built from province terrains.");
+
+    // Now that the map exists, spawn civs + reset ownership.
+    initOwnership();
+    spawnHistoricalCivs();
+    applyAllFlagColors();        // initial pass over starting tribes
+
+    buildBiomeCache();
+
+    invalidateTintCache();
+    state.provinceStatus = "ready";
+    updateProvinceStatusOverlay();
+    render();
+    updateUI();
+  } catch (e) {
+    console.error("[provinces] grid load failed:", e);
+    provinceGrid = null;
+    provinceTile = null;
+    state.provinceStatus = "failed:" + (e && e.message ? e.message : String(e));
+    updateProvinceStatusOverlay();
+  }
+}
+
+let provinceBoxes = null;   // Int32Array, 4 entries per pid: minX, minY, maxX, maxY
+function computeProvinceBoxes() {
+  if (typeof HOI4_MAX_PROVINCE_ID === "undefined") return;
+  const N = HOI4_MAX_PROVINCE_ID + 1;
+  provinceBoxes = new Int32Array(N * 4);
+  for (let pid = 0; pid < N; pid++) {
+    provinceBoxes[pid * 4 + 0] = MAP_W;
+    provinceBoxes[pid * 4 + 1] = MAP_H;
+    provinceBoxes[pid * 4 + 2] = -1;
+    provinceBoxes[pid * 4 + 3] = -1;
+  }
+  for (let y = 0; y < MAP_H; y++) {
+    for (let x = 0; x < MAP_W; x++) {
+      const pid = provinceGrid[y * MAP_W + x];
+      if (pid === 0) continue;
+      const off = pid * 4;
+      if (x < provinceBoxes[off + 0]) provinceBoxes[off + 0] = x;
+      if (y < provinceBoxes[off + 1]) provinceBoxes[off + 1] = y;
+      if (x > provinceBoxes[off + 2]) provinceBoxes[off + 2] = x;
+      if (y > provinceBoxes[off + 3]) provinceBoxes[off + 3] = y;
+    }
+  }
+}
+
+// Cached selection outlines so render() doesn't iterate thousands of pixels
+// every frame during mouse drag / zoom.
+let _cachedSelOutline = { provId: 0, stateId: 0, provPath: null, statePath: null };
+function getCachedProvinceOutline(pid) {
+  if (_cachedSelOutline.provId !== pid) {
+    _cachedSelOutline.provId = pid;
+    _cachedSelOutline.provPath = pid > 0 ? provinceOutlinePath(pid) : null;
+  }
+  return _cachedSelOutline.provPath;
+}
+function getCachedStateOutline(sid) {
+  if (_cachedSelOutline.stateId !== sid) {
+    _cachedSelOutline.stateId = sid;
+    _cachedSelOutline.statePath = sid > 0 ? stateOutlinePath(sid) : null;
+  }
+  return _cachedSelOutline.statePath;
+}
+
+// Build a Path2D tracing the boundary of a single province (for selection highlight).
+function provinceOutlinePath(pid) {
+  if (!provinceGrid || !provinceBoxes) return null;
+  const off = pid * 4;
+  const x0 = provinceBoxes[off + 0], y0 = provinceBoxes[off + 1];
+  const x1 = provinceBoxes[off + 2], y1 = provinceBoxes[off + 3];
+  if (x1 < 0) return null;
+  const path = new Path2D();
+  for (let y = y0; y <= y1; y++) {
+    const rowOff = y * MAP_W;
+    for (let x = x0; x <= x1; x++) {
+      if (provinceGrid[rowOff + x] !== pid) continue;
+      // For each side that touches a different province, emit edge segment
+      // Top
+      if (y === 0 || provinceGrid[rowOff - MAP_W + x] !== pid) {
+        path.moveTo(x, y); path.lineTo(x + 1, y);
+      }
+      // Bottom
+      if (y === MAP_H - 1 || provinceGrid[rowOff + MAP_W + x] !== pid) {
+        path.moveTo(x, y + 1); path.lineTo(x + 1, y + 1);
+      }
+      // Left
+      if (x === 0 || provinceGrid[rowOff + x - 1] !== pid) {
+        path.moveTo(x, y); path.lineTo(x, y + 1);
+      }
+      // Right
+      if (x === MAP_W - 1 || provinceGrid[rowOff + x + 1] !== pid) {
+        path.moveTo(x + 1, y); path.lineTo(x + 1, y + 1);
+      }
+    }
+  }
+  return path;
+}
+
+// Build a Path2D tracing the boundary of an entire HOI4 state (union of its
+// provinces). Used to highlight the parent state in gold on click.
+function stateOutlinePath(stateId) {
+  if (!provinceGrid || !provinceBoxes || typeof HOI4_CITIES === "undefined") return null;
+  const stateData = HOI4_CITIES.find(s => s.id === stateId);
+  if (!stateData || !stateData.provinces || stateData.provinces.length === 0) return null;
+  const provSet = new Set(stateData.provinces);
+
+  // Compute the union bounding box from province boxes
+  let minX = MAP_W, minY = MAP_H, maxX = -1, maxY = -1;
+  for (const pid of stateData.provinces) {
+    const off = pid * 4;
+    if (provinceBoxes[off + 2] < 0) continue;
+    if (provinceBoxes[off + 0] < minX) minX = provinceBoxes[off + 0];
+    if (provinceBoxes[off + 1] < minY) minY = provinceBoxes[off + 1];
+    if (provinceBoxes[off + 2] > maxX) maxX = provinceBoxes[off + 2];
+    if (provinceBoxes[off + 3] > maxY) maxY = provinceBoxes[off + 3];
+  }
+  if (maxX < 0) return null;
+
+  const path = new Path2D();
+  for (let y = minY; y <= maxY; y++) {
+    const rowOff = y * MAP_W;
+    for (let x = minX; x <= maxX; x++) {
+      const pid = provinceGrid[rowOff + x];
+      if (!provSet.has(pid)) continue;
+      // Emit edge segment if the neighbor on each side is NOT in the state
+      if (y === 0 || !provSet.has(provinceGrid[rowOff - MAP_W + x])) {
+        path.moveTo(x, y); path.lineTo(x + 1, y);
+      }
+      if (y === MAP_H - 1 || !provSet.has(provinceGrid[rowOff + MAP_W + x])) {
+        path.moveTo(x, y + 1); path.lineTo(x + 1, y + 1);
+      }
+      if (x === 0 || !provSet.has(provinceGrid[rowOff + x - 1])) {
+        path.moveTo(x, y); path.lineTo(x, y + 1);
+      }
+      if (x === MAP_W - 1 || !provSet.has(provinceGrid[rowOff + x + 1])) {
+        path.moveTo(x + 1, y); path.lineTo(x + 1, y + 1);
+      }
+    }
+  }
+  return path;
+}
+
+let hoi4BiomeImg = null;
+function buildBiomeCache() {
+  biomeCache = document.createElement("canvas");
+  biomeCache.width = MAP_W;
+  biomeCache.height = MAP_H;
+  const bctx = biomeCache.getContext("2d");
+
+  // First fall back: render from logic grid (in case PNG not yet loaded).
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      bctx.fillStyle = BIOME_COLORS[MAP[r][c]];
+      bctx.fillRect(c * TILE, r * TILE, TILE, TILE);
+    }
+  }
+
+  // If the high-res HOI4 biome PNG is loaded, blit it on top.
+  if (hoi4BiomeImg) {
+    bctx.imageSmoothingEnabled = false;
+    bctx.drawImage(hoi4BiomeImg, 0, 0, MAP_W, MAP_H);
+  } else {
+    // Kick off async load; rebuild cache when it finishes.
+    const img = new Image();
+    img.onload = () => {
+      hoi4BiomeImg = img;
+      buildBiomeCache();
+      render();
+    };
+    img.src = "hoi4_biomes.png?v=" + Date.now();
+  }
+  tintCacheDirty = true;
+}
+
+// Reusable scratch canvas for per-civ blob compositing
+let blobScratch = null;
+function getBlobScratch() {
+  if (!blobScratch) {
+    blobScratch = document.createElement("canvas");
+    blobScratch.width = MAP_W;
+    blobScratch.height = MAP_H;
+  }
+  return blobScratch;
+}
+
+function buildTintCache() {
+  // Simple tile-based ownership rendering. Each owned tile = colored 8×8 rect.
+  // Country borders = Path2D vector strokes between different-owner edges.
+  const w = MAP_W, h = MAP_H;
+  if (!tintCacheCanvas || tintCacheCanvas.width !== w) {
+    tintCacheCanvas = document.createElement("canvas");
+    tintCacheCanvas.width = w;
+    tintCacheCanvas.height = h;
+  }
+  const tctx = tintCacheCanvas.getContext("2d");
+
+  // Skip if ownership unchanged since last rebuild.
+  const hash = _ownershipHash();
+  if (hash === _lastOwnershipHash) {
+    tintCacheDirty = false;
+    return;
+  }
+  // Throttle: rebuild rate scales down at higher speeds so each tick has
+  // a predictable budget regardless of how many ownership changes occurred.
+  const minMs = state.speed >= 5 ? 600 : (state.speed >= 4 ? 400 : _REBUILD_MIN_MS);
+  const now = performance.now();
+  if (now - _lastRebuildAt < minMs) {
+    tintCacheDirty = true;   // stay dirty so we'll retry next render
+    return;
+  }
+  _lastRebuildAt = now;
+  _lastOwnershipHash = hash;
+
+  tctx.clearRect(0, 0, w, h);
+
+  // Compute centroids in this top-level pass - used by both province- and
+  // tile-render modes for label placement.
+
+  // PROVINCE MODE ONLY - no boxy tile fallback.
+  // If the province grid hasn't loaded yet, just compute centroids for label
+  // placement and bail. The tint canvas stays empty (biome shows through)
+  // until the BMP finishes loading.
+  if (!provinceGrid || !provinceTile) {
+    borderPath = null;
+    const acc = new Map();
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const o = state.ownership[r][c];
+        if (o < 0) continue;
+        let a = acc.get(o);
+        if (!a) { a = { sx: 0, sy: 0, sxx: 0, sxy: 0, syy: 0, n: 0 }; acc.set(o, a); }
+        a.sx += c; a.sy += r;
+        a.sxx += c * c; a.sxy += c * r; a.syy += r * r;
+        a.n++;
+      }
+    }
+    for (const civ of state.civs) {
+      const a = acc.get(civ.id);
+      if (!a || a.n === 0) { civ._centroid = null; civ._angle = 0; continue; }
+      const cx = a.sx / a.n, cy = a.sy / a.n;
+      const Mxx = a.sxx / a.n - cx * cx;
+      const Myy = a.syy / a.n - cy * cy;
+      const Mxy = a.sxy / a.n - cx * cy;
+      let angle = 0.5 * Math.atan2(2 * Mxy, Mxx - Myy);
+      const tr = Mxx + Myy;
+      const det = Mxx * Myy - Mxy * Mxy;
+      const disc = Math.max(0, tr * tr / 4 - det);
+      const lMax = tr / 2 + Math.sqrt(disc);
+      const lMin = tr / 2 - Math.sqrt(disc);
+      const aspect = lMin > 0 ? Math.sqrt(lMax / lMin) : 1;
+      if (aspect < 1.25) angle = 0;
+      const cap = Math.PI / 3;
+      if (angle > cap) angle = cap;
+      if (angle < -cap) angle = -cap;
+      civ._centroid = { col: cx, row: cy, tiles: a.n };
+      civ._angle = angle;
+      civ._extent = { major: Math.sqrt(Math.max(0.5, lMax)), minor: Math.sqrt(Math.max(0.5, lMin)) };
+    }
+    tintCacheDirty = false;
+    return;
+  }
+
+  // Province grid is loaded - render real HOI4 province shapes.
+  return buildTintCacheProvinces(tctx);
+}
+
+
+// Vector border path (Path2D) computed from the same ownership grid; rendered
+// in render() with anti-aliased stroke. Built fresh each tint rebuild.
+let borderPath = null;
+// Faint state-border path: edges between adjacent provinces that share an
+// owning civ but belong to different HOI4 states. Drawn under the main border.
+let stateBorderPath = null;
+// Reused ImageData + helper arrays to avoid per-rebuild GC pressure
+let _cachedImageData = null;
+let _cachedProvinceColor = null;
+let _cachedProvinceCiv = null;
+// Ownership hash to skip work if nothing changed since last rebuild
+let _lastOwnershipHash = -1;
+// Throttle rebuilds so we don't burn 100ms on every tick at high speed
+let _lastRebuildAt = 0;
+const _REBUILD_MIN_MS = 250;   // never rebuild more than ~4×/sec
+
+function _ownershipHash() {
+  let h = 0;
+  for (let r = 0; r < ROWS; r++) {
+    const row = state.ownership[r];
+    for (let c = 0; c < COLS; c++) {
+      h = (h * 31 + row[c] + 1) | 0;
+    }
+  }
+  return h;
+}
+
+// Tint cache rendered at HALF the source resolution - flat-color civ fills don't
+// need full pixel detail, and going half-res quarters the per-rebuild work.
+const TINT_DS = 2;
+
+// Province-aware tint rendering: per-pixel paint based on the province ID
+// grid, with each province colored by its primary tile's owner.
+// Borders drawn as a Path2D vector stroke.
+function buildTintCacheProvinces(tctx) {
+  const w = MAP_W, h = MAP_H;
+
+  // Reuse ImageData buffer so we don't allocate ~11MB every rebuild.
+  if (!_cachedImageData || _cachedImageData.width !== w || _cachedImageData.height !== h) {
+    _cachedImageData = tctx.createImageData(w, h);
+  } else {
+    _cachedImageData.data.fill(0);
+  }
+  const dataView = new Uint32Array(_cachedImageData.data.buffer);
+
+  // Build province → owner-color and province → owner-civ-id lookup tables.
+  const maxPid = (typeof HOI4_MAX_PROVINCE_ID !== "undefined") ? HOI4_MAX_PROVINCE_ID + 1 : 13400;
+  if (!_cachedProvinceColor || _cachedProvinceColor.length !== maxPid) {
+    _cachedProvinceColor = new Uint32Array(maxPid);
+    _cachedProvinceCiv = new Int16Array(maxPid);
+  }
+  const provinceColor = _cachedProvinceColor;
+  const provinceCiv = _cachedProvinceCiv;
+  for (let pid = 0; pid < maxPid; pid++) { provinceColor[pid] = 0; provinceCiv[pid] = -1; }
+
+  for (let pid = 1; pid < maxPid; pid++) {
+    const col = provinceTile[pid * 2];
+    const row = provinceTile[pid * 2 + 1];
+    if (col < 0) continue;
+    const owner = state.ownership[row][col];
+    if (owner < 0) continue;
+    const civ = state.civs[civIndexById(owner)];
+    if (!civ || !civ.alive) continue;
+    provinceCiv[pid] = civ.id;
+    const r = parseInt(civ.color.slice(1, 3), 16);
+    const g = parseInt(civ.color.slice(3, 5), 16);
+    const b = parseInt(civ.color.slice(5, 7), 16);
+    provinceColor[pid] = (255 << 24) | (b << 16) | (g << 8) | r;
+  }
+  state._provinceCiv = provinceCiv;
+
+  // Per-pixel paint: each owned province is filled with a single flat civ color.
+  // Unowned provinces stay transparent so the biome shows through.
+  const total = w * h;
+  for (let i = 0; i < total; i++) {
+    const pid = provinceGrid[i];
+    if (pid === 0) continue;
+    dataView[i] = provinceColor[pid];   // 0 if unowned (stays transparent)
+  }
+
+  // Vector border path - sample every 2 pixels for ~4× speed; AA hides the gap.
+  // Plus a separate stateBorderPath for state boundaries WITHIN a civ.
+  borderPath = new Path2D();
+  stateBorderPath = new Path2D();
+  const STEP = 2;
+  const haveStates = provinceToState !== null;
+  for (let y = 0; y < h; y += STEP) {
+    const rowOff = y * w;
+    for (let x = 0; x < w; x += STEP) {
+      const i = rowOff + x;
+      const mePid = provinceGrid[i];
+      const meCiv = provinceCiv[mePid];
+      const meState = haveStates && mePid > 0 ? provinceToState[mePid] : 0;
+      if (x + STEP < w) {
+        const rightPid = provinceGrid[i + STEP];
+        const rightCiv = provinceCiv[rightPid];
+        if (meCiv !== rightCiv && (meCiv >= 0 || rightCiv >= 0)) {
+          borderPath.moveTo(x + STEP, y);
+          borderPath.lineTo(x + STEP, y + STEP);
+        } else if (haveStates && meCiv >= 0 && meCiv === rightCiv) {
+          const rightState = rightPid > 0 ? provinceToState[rightPid] : 0;
+          if (meState !== rightState && meState !== 0 && rightState !== 0) {
+            stateBorderPath.moveTo(x + STEP, y);
+            stateBorderPath.lineTo(x + STEP, y + STEP);
+          }
+        }
+      }
+      if (y + STEP < h) {
+        const botPid = provinceGrid[i + w * STEP];
+        const botCiv = provinceCiv[botPid];
+        if (meCiv !== botCiv && (meCiv >= 0 || botCiv >= 0)) {
+          borderPath.moveTo(x, y + STEP);
+          borderPath.lineTo(x + STEP, y + STEP);
+        } else if (haveStates && meCiv >= 0 && meCiv === botCiv) {
+          const botState = botPid > 0 ? provinceToState[botPid] : 0;
+          if (meState !== botState && meState !== 0 && botState !== 0) {
+            stateBorderPath.moveTo(x, y + STEP);
+            stateBorderPath.lineTo(x + STEP, y + STEP);
+          }
+        }
+      }
+    }
+  }
+
+  // Centroid + PCA for label placement, computed from tile ownership.
+  const acc = new Map();
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const o = state.ownership[r][c];
+      if (o < 0) continue;
+      let a = acc.get(o);
+      if (!a) { a = { sx: 0, sy: 0, sxx: 0, sxy: 0, syy: 0, n: 0 }; acc.set(o, a); }
+      a.sx += c; a.sy += r;
+      a.sxx += c * c; a.sxy += c * r; a.syy += r * r;
+      a.n++;
+    }
+  }
+  for (const civ of state.civs) {
+    const a = acc.get(civ.id);
+    if (!a || a.n === 0) { civ._centroid = null; civ._angle = 0; continue; }
+    const cx = a.sx / a.n, cy = a.sy / a.n;
+    const Mxx = a.sxx / a.n - cx * cx;
+    const Myy = a.syy / a.n - cy * cy;
+    const Mxy = a.sxy / a.n - cx * cy;
+    let angle = 0.5 * Math.atan2(2 * Mxy, Mxx - Myy);
+    const tr = Mxx + Myy;
+    const det = Mxx * Myy - Mxy * Mxy;
+    const disc = Math.max(0, tr * tr / 4 - det);
+    const lMax = tr / 2 + Math.sqrt(disc);
+    const lMin = tr / 2 - Math.sqrt(disc);
+    const aspect = lMin > 0 ? Math.sqrt(lMax / lMin) : 1;
+    if (aspect < 1.25) angle = 0;
+    const cap = Math.PI / 3;
+    if (angle > cap) angle = cap;
+    if (angle < -cap) angle = -cap;
+    civ._centroid = { col: cx, row: cy, tiles: a.n };
+    civ._angle = angle;
+    civ._extent = { major: Math.sqrt(Math.max(0.5, lMax)), minor: Math.sqrt(Math.max(0.5, lMin)) };
+  }
+
+  tctx.putImageData(_cachedImageData, 0, 0);
+  tintCacheDirty = false;
+}
+
+function invalidateTintCache() { tintCacheDirty = true; }
+
+function render() {
+  const dpr = state._dpr || 1;
+  // Background void (CSS pixel rect; transform handles DPR)
+  ctx.fillStyle = "#04060d";
+  ctx.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr);
+
+  if (tintCacheDirty) buildTintCache();
+
+  ctx.save();
+  ctx.translate(view.panX, view.panY);
+  ctx.scale(view.zoom, view.zoom);
+
+  // Pixel-accurate biome rendering (no bilinear blur)
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(biomeCache, 0, 0);
+  // Country fills (half-res cache scaled up to map size)
+  ctx.drawImage(tintCacheCanvas, 0, 0, MAP_W, MAP_H);
+  // Faint state borders within each civ's territory (drawn first so country
+  // borders sit on top). Gives a HOI4-like state grid inside countries.
+  if (stateBorderPath) {
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.30)";
+    ctx.lineWidth = Math.max(0.3, 0.8 / view.zoom);
+    ctx.lineCap = "square";
+    ctx.lineJoin = "miter";
+    ctx.stroke(stateBorderPath);
+  }
+  // Country borders on top - anti-aliased, width inversely scaled with zoom.
+  if (borderPath) {
+    ctx.strokeStyle = "rgba(8, 5, 2, 0.95)";
+    ctx.lineWidth = Math.max(0.4, 1.4 / view.zoom);
+    ctx.stroke(borderPath);
+  }
+
+  // (Settlement markers drawn after labels via drawSettlementMarkers)
+  // Armies as small squares
+  for (const civ of state.civs) {
+    if (!civ.alive) continue;
+    for (const a of civ.armies) {
+      const x = a.col * TILE + TILE / 2;
+      const y = a.row * TILE + TILE / 2;
+      ctx.fillStyle = a.type === "settler" ? "#fff" : "#000";
+      ctx.fillRect(x - 1.4, y - 1.4, 2.8, 2.8);
+      ctx.fillStyle = civ.color;
+      ctx.fillRect(x - 0.7, y - 0.7, 1.4, 1.4);
+    }
+  }
+
+  // Selection: gold outline around the parent state, white outline around the
+  // clicked province on top. Outlines are cached per-selection so we don't
+  // recompute thousands of pixels each frame during drag/zoom.
+  if (state.selectedState > 0 && provinceGrid && provinceToState) {
+    const sPath = getCachedStateOutline(state.selectedState);
+    if (sPath) {
+      ctx.strokeStyle = "#ffd24a";
+      ctx.lineWidth = Math.max(1.5, 3 / view.zoom);
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.stroke(sPath);
+    }
+  }
+  if (state.selectedProvince > 0 && provinceGrid) {
+    const path = getCachedProvinceOutline(state.selectedProvince);
+    if (path) {
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = Math.max(1, 2 / view.zoom);
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.stroke(path);
+    }
+  }
+  if (state.moveMode) {
+    const army = findArmyById(state.moveMode.armyId);
+    if (army) {
+      for (const [nc, nr] of neighbors(army.col, army.row)) {
+        if (!PASSABLE(MAP[nr][nc])) continue;
+        ctx.fillStyle = "rgba(212, 166, 87, 0.45)";
+        ctx.fillRect(nc * TILE, nr * TILE, TILE, TILE);
+        ctx.strokeStyle = "#ffd24a";
+        ctx.lineWidth = 1 / view.zoom;
+        ctx.strokeRect(nc * TILE + 0.5/view.zoom, nr * TILE + 0.5/view.zoom,
+                       TILE - 1/view.zoom, TILE - 1/view.zoom);
+      }
+    }
+  }
+
+  // Real-world cities from HOI4 state files: major shown with names, minor as dots
+  drawHoi4Cities();
+  // Country names painted ON THE MAP - scales with zoom (still inside transform)
+  drawCivBlobLabels();
+  // Settlement names: only capitals always; others on hover (drawn separately as tooltips)
+  drawSettlementMarkers();
+
+  ctx.restore();
+}
+
+// VP threshold: cities at or above this are shown with always-visible labels.
+const HOI4_MAJOR_VP = 8;
+
+function drawHoi4Cities() {
+  // All HOI4 cities are dots only - no labels by default. Hover reveals names.
+  if (typeof HOI4_CITIES === "undefined") return;
+  for (const city of HOI4_CITIES) {
+    const x = city.x, y = city.y;
+    const vp = city.vp || 0;
+    if (vp >= HOI4_MAJOR_VP) {
+      // Major HOI4 city: ringed dot, slightly larger
+      ctx.fillStyle = "#fff";
+      ctx.beginPath(); ctx.arc(x, y, 2.2, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#000";
+      ctx.beginPath(); ctx.arc(x, y, 1.3, 0, Math.PI * 2); ctx.fill();
+    } else if (vp >= 1) {
+      // Minor HOI4 city: small dot
+      ctx.fillStyle = "rgba(0,0,0,0.85)";
+      ctx.fillRect(x - 0.7, y - 0.7, 1.4, 1.4);
+    }
+  }
+}
+
+function drawSettlementMarkers() {
+  // Capitals: star + name. Other settlements: dot only (hover reveals name).
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  for (const civ of state.civs) {
+    if (!civ.alive) continue;
+    for (let i = 0; i < civ.settlements.length; i++) {
+      const s = civ.settlements[i];
+      const x = (s.col + 0.5) * TILE;
+      const y = (s.row + 0.5) * TILE;
+      if (i === 0) {
+        // Capital star
+        const r = Math.min(TILE * 0.95, 1.4 + Math.sqrt(s.pop) * 0.5);
+        drawStar(ctx, x, y, r, civ.color, "#000", civ.isPlayer ? "#fff" : null);
+        // Always-visible name
+        const fs = TILE * 1.4;
+        ctx.font = `bold ${fs}px Georgia, serif`;
+        ctx.lineWidth = fs * 0.22;
+        ctx.lineJoin = "round";
+        ctx.strokeStyle = "rgba(0,0,0,0.9)";
+        ctx.strokeText(s.name, x + r + 1, y);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(s.name, x + r + 1, y);
+      } else {
+        // Minor settlement: small dot only
+        const r = Math.min(TILE * 0.42, 0.7 + Math.sqrt(s.pop) * 0.35);
+        ctx.fillStyle = "#000";
+        ctx.beginPath(); ctx.arc(x, y, r + 0.35, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = civ.color;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+        if (civ.isPlayer) {
+          ctx.strokeStyle = "#fff";
+          ctx.lineWidth = 0.25;
+          ctx.stroke();
+        }
+      }
+    }
+  }
+}
+
+function drawStar(ctx, x, y, radius, fillColor, outlineColor, playerRing) {
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const angle = (i * Math.PI) / 5 - Math.PI / 2;
+    const r = i % 2 === 0 ? radius : radius * 0.42;
+    const px = x + Math.cos(angle) * r;
+    const py = y + Math.sin(angle) * r;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  if (outlineColor) {
+    ctx.strokeStyle = outlineColor;
+    ctx.lineWidth = 0.6;
+    ctx.stroke();
+  }
+  ctx.fillStyle = fillColor;
+  ctx.fill();
+  if (playerRing) {
+    ctx.strokeStyle = playerRing;
+    ctx.lineWidth = 0.4;
+    ctx.beginPath();
+    ctx.arc(x, y, radius * 1.25, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+
+// Probe outward from (px, py) in direction (dx, dy) and return how far we can
+// walk while still being inside the given civ's territory (provinces of that civ).
+// Returns distance in MAP pixels.
+function inscribedExtent(px, py, dx, dy, civId) {
+  const STEP = TILE;
+  let dist = 0;
+  for (let t = STEP; t < 800; t += STEP) {
+    const x = px + dx * t;
+    const y = py + dy * t;
+    if (x < 0 || x >= MAP_W || y < 0 || y >= MAP_H) break;
+    const col = Math.floor(x / TILE);
+    const row = Math.floor(y / TILE);
+    if (col < 0 || col >= COLS || row < 0 || row >= ROWS) break;
+    if (state.ownership[row][col] !== civId) break;
+    dist = t;
+  }
+  return dist;
+}
+
+function drawCivBlobLabels() {
+  // Country names are PAINTED ON the territory - they fit inside the country's
+  // borders along its principal axis, sized to never overflow.
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (const civ of state.civs) {
+    if (!civ.alive || !civ._centroid) continue;
+    const tiles = civ._centroid.tiles;
+    if (tiles < 2) continue;
+
+    // Centroid in MAP pixel space
+    let cx = (civ._centroid.col + 0.5) * TILE;
+    let cy = (civ._centroid.row + 0.5) * TILE;
+    let angle = civ._angle || 0;
+    let dx = Math.cos(angle), dy = Math.sin(angle);
+
+    // Probe inscribed extent in both directions along the principal axis.
+    let lenFwd = inscribedExtent(cx, cy, dx, dy, civ.id);
+    let lenRev = inscribedExtent(cx, cy, -dx, -dy, civ.id);
+
+    // If centroid happens to be on water/another civ (rare for small civs),
+    // fall back to the centroid itself with no probe.
+    if (lenFwd + lenRev < TILE * 1.5) {
+      lenFwd = lenRev = TILE * 1.0;
+    }
+
+    // Recenter the label between the two extremes; also probe perpendicular
+    // for height available in MAP pixels.
+    const shift = (lenFwd - lenRev) * 0.5;
+    cx += dx * shift;
+    cy += dy * shift;
+    const lengthMap = lenFwd + lenRev;
+
+    const heightMap = inscribedExtent(cx, cy, -dy, dx, civ.id) +
+                      inscribedExtent(cx, cy, dy, -dx, civ.id);
+
+    const text = civ.name.toUpperCase();
+    // Estimated text-width factor for serif bold caps
+    const charW = 0.58;
+    const fitByWidth = lengthMap * 0.86 / Math.max(4, text.length * charW);
+    const fitByHeight = heightMap * 0.55;
+    const fontMap = Math.max(2, Math.min(56, Math.min(fitByWidth, fitByHeight)));
+
+    if (fontMap < 2.5) continue;   // too cramped to read
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    ctx.font = `bold ${fontMap}px "Trajan Pro", "Cinzel", Georgia, serif`;
+    ctx.lineWidth = Math.max(0.4, fontMap * 0.22);
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "rgba(245,235,210,0.9)";
+    ctx.strokeText(text, 0, 0);
+    ctx.fillStyle = "#15110a";
+    ctx.fillText(text, 0, 0);
+    ctx.restore();
+  }
+}
+
+function drawLabels() {
+  // Settlement names - drawn in map space too, so they scale with zoom.
+  const fontMap = TILE * 1.5;
+  ctx.font = `${fontMap}px Georgia, serif`;
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "left";
+  for (const civ of state.civs) {
+    if (!civ.alive) continue;
+    for (const s of civ.settlements) {
+      const tx = (s.col + 0.5) * TILE + TILE * 0.7;
+      const ty = (s.row + 0.5) * TILE;
+      const label = s.name;
+      ctx.lineWidth = fontMap * 0.25;
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(0,0,0,0.85)";
+      ctx.strokeText(label, tx, ty);
+      ctx.fillStyle = "#fff";
+      ctx.fillText(label, tx, ty);
+    }
+  }
+}
+
+function findArmyById(id) {
+  for (const civ of state.civs) {
+    for (const a of civ.armies) if (a.id === id) return a;
+  }
+  return null;
+}
+
+// =================== UI ===================
+function log(kind, msg) {
+  state.log.unshift({ kind, msg, year: state.year });
+  if (state.log.length > 60) state.log.length = 60;
+}
+
+function yearLabel(y) {
+  if (y < 0) return Math.abs(y) + " BC";
+  if (y === 0) return "1 AD";
+  return y + " AD";
+}
+
+function updateUI() {
+  document.getElementById("year-display").textContent = yearLabel(state.year);
+  updatePlayerFlagButton();
+  const player = state.civs[0];
+  if (state.debug) {
+    const top = [...state.civs].filter(c => c.alive).sort((a, b) => countTiles(b) - countTiles(a))[0];
+    document.getElementById("era-badge").textContent = top ? "WORLD · " + ERAS[top.era].name.toUpperCase() : "WORLD";
+    const aliveCount = state.civs.filter(c => c.alive).length;
+    document.getElementById("player-panel").innerHTML = `
+      <div style="text-align:center;color:#ff7d4a;font-size:14px;letter-spacing:3px;margin-top:6px;">[ OBSERVER ]</div>
+      <div style="text-align:center;color:#8a7a5c;font-size:11px;margin-top:2px;">${aliveCount} civilizations alive</div>
+      <div style="text-align:center;color:#8a7a5c;font-size:11px;">${state.civs.length - aliveCount} extinct</div>
+    `;
+  } else if (player && player.isPlayer) {
+    document.getElementById("era-badge").textContent = ERAS[player.era].name.toUpperCase();
+    const totalPop = player.settlements.reduce((a, s) => a + s.pop, 0);
+    const totalUnits = player.armies.reduce((a, b) => a + b.count, 0);
+    const tiles = countTiles(player);
+    document.getElementById("player-panel").innerHTML = `
+      <div class="stat-row"><span class="stat-label">Civilization</span><span class="stat-val" style="color:${player.color}">${player.name}</span></div>
+      <div class="stat-row"><span class="stat-label">Settlements</span><span class="stat-val">${player.settlements.length}</span></div>
+      <div class="stat-row"><span class="stat-label">Population</span><span class="stat-val">${totalPop}</span></div>
+      <div class="stat-row"><span class="stat-label">Territory</span><span class="stat-val">${tiles} tiles</span></div>
+      <div class="stat-row"><span class="stat-label">Armies</span><span class="stat-val">${totalUnits} units</span></div>
+      <div class="stat-row"><span class="stat-label">Stability</span><span class="stat-val">${Math.round(player.stability)}%</span></div>
+      <div class="stat-row"><span class="stat-label">Tech</span><span class="stat-val">${player.techPoints}${player.era < ERAS.length-1 ? " / " + ERAS[player.era+1].threshold : ""}</span></div>
+    `;
+  }
+  renderTileInfo();
+  renderCivList();
+  renderLog();
+}
+
+function renderTileInfo() {
+  const el = document.getElementById("tile-info");
+  const actEl = document.getElementById("actions");
+  if (!state.selectedTile) {
+    el.textContent = "Click a province to inspect.";
+    actEl.innerHTML = "";
+    return;
+  }
+  const { col, row } = state.selectedTile;
+  const ownerId = state.ownership[row][col];
+  const owner = ownerId >= 0 ? state.civs[civIndexById(ownerId)] : null;
+  const settlement = owner ? owner.settlements.find(s => s.col === col && s.row === row) : null;
+  const armies = [];
+  for (const civ of state.civs) {
+    for (const a of civ.armies) {
+      if (a.col === col && a.row === row) armies.push({ army: a, civ });
+    }
+  }
+  // Province info pulled straight from definition.csv (rows: id, R, G, B, type, coastal, terrain, continent)
+  let html = "";
+  const pid = state.selectedProvince;
+  // Diagnostic: show province-grid loading status so we can see what's broken.
+  const gridStatus = provinceGrid ? `loaded (${provinceGrid.length}px)` : "NOT loaded";
+  const infoStatus = provinceInfo ? `loaded (${provinceInfo.length} entries)` : "NOT loaded";
+  html += `<div style="font-size:10px;color:#8a7a5c;margin-bottom:4px;">grid: ${gridStatus} · info: ${infoStatus} · pid: ${pid}</div>`;
+  if (pid > 0 && provinceInfo && provinceInfo[pid]) {
+    const p = provinceInfo[pid];
+    const rgb = `rgb(${p.r}, ${p.g}, ${p.b})`;
+    const hex = "#" + [p.r, p.g, p.b].map(v => v.toString(16).padStart(2, "0")).join("");
+    html += `<div style="font-size:13px;"><b>Province #${p.id}</b></div>`;
+    html += `<div class="stat-row"><span class="stat-label">Type</span><span class="stat-val">${p.type}</span></div>`;
+    html += `<div class="stat-row"><span class="stat-label">Terrain</span><span class="stat-val">${p.terrain}</span></div>`;
+    html += `<div class="stat-row"><span class="stat-label">Coastal</span><span class="stat-val">${p.coastal ? "yes" : "no"}</span></div>`;
+    html += `<div class="stat-row"><span class="stat-label">Continent</span><span class="stat-val">${p.continent}</span></div>`;
+    html += `<div class="stat-row"><span class="stat-label">RGB</span><span class="stat-val" style="display:flex;align-items:center;gap:4px;">
+        <span style="display:inline-block;width:11px;height:11px;background:${rgb};border:1px solid #000;"></span>
+        <span style="font-family:monospace;font-size:11px;">${p.r},${p.g},${p.b}</span>
+      </span></div>`;
+    html += `<div class="stat-row"><span class="stat-label">Hex</span><span class="stat-val" style="font-family:monospace;font-size:11px;">${hex}</span></div>`;
+  } else {
+    // No province grid loaded - fall back to bare tile coords + biome
+    const biome = MAP[row][col];
+    html += `<div><b>${biome.charAt(0).toUpperCase() + biome.slice(1)}</b> (${col}, ${row})</div>`;
+    html += `<div style="color:#8a7a5c;">Food +${BIOME_FOOD[biome] || 0}, Defense +${BIOME_DEFENSE[biome] || 0}</div>`;
+  }
+  if (owner) {
+    html += `<div style="margin-top:6px;border-top:1px solid #4a3520;padding-top:4px;">Owner: <span style="color:${owner.color}">${owner.name}</span></div>`;
+  }
+  if (settlement) {
+    html += `<div style="margin-top:6px;border-top:1px solid #4a3520;padding-top:6px;">
+      <b>${settlement.name}</b> (pop ${settlement.pop})<br/>
+      Food: ${settlement.food} · Walls: ${settlement.walls ? "Yes" : "No"}
+    </div>`;
+    if (settlement.queue.length > 0) {
+      const item = settlement.queue[0];
+      const cost = item.type === "settler" ? SETTLER_COST : (UNITS[item.type]?.cost || 1);
+      const pct = Math.min(100, ((item.progress || 0) / cost) * 100);
+      const itemName = item.type === "settler" ? "Settler" : UNITS[item.type].name;
+      const queueExtra = settlement.queue.length > 1 ? ` <span style="color:#8a7a5c;">(+${settlement.queue.length - 1} queued)</span>` : "";
+      html += `<div class="build-queue">Building: ${itemName}${queueExtra}
+        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div></div>`;
+    }
+  }
+  if (armies.length > 0) {
+    html += `<div style="margin-top:6px;border-top:1px solid #4a3520;padding-top:6px;">Armies:</div>`;
+    for (const { army, civ } of armies) {
+      const tname = army.type === "settler" ? "Settler" : UNITS[army.type].name;
+      html += `<div style="font-size:11px;">• <span style="color:${civ.color}">${civ.name}</span>: ${army.count} ${tname}${army.moves > 0 ? "" : " (moved)"}</div>`;
+    }
+  }
+  el.innerHTML = html;
+
+  // Actions (only when player exists and not in debug)
+  let actions = "";
+  const player = state.civs[0];
+  if (state.debug || !player || !player.isPlayer) {
+    actEl.innerHTML = "";
+    return;
+  }
+  const playerOwns = ownerId === player.id;
+
+  if (playerOwns && settlement && state.phase === "playing") {
+    const era = player.era;
+    actions += `<div class="section-title" style="margin-top:10px;">Build at ${settlement.name}</div>`;
+    actions += `<div class="action-btns">`;
+    // Show buildable units. Click = queue 1; HOLD = prompt for quantity.
+    const mkBtn = (key, name, cost) =>
+      `<button title="Click = queue 1, hold = type a quantity"
+         onmousedown="startBuyHold(${settlement.id}, '${key}')"
+         onmouseup="endBuyHold(${settlement.id}, '${key}')"
+         onmouseleave="cancelBuyHold()"
+         ontouchstart="startBuyHold(${settlement.id}, '${key}')"
+         ontouchend="endBuyHold(${settlement.id}, '${key}')">${name} <small>(${cost})</small></button>`;
+    for (const [key, u] of Object.entries(UNITS)) {
+      if (u.era > era) continue;
+      actions += mkBtn(key, u.name, u.cost);
+    }
+    actions += mkBtn("settler", "Settler", SETTLER_COST);
+    if (settlement.queue.length > 0) {
+      actions += `<button onclick="cancelBuild(${settlement.id})" style="grid-column:1/-1;">Clear queue (${settlement.queue.length})</button>`;
+    }
+    actions += `</div>`;
+  }
+  // Player armies on tile
+  const myArmies = armies.filter(({ civ }) => civ.id === player.id);
+  if (myArmies.length > 0 && state.phase === "playing") {
+    actions += `<div class="section-title" style="margin-top:10px;">Your Forces</div>`;
+    for (const { army } of myArmies) {
+      const tname = army.type === "settler" ? "Settler" : UNITS[army.type].name;
+      actions += `<div style="display:flex;gap:4px;align-items:center;margin:3px 0;">
+        <span style="flex:1;font-size:12px;">${army.count} ${tname}</span>`;
+      if (army.moves > 0) {
+        actions += `<button style="width:auto;flex:0 0 auto;" onclick="enterMoveMode(${army.id})">Move</button>`;
+      }
+      if (army.type === "settler" && playerOwns && !settlement) {
+        actions += `<button style="width:auto;flex:0 0 auto;" onclick="foundCity(${army.id})">Found City</button>`;
+      } else if (army.type === "settler" && state.ownership[army.row][army.col] === -1) {
+        actions += `<button style="width:auto;flex:0 0 auto;" onclick="foundCity(${army.id})">Found City</button>`;
+      }
+      actions += `</div>`;
+    }
+  }
+  actEl.innerHTML = actions;
+}
+
+function renderCivList() {
+  const el = document.getElementById("civ-list");
+  const sorted = [...state.civs]
+    .filter(c => c.alive)
+    .sort((a, b) => countTiles(b) - countTiles(a));
+  el.innerHTML = sorted.map(c => {
+    const t = countTiles(c);
+    const era = ERAS[c.era].name;
+    return `<div class="civ-row">
+      <span class="civ-color" style="background:${c.color}"></span>
+      <span class="civ-name">${c.isPlayer ? "★ " : ""}${c.name}</span>
+      <span class="civ-meta">${t}t · ${era.split(" ")[0]}</span>
+    </div>`;
+  }).join("");
+}
+
+function renderLog() {
+  const el = document.getElementById("log");
+  el.innerHTML = state.log.slice(0, 30).map(e =>
+    `<div class="log-entry ${e.kind}"><b>${yearLabel(e.year)}</b> · ${e.msg}</div>`
+  ).join("");
+}
+
+// =================== INPUT HANDLERS ===================
+function pixelToTile(clientX, clientY) {
+  // Convert client coordinates → MAP_W/MAP_H logical pixels → tile (col, row).
+  // Canvas has a baked-in dpr transform, so we work in CSS pixels here.
+  const rect = canvas.getBoundingClientRect();
+  const cssX = clientX - rect.left;
+  const cssY = clientY - rect.top;
+  const mapX = (cssX - view.panX) / view.zoom;
+  const mapY = (cssY - view.panY) / view.zoom;
+  const col = Math.floor(mapX / TILE);
+  const row = Math.floor(mapY / TILE);
+  return { col, row, mapX, mapY };
+}
+
+canvas.addEventListener("click", (e) => {
+  if (suppressNextClick) { suppressNextClick = false; return; }
+  const hit = pixelToTile(e.clientX, e.clientY);
+  const { col, row, mapX, mapY } = hit;
+  if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return;
+
+  if (state.phase === "placement") {
+    if (PASSABLE(MAP[row][col]) && state.ownership[row][col] === -1) {
+      spawnPlayer(col, row);
+      document.getElementById("splash").style.display = "none";
+      state.selectedTile = { col, row };
+      render();
+      updateUI();
+    } else {
+      flashHint("Pick a land tile that's unclaimed.");
+    }
+    return;
+  }
+
+  if (state.moveMode) {
+    const army = findArmyById(state.moveMode.armyId);
+    if (army) {
+      const isAdj = neighbors(army.col, army.row).some(([nc, nr]) => nc === col && nr === row);
+      if (isAdj && PASSABLE(MAP[row][col])) {
+        tryMoveOrAttack(army, col, row);
+        state.moveMode = null;
+        document.getElementById("move-mode-banner").style.display = "none";
+        state.selectedTile = { col, row };
+        invalidateTintCache();
+        render();
+        updateUI();
+      } else {
+        // cancel
+        state.moveMode = null;
+        document.getElementById("move-mode-banner").style.display = "none";
+        render();
+      }
+    }
+    return;
+  }
+
+  state.selectedTile = { col, row };
+  // Province-based selection: look up the province ID at the clicked map pixel.
+  let pid = 0;
+  if (provinceGrid && mapX >= 0 && mapX < MAP_W && mapY >= 0 && mapY < MAP_H) {
+    pid = provinceGrid[(mapY | 0) * MAP_W + (mapX | 0)];
+  }
+  state.selectedProvince = pid;
+  state.selectedState = (pid > 0 && provinceToState) ? provinceToState[pid] : 0;
+  // Open the country panel only if a civ owns this tile.
+  const owner = state.ownership[row][col];
+  if (owner >= 0) {
+    const civ = state.civs[civIndexById(owner)];
+    if (civ && civ.alive) showCountryPanel(civ);
+    else hideCountryPanel();
+  } else {
+    hideCountryPanel();
+  }
+  render();
+  updateUI();
+});
+
+function flashHint(msg) {
+  const banner = document.getElementById("move-mode-banner");
+  banner.textContent = msg;
+  banner.style.display = "block";
+  setTimeout(() => { banner.style.display = "none"; }, 1500);
+}
+
+// Queue one unit at a settlement.
+window.queueBuild = function (settlementId, type) {
+  const player = state.civs[0];
+  const s = player.settlements.find(s => s.id === settlementId);
+  if (!s) return;
+  s.queue.push({ type, progress: 0 });
+  updateUI();
+};
+// Queue many units at once (used by hold-to-bulk-buy).
+window.queueBuildBulk = function (settlementId, type, count) {
+  const player = state.civs[0];
+  const s = player.settlements.find(s => s.id === settlementId);
+  if (!s) return;
+  for (let i = 0; i < Math.min(count, 99); i++) s.queue.push({ type, progress: 0 });
+  updateUI();
+};
+window.cancelBuild = function (settlementId) {
+  const player = state.civs[0];
+  const s = player.settlements.find(s => s.id === settlementId);
+  if (!s) return;
+  s.queue = [];
+  updateUI();
+};
+
+// Hold-to-bulk-buy: pressing a build button briefly = +1, holding = prompt for N.
+let _buyHoldTimer = null;
+let _buyHoldFired = false;
+window.startBuyHold = function (settlementId, type) {
+  _buyHoldFired = false;
+  if (_buyHoldTimer) clearTimeout(_buyHoldTimer);
+  _buyHoldTimer = setTimeout(() => {
+    _buyHoldFired = true;
+    _buyHoldTimer = null;
+    const label = type === "settler" ? "Settler" : (UNITS[type] && UNITS[type].name) || type;
+    const raw = prompt(`How many ${label} to queue?`, "5");
+    const n = parseInt(raw, 10);
+    if (!isNaN(n) && n > 0) queueBuildBulk(settlementId, type, n);
+  }, 500);
+};
+window.endBuyHold = function (settlementId, type) {
+  if (_buyHoldTimer) {
+    clearTimeout(_buyHoldTimer);
+    _buyHoldTimer = null;
+    if (!_buyHoldFired) queueBuild(settlementId, type);
+  }
+};
+window.cancelBuyHold = function () {
+  if (_buyHoldTimer) { clearTimeout(_buyHoldTimer); _buyHoldTimer = null; }
+};
+window.enterMoveMode = function (armyId) {
+  state.moveMode = { armyId };
+  const banner = document.getElementById("move-mode-banner");
+  banner.textContent = "Click an adjacent tile to move there. Click elsewhere to cancel.";
+  banner.style.display = "block";
+  render();
+};
+window.foundCity = function (armyId) {
+  const army = findArmyById(armyId);
+  if (!army || army.type !== "settler") return;
+  const owner = state.ownership[army.row][army.col];
+  const player = state.civs[0];
+  if (owner !== -1 && owner !== player.id) {
+    flashHint("Can't found city on enemy territory.");
+    return;
+  }
+  if (player.settlements.some(s => s.col === army.col && s.row === army.row)) {
+    flashHint("Already a city here.");
+    return;
+  }
+  placeCivOnMap(player, army.col, army.row, false);
+  const i = player.armies.indexOf(army);
+  if (i >= 0) player.armies.splice(i, 1);
+  log("peace", `Founded a new settlement.`);
+  invalidateTintCache();
+  render();
+  updateUI();
+};
+
+// Zoom: mouse wheel
+let suppressNextClick = false;
+canvas.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const px = e.clientX - rect.left;
+  const py = e.clientY - rect.top;
+  const mapX = (px - view.panX) / view.zoom;
+  const mapY = (py - view.panY) / view.zoom;
+  const dz = e.deltaY < 0 ? 1.18 : 1 / 1.18;
+  const minZoom = Math.min(canvas.width / MAP_W, canvas.height / MAP_H) * 0.6;
+  view.zoom = Math.max(minZoom, Math.min(10, view.zoom * dz));
+  view.panX = px - mapX * view.zoom;
+  view.panY = py - mapY * view.zoom;
+  render();
+}, { passive: false });
+
+// Pan: right-click drag, middle-click drag, or space+drag
+let dragging = null;
+canvas.addEventListener("mousedown", (e) => {
+  if (e.button === 2 || e.button === 1 || (e.button === 0 && e.shiftKey)) {
+    e.preventDefault();
+    dragging = {
+      startX: e.clientX, startY: e.clientY,
+      panX: view.panX, panY: view.panY,
+      moved: false,
+    };
+  }
+});
+window.addEventListener("mousemove", (e) => {
+  if (!dragging) return;
+  const dx = e.clientX - dragging.startX;
+  const dy = e.clientY - dragging.startY;
+  if (Math.abs(dx) + Math.abs(dy) > 3) dragging.moved = true;
+  view.panX = dragging.panX + dx;
+  view.panY = dragging.panY + dy;
+  render();
+});
+window.addEventListener("mouseup", (e) => {
+  if (dragging) {
+    if (dragging.moved) suppressNextClick = true;
+    dragging = null;
+  }
+});
+canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+// =================== HOVER TOOLTIP (city/settlement names) ===================
+const tooltip = document.getElementById("city-tooltip");
+canvas.addEventListener("mousemove", (e) => {
+  if (dragging) return;
+  const rect = canvas.getBoundingClientRect();
+  const px = e.clientX - rect.left;
+  const py = e.clientY - rect.top;
+  const mapX = (px - view.panX) / view.zoom;
+  const mapY = (py - view.panY) / view.zoom;
+  // Search radius in MAP units (so it grows when zoomed out, stays usable when zoomed in)
+  const r = Math.max(2.5, 7 / view.zoom);
+  const r2 = r * r;
+
+  let bestName = null, bestD = r2, bestVP = 0;
+
+  // HOI4 minor cities (always check; major cities also pickable for nice info)
+  if (typeof HOI4_CITIES !== "undefined") {
+    for (const city of HOI4_CITIES) {
+      const dx = city.x - mapX;
+      const dy = city.y - mapY;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; bestName = city.name; bestVP = city.vp || 0; }
+    }
+  }
+  // Game settlements (minor ones only - capitals already have visible labels)
+  for (const civ of state.civs) {
+    if (!civ.alive) continue;
+    for (let i = 0; i < civ.settlements.length; i++) {
+      if (i === 0) continue;
+      const s = civ.settlements[i];
+      const dx = (s.col + 0.5) * TILE - mapX;
+      const dy = (s.row + 0.5) * TILE - mapY;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; bestName = s.name; bestVP = 0; }
+    }
+  }
+
+  if (bestName) {
+    tooltip.style.display = "block";
+    tooltip.style.left = (e.clientX + 12) + "px";
+    tooltip.style.top = (e.clientY + 12) + "px";
+    tooltip.innerHTML = bestName + (bestVP > 0 ? `<span class="tt-vp">VP ${bestVP}</span>` : "");
+  } else {
+    tooltip.style.display = "none";
+  }
+});
+canvas.addEventListener("mouseleave", () => { tooltip.style.display = "none"; });
+
+// DEBUG mode: type "DEBUG" while on splash
+let debugBuffer = "";
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  if (state.phase === "placement" && e.key.length === 1) {
+    debugBuffer = (debugBuffer + e.key.toUpperCase()).slice(-5);
+    if (debugBuffer === "DEBUG") {
+      enterDebugMode();
+      debugBuffer = "";
+    }
+  }
+});
+
+function enterDebugMode() {
+  state.debug = true;
+  state.phase = "playing";
+  document.getElementById("splash").style.display = "none";
+  log("event", "🧪 DEBUG MODE - observing history without intervention.");
+  // Mark sidebar
+  const subtitle = document.querySelector(".subtitle");
+  if (subtitle) subtitle.innerHTML = '<span style="color:#ff7d4a">⚙ OBSERVER MODE</span>';
+  // Reveal the 20x turbo speed button (debug-only).
+  document.querySelectorAll(".speed-btn.debug-only").forEach(b => b.style.display = "");
+  setSpeed(5);   // start at 5x; the 20x button is available if needed
+  updateUI();
+}
+
+// Speed buttons
+document.querySelectorAll(".speed-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const s = parseInt(btn.dataset.speed, 10);
+    setSpeed(s);
+  });
+});
+
+function setSpeed(s) {
+  state.speed = s;
+  state.lastTickAt = performance.now();
+  document.querySelectorAll(".speed-btn").forEach(btn => {
+    btn.classList.toggle("active", parseInt(btn.dataset.speed, 10) === s);
+  });
+}
+
+document.addEventListener("keydown", (e) => {
+  // Avoid hijacking when typing in an input
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  if (e.key === " ") {
+    e.preventDefault();
+    // 1. Active click-to-move mode → cancel it.
+    if (state.moveMode) {
+      state.moveMode = null;
+      document.getElementById("move-mode-banner").style.display = "none";
+      render();
+      return;
+    }
+    // 2. A player army is selected (arrow-key control) → deselect it.
+    const player = state.civs[0];
+    if (state.selectedTile && player && player.isPlayer) {
+      const { col, row } = state.selectedTile;
+      const hasArmy = player.armies.some(a => a.col === col && a.row === row);
+      if (hasArmy) {
+        state.selectedTile = null;
+        state.selectedProvince = 0;
+        state.selectedState = 0;
+        hideCountryPanel();
+        render();
+        updateUI();
+        return;
+      }
+    }
+    // 3. Otherwise: pause/play toggle.
+    if (state.phase !== "playing") return;
+    if (state.speed === 0) setSpeed(state._lastActiveSpeed || 2);
+    else { state._lastActiveSpeed = state.speed; setSpeed(0); }
+  }
+  if (e.key >= "1" && e.key <= "5") {
+    if (state.phase === "playing") setSpeed(parseInt(e.key, 10));
+  }
+  if (e.key === "Escape") {
+    state.moveMode = null;
+    document.getElementById("move-mode-banner").style.display = "none";
+    render();
+  }
+  // Keyboard zoom: + / -
+  if (e.key === "+" || e.key === "=") {
+    view.zoom = Math.min(10, view.zoom * 1.25);
+    render();
+  }
+  if (e.key === "-" || e.key === "_") {
+    const minZoom = Math.min(canvas.width / MAP_W, canvas.height / MAP_H) * 0.6;
+    view.zoom = Math.max(minZoom, view.zoom / 1.25);
+    render();
+  }
+  if (e.key === "0") {
+    fitToView();
+    render();
+  }
+  // Arrow keys: move the selected army (only). Never pan the camera.
+  const arrowDir = (
+    e.key === "ArrowLeft"  ? [-1, 0] :
+    e.key === "ArrowRight" ? [ 1, 0] :
+    e.key === "ArrowUp"    ? [ 0,-1] :
+    e.key === "ArrowDown"  ? [ 0, 1] : null
+  );
+  if (arrowDir) {
+    if (state.phase === "playing" && state.selectedTile) {
+      const player = state.civs[0];
+      if (player && player.isPlayer) {
+        const { col, row } = state.selectedTile;
+        const army = player.armies.find(a => a.col === col && a.row === row && a.moves > 0);
+        if (army) {
+          const [dc, dr] = arrowDir;
+          const newCol = ((col + dc) % COLS + COLS) % COLS;
+          const newRow = row + dr;
+          if (newRow >= 0 && newRow < ROWS) {
+            tryMoveOrAttack(army, newCol, newRow);
+            state.selectedTile = { col: newCol, row: newRow };
+            invalidateTintCache();
+            render();
+            updateUI();
+          }
+        }
+      }
+    }
+    e.preventDefault();
+    return;   // arrows never pan
+  }
+  // Pan only with WASD.
+  const panStep = 80;
+  if (e.key.toLowerCase() === "a") { view.panX += panStep; render(); }
+  if (e.key.toLowerCase() === "d") { view.panX -= panStep; render(); }
+  if (e.key.toLowerCase() === "w") { view.panY += panStep; render(); }
+  if (e.key.toLowerCase() === "s") { view.panY -= panStep; render(); }
+});
+
+window.addEventListener("resize", () => {
+  setupCanvas();
+  render();
+});
+
+// =================== REAL-TIME GAME LOOP ===================
+let lastFrame = performance.now();
+function gameLoop(now) {
+  const speed = state.speed;
+  if (state.phase === "playing" && speed > 0) {
+    // Slot 6 (debug turbo, 50ms/turn = 20x) is just another speed slot now -
+    // pick it via the speed bar, not by being in debug mode.
+    const ms = SPEED_TURN_MS[speed];
+    while (now - state.lastTickAt >= ms) {
+      state.lastTickAt += ms;
+      try {
+        tick();
+      } catch (e) {
+        // Don't let one bad tick freeze the game.
+        console.error("tick failed at year", state.year, e);
+      }
+      // Stop catching up if we'd run forever (e.g., tab was hidden)
+      if (now - state.lastTickAt > ms * 5) {
+        state.lastTickAt = now;
+        break;
+      }
+    }
+  } else {
+    state.lastTickAt = now;
+  }
+
+  // Smooth year display: interpolate fraction of next turn
+  const fraction = (state.phase === "playing" && speed > 0)
+    ? Math.min(1, (now - state.lastTickAt) / SPEED_TURN_MS[speed])
+    : 0;
+  const displayYear = state.year + fraction * YEARS_PER_TURN;
+  const yearEl = document.getElementById("year-display");
+  if (yearEl) yearEl.textContent = yearLabel(Math.floor(displayYear));
+
+  lastFrame = now;
+  requestAnimationFrame(gameLoop);
+}
+
+// =================== COUNTRY PANEL (leader, flag, stats) ===================
+// Hardcoded leader periods for major civs. Year ranges in game-years.
+// Images use Wikimedia Commons URLs (public domain).
+const LEADERS = {
+  "Egypt": [
+    { from: -1000, to: -664, name: "Pharaohs of the 21st–25th dynasties" },
+    { from:  -664, to: -525, name: "Psamtik I (26th dynasty)" },
+    { from:  -525, to: -332, name: "Persian governors / late pharaohs" },
+    { from:  -332, to:  -30, name: "Ptolemaic dynasty (Cleopatra etc.)" },
+  ],
+  "Rome": [
+    { from: -753, to: -509, name: "Romulus & the Seven Kings" },
+    { from: -509, to:  -27, name: "Senate of the Republic" },
+    { from:  -27, to:   14, name: "Augustus", img: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cc/Statue-Augustus.jpg/200px-Statue-Augustus.jpg" },
+    { from:   14, to:  117, name: "Julio-Claudian & Flavian emperors" },
+    { from:  117, to:  286, name: "The Five Good Emperors and after" },
+  ],
+  "Western Rome": [
+    { from:  286, to:  476, name: "Western Roman emperors" },
+  ],
+  "Byzantium": [
+    { from:  330, to:  527, name: "Constantine and successors" },
+    { from:  527, to:  565, name: "Justinian I" },
+    { from:  565, to: 1453, name: "Emperors of Constantinople" },
+  ],
+  "Persia": [
+    { from: -550, to: -530, name: "Cyrus the Great" },
+    { from: -530, to: -486, name: "Darius I and Xerxes I" },
+    { from: -486, to: -330, name: "Achaemenid Shahs" },
+  ],
+  "Sasanians": [
+    { from:  220, to:  651, name: "Sasanian Shahanshahs" },
+  ],
+  "Macedon": [
+    { from: -359, to: -336, name: "Philip II of Macedon" },
+    { from: -336, to: -323, name: "Alexander the Great" },
+    { from: -323, to: -146, name: "Diadochi successors" },
+  ],
+  "Han China": [
+    { from: -202, to: -141, name: "Liu Bang & early Han emperors" },
+    { from: -141, to:  -87, name: "Emperor Wu of Han" },
+    { from:  -87, to:  220, name: "Han emperors" },
+  ],
+  "Mongols": [
+    { from: 1206, to: 1227, name: "Genghis Khan", img: "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4e/YuanEmperorAlbumGenghisPortrait.jpg/200px-YuanEmperorAlbumGenghisPortrait.jpg" },
+    { from: 1227, to: 1241, name: "Ögedei Khan" },
+    { from: 1260, to: 1294, name: "Kublai Khan" },
+  ],
+  "Ottomans": [
+    { from: 1299, to: 1326, name: "Osman I" },
+    { from: 1444, to: 1481, name: "Mehmed II the Conqueror" },
+    { from: 1520, to: 1566, name: "Suleiman the Magnificent" },
+  ],
+  "Duchy of Poland": [
+    { from:  966, to:  992, name: "Mieszko I", img: "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5a/Jan_Matejko%2C_Mieszko_I.jpg/200px-Jan_Matejko%2C_Mieszko_I.jpg" },
+    { from:  992, to: 1025, name: "Bolesław the Brave" },
+  ],
+  "Kingdom of Poland": [
+    { from: 1025, to: 1138, name: "Piast kings" },
+    { from: 1320, to: 1370, name: "Władysław the Elbow-high & Casimir III" },
+    { from: 1386, to: 1434, name: "Władysław II Jagiełło" },
+  ],
+  "Grand Duchy of Lithuania": [
+    { from: 1253, to: 1263, name: "Mindaugas",         img: "https://upload.wikimedia.org/wikipedia/commons/thumb/0/06/Mindaugas_painting.jpg/200px-Mindaugas_painting.jpg" },
+    { from: 1316, to: 1341, name: "Gediminas" },
+    { from: 1400, to: 1434, name: "Vytautas the Great", img: "https://upload.wikimedia.org/wikipedia/commons/thumb/5/55/Witold_Wielki.jpg/200px-Witold_Wielki.jpg" },
+  ],
+  "Polish-Lithuanian Commonwealth": [
+    { from: 1569, to: 1572, name: "Sigismund II Augustus" },
+    { from: 1576, to: 1586, name: "Stefan Batory" },
+    { from: 1587, to: 1632, name: "Sigismund III Vasa" },
+    { from: 1674, to: 1696, name: "Jan III Sobieski" },
+  ],
+  "Franks": [
+    { from:  800, to:  814, name: "Charlemagne", img: "https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/Albrecht_D%C3%BCrer_-_Portrait_of_Charlemagne_-_WGA07016.jpg/200px-Albrecht_D%C3%BCrer_-_Portrait_of_Charlemagne_-_WGA07016.jpg" },
+    { from:  814, to:  840, name: "Louis the Pious" },
+    { from:  843, to:  987, name: "Carolingian rulers" },
+  ],
+  "France": [
+    { from: 1804, to: 1814, name: "Napoleon Bonaparte", img: "https://upload.wikimedia.org/wikipedia/commons/thumb/5/57/Jacques-Louis_David_-_The_Emperor_Napoleon_in_His_Study_at_the_Tuileries_-_Google_Art_Project.jpg/200px-Jacques-Louis_David_-_The_Emperor_Napoleon_in_His_Study_at_the_Tuileries_-_Google_Art_Project.jpg" },
+    { from: 1815, to: 1900, name: "Restoration & Republic" },
+  ],
+  "Russian Empire": [
+    { from: 1721, to: 1725, name: "Peter the Great" },
+    { from: 1762, to: 1796, name: "Catherine the Great" },
+  ],
+  "Soviet Union": [
+    { from: 1922, to: 1924, name: "Vladimir Lenin" },
+    { from: 1924, to: 1953, name: "Joseph Stalin" },
+  ],
+  "USA": [
+    { from: 1789, to: 1797, name: "George Washington" },
+    { from: 1861, to: 1865, name: "Abraham Lincoln" },
+  ],
+};
+
+// HOI4 country tag (or full filename) per civ. Where available, we point at
+// the *formable nation* / ancient empire flag rather than the modern WWII tag -
+// e.g., Rome → SPQR_UNIFIED_neutrality, Persia → PER_persian_empire_neutrality.
+// Otherwise the modern 3-letter tag is used as a visual stand-in.
+const CIV_TAGS = {
+  "Egypt": "EGY",
+  "Kush": "EGY",
+  // Proto-tribes (Latins, Etruscans, Greeks, Phoenicia, Iberians, Gauls,
+  // Celts, Germans, Polans, Balts, Finns, Norse, East Slavs) deliberately
+  // have NO entry here so they fall back to procedural flags. Modern
+  // country flags on iron-age peoples just looks wrong.
+  "Rome": "SPQR_UNIFIED_neutrality",
+  "Western Rome": "SPQR_UNIFIED_neutrality",
+  "Romano-Goths": "GER_kingdom_of_italy_neutrality",
+  "Byzantium": "BYZ_UNIFIED_neutrality",
+  "Fallen Byzantium": "BYZ_UNIFIED_fascism",
+  "Italy": "ITA",
+  "Macedon": "GRE_GREATER_GREECE_neutrality",
+  "Carthage": "TUN",
+  // Berbers, Visigoths, Goths are pre-modern peoples - procedural flags fit
+  // them better than slapping a modern country tag on top.
+  "Franks": "FRA",
+  "France": "FRA_THIRD_EMPIRE_neutrality",
+  "Germany": "GER_german_kaiserreich_neutrality",   // German Empire / Kaiserreich
+  // Polish chain - each historical period gets its own HOI4 flag.
+  "Duchy of Poland": "POL_KINGDOM_RUS",                          // early Piast banner
+  "Kingdom of Poland": "POL_KINGDOM_neutrality",                 // white eagle on red
+  "Polish-Lithuanian Commonwealth": "PLC_UNIFIED_neutrality",    // actual Commonwealth banner
+  "Republic of Poland": "POL",                                   // modern
+  "Partitioned Poland": "POL_PEASANT_democratic",                // partitioned/peasant era
+  // Lithuanian chain - Balts proto-tribe stays procedural; medieval/modern get flags.
+  "Grand Duchy of Lithuania": "GREATER_LIT_neutrality",          // Vytis on red
+  "Republic of Lithuania": "LIT",                                // modern
+  "Republic of Latvia": "LAT",                                   // modern
+  "Republic of Estonia": "EST",                                  // modern
+  "Livonian Order": "LAT",
+  "Duchy of Courland": "LAT",
+  // Muscovy predates the Romanov tricolor (1696) - keep procedural.
+  // Tsardom + Empire use the white-blue-red Romanov banner (HOI4's SOV.png base).
+  "Tsardom of Russia": "SOV_democratic",
+  "Russian Empire": "SOV_fascism",
+  "Soviet Union": "SOV_communism",   // hammer-and-sickle red banner
+  "Russia": "SOV_democratic",                   // modern Russia - same Romanov tricolor
+  "Bohemia": "CZE",
+  "Vikings": "NOR",
+  "Thracians": "ROM",
+  "Scythians": "UKR",
+  "Lydia": "TUR",
+  "Ottomans": "TUR",
+  "Mongols": "MON",
+  "Medes": "PER",
+  "Persia": "PER_persian_empire_neutrality",
+  "Sasanians": "PER_great_persian_empire_neutrality",
+  "Arabs": "SAU",
+  "Vedic India": "RAJ",
+  "Maurya": "RAJ",
+  "Dravidians": "RAJ",
+  "Zhou China": "CHI",
+  "Han China": "HAN_neutrality",
+  "Gojoseon": "KOR",
+  "Yamato": "JAP_tokugawa_restored_neutrality",      // Edo-era / shogunate-style
+  "Olmec": "MEX",
+  "Aztec": "MEX",
+  "Maya": "MEX",
+  // Diadochi successor states
+  "Ptolemaic Egypt": "EGY",
+  "Seleucid Empire": "PER_persian_empire_neutrality",
+  "Antigonid Macedon": "GRE_GREATER_GREECE_neutrality",
+  "Parthia": "PER",
+  // Three Kingdoms China
+  "Cao Wei": "CHI",
+  "Eastern Wu": "CHI",
+  "Shu Han": "CHI",
+  // Medieval / Early Modern
+  "Holy Roman Empire": "HRE_UNIFIED_neutrality",
+  "Kingdom of Jerusalem": "ISR",
+  "Mali Empire": "MAL",
+  "Golden Horde": "MON",
+  "Yuan China": "CHI_great_yuan_neutrality",
+  "Ming China": "CHI",
+  "Qing China": "CHI",
+  "Republic of China": "CHI",
+  "People's Republic of China": "PRC",
+  "Ilkhanate": "PER",
+  "Mughal Empire": "RAJ_mughal_empire_neutrality",
+  "Dutch Republic": "HOL",
+  "Kingdom of Prussia": "PRE",
+  "Kingdom of Castile": "SPR",
+  "Kingdom of Spain": "SPR",
+  "Kingdom of Portugal": "POR",
+  // Visigoths predate modern Spain by 1000+ years - procedural flag.
+  "Spanish Nationalists": "SPR_fascism",
+  "Francoist Spain": "SPR_fascism",
+  "Lombards": "ITA",
+  // Italian fragmentation states (Venice / Benevento stay procedural - no
+  // good HOI4 tag matches, and modern Venezuela's flag is wrong for Venice).
+  "Papal States": "PAP",
+  // HRE petty states
+  "Bavaria": "BAY",
+  "Saxony": "SAX",
+  "Brandenburg": "BRA",
+  "Württemberg": "WUR",
+  "Hannover": "HAN",
+  // Scandinavian chain - proto-tribe stays procedural; medieval/modern get HOI4 flags.
+  "Vikings": "NOR_neutrality_nordic_king_flag",
+  "Kalmar Union": "DEN_greater_denmark_neutrality",
+  "Denmark-Norway": "DEN",
+  "Denmark": "DEN",
+  "Sweden": "SWE",
+  "Norway": "NOR",
+  "Finland": "FIN",
+  // 19th-century / national
+  "Mexico": "MEX",
+  "Brazil": "BRA",
+  "Argentina": "ARG",
+  "Chile": "CHL",
+  "Colombia": "COL",
+  "Venezuela": "VEN",
+  "Peru": "PRU",
+  "Bolivia": "BOL",
+  "Paraguay": "PAR",
+  "Uruguay": "URG",
+  "Ecuador": "ECU",
+  "Canada": "CAN",
+  "Haiti": "HAI",
+  "Dominican Republic": "DOM",
+  "Cuba": "CUB",
+  "Jamaica": "JAM",
+  "Belize": "BLZ",
+  "Panama": "PAN",
+  "Guatemala": "GUA",
+  "Honduras": "HON",
+  "Nicaragua": "NIC",
+  "Costa Rica": "COS",
+  "El Salvador": "ELS",
+  "Greece": "GRE",
+  "Belgium": "BEL",
+  "Austria-Hungary": "AUS",
+  "Austria": "AUS",
+  "Hungary": "HUN",
+  "Czechoslovakia": "CZE",
+  "Yugoslavia": "YUG",
+  "Serbia": "SER",
+  "Romania": "ROM",
+  "Bulgaria": "BUL",
+  "Turkey": "TUR",
+  "Saudi Arabia": "SAU",
+  "Kingdom of Saudi Arabia": "SAU",
+  "British Mandate of Iraq": "IRQ",
+  "Kingdom of Iraq": "IRQ",
+  "French Mandate of Syria": "SYR",
+  "Syria": "SYR",
+  // Cold-War Germany
+  "West Germany": "GER",
+  "East Germany": "DDR",
+  // African decolonization tags
+  "Libya": "LIB",
+  "Morocco": "MOR",
+  "Tunisia": "TUN",
+  "Sudan": "SUD",
+  "Congo": "COG",
+  "Senegal": "SEN",
+  "Mali": "MLI",
+  "Cameroon": "CMR",
+  "Madagascar": "MAD",
+  "Ivory Coast": "IVO",
+  "Tanzania": "TAN",
+  "Uganda": "UGA",
+  "Rwanda": "RWA",
+  "Zambia": "ZAM",
+  "Angola": "ANG",
+  "Mozambique": "MZB",
+  "Zimbabwe": "ZIM",
+  "Namibia": "NMB",
+  "South Africa": "SAF",
+  "Australia": "AST",
+  "New Zealand": "NZL",
+  "Papua New Guinea": "PNG",
+  "Croatia": "CRO",
+  "Slovenia": "SLO",
+  "Bosnia": "BOS",
+  "Slovakia": "SLO",          // HOI4 has no SVK; SLO doubles for Slovakia
+  "Czech Republic": "CZE",
+  // Post-Soviet republics (1991 collapse)
+  "Kazakhstan": "KAZ",
+  "Uzbekistan": "UZB",
+  "Turkmenistan": "TKM",
+  "Kyrgyzstan": "KGZ",
+  "Tajikistan": "TJK",
+  "Armenia": "ARM",
+  "Azerbaijan": "AZR",
+  "Georgia": "GEO",
+  "Moldova": "MOL",
+  "Imperial China": "CHI",
+  "Jin China": "CHI",
+  "Sunga India": "RAJ",
+  "Anglo-Saxons": "ENG",
+  "Kingdom of England": "ENG",
+  "Great Britain": "ENG",
+  "United Kingdom": "ENG",
+  "Carolingian Empire": "FRA",
+  "Kingdom of France": "FRA",
+  "Confederate States": "CSA",
+  "Confederacy": "CSA",
+  // White Movement was mapped to RUS, but RUS in HOI4 is actually
+  // Reichskommissariat Nordamerika (a Nazi puppet state, not Russia at all).
+  // Procedural flag is far better than that mismatch.
+  "Nazi Germany": "GER_fascism",
+  "Fascist Italy": "ITA_fascism",
+  // 20th-century post-war + decolonization
+  "India": "RAJ",
+  "Israel": "ISR",
+  "Modern Egypt": "EGY",
+  "Ghana": "GHA",
+  "Algeria": "ALG",
+  "Nigeria": "NIG",
+  "Vietnam": "VIN",
+  "Kenya": "KEN",
+  "Ukraine": "UKR",
+  "Belarus": "BLR",
+  "Chavin": "PRU",
+  "Inca": "PRU",
+  "Assyria": "ASY_neo_assyrian_empire_neutrality",
+  "Babylon": "ASY_neo_assyrian_empire_communism",
+  "USA": "USA",
+};
+
+// Procedural flag URLs we used previously (Wikipedia). Kept for civs without HOI4 tags.
+const FLAG_URLS = {
+  "Rome": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c7/Vexilloid_of_the_Roman_Empire.svg/180px-Vexilloid_of_the_Roman_Empire.svg.png",
+  "Western Rome": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c7/Vexilloid_of_the_Roman_Empire.svg/180px-Vexilloid_of_the_Roman_Empire.svg.png",
+  "Italy": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/03/Flag_of_Italy.svg/180px-Flag_of_Italy.svg.png",
+  "Egypt": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fe/Flag_of_Egypt.svg/180px-Flag_of_Egypt.svg.png",
+  "Greeks": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5c/Flag_of_Greece.svg/180px-Flag_of_Greece.svg.png",
+  "Duchy of Poland": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/Flag_of_Poland.svg/180px-Flag_of_Poland.svg.png",
+  "Kingdom of Poland": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/Flag_of_Poland.svg/180px-Flag_of_Poland.svg.png",
+  "Republic of Poland": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/Flag_of_Poland.svg/180px-Flag_of_Poland.svg.png",
+  "Grand Duchy of Lithuania": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/11/Flag_of_Lithuania.svg/180px-Flag_of_Lithuania.svg.png",
+  "Republic of Lithuania": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/11/Flag_of_Lithuania.svg/180px-Flag_of_Lithuania.svg.png",
+  "Livonian Order": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cc/Flag_of_the_Teutonic_Order.svg/180px-Flag_of_the_Teutonic_Order.svg.png",
+  "Polish-Lithuanian Commonwealth": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2a/Flag_of_the_Polish%E2%80%93Lithuanian_Commonwealth.svg/180px-Flag_of_the_Polish%E2%80%93Lithuanian_Commonwealth.svg.png",
+  "Mongols": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/26/Flag_of_the_Mongol_Empire_3.svg/180px-Flag_of_the_Mongol_Empire_3.svg.png",
+  "Ottomans": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b4/Flag_of_the_Ottoman_Empire.svg/180px-Flag_of_the_Ottoman_Empire.svg.png",
+  "Russia": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f3/Flag_of_Russia.svg/180px-Flag_of_Russia.svg.png",
+  "Tsardom of Russia": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f3/Flag_of_Russia.svg/180px-Flag_of_Russia.svg.png",
+  "Russian Empire": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f3/Flag_of_Russia.svg/180px-Flag_of_Russia.svg.png",
+  "Soviet Union": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a9/Flag_of_the_Soviet_Union.svg/180px-Flag_of_the_Soviet_Union.svg.png",
+  "Germany": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/ba/Flag_of_Germany.svg/180px-Flag_of_Germany.svg.png",
+  "France": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/Flag_of_France.svg/180px-Flag_of_France.svg.png",
+  "USA": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a4/Flag_of_the_United_States.svg/180px-Flag_of_the_United_States.svg.png",
+  "Han China": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/01/Han_dynasty_flag.svg/180px-Han_dynasty_flag.svg.png",
+  "Vikings": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0d/Raven_Banner.svg/180px-Raven_Banner.svg.png",
+  "Aztec": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/01/Flag_of_the_Aztec_Triple_Alliance.svg/180px-Flag_of_the_Aztec_Triple_Alliance.svg.png",
+};
+
+function leaderFor(civ) {
+  const list = LEADERS[civ.name];
+  if (!list) return null;
+  return list.find(l => state.year >= l.from && state.year < l.to) || null;
+}
+
+// Procedural flag generator: deterministic per-civ pattern in canvas
+// Compute the average color of a flag PNG and set it as the civ's territory
+// color. Loads the image off-screen, samples every pixel, weights by alpha,
+// and updates civ.color when ready. Tints rebuild on the next render.
+const _flagColorCache = new Map();   // url -> "#rrggbb"
+// Resolve a civ's best flag URL: custom upload > HOI4 tag PNG > procedural
+// data URL. The procedural fallback renders a fresh canvas to a data URL
+// so the war popup always gets *something* visible.
+function flagUrlForCiv(civ) {
+  if (!civ) return null;
+  if (civ.customFlag) return civ.customFlag;
+  const tag = CIV_TAGS[civ.name];
+  if (tag) return `flags_png/${tag}.png`;
+  // Procedural fallback - render to a small canvas and grab data URL.
+  try {
+    const c = document.createElement("canvas");
+    c.width = 36; c.height = 24;
+    drawProceduralFlag(c, civ);
+    return c.toDataURL("image/png");
+  } catch (e) { return null; }
+}
+
+// Bottom-right popup announcing a war declaration. Stacks; auto-dismisses
+// after ~5s with a fade-out.
+function showWarPopup(declarer, target) {
+  const stack = document.getElementById("war-popup-stack");
+  if (!stack || !declarer || !target) return;
+  const popup = document.createElement("div");
+  popup.className = "war-popup";
+  const aURL = flagUrlForCiv(declarer);
+  const bURL = flagUrlForCiv(target);
+  const aImg = aURL ? '<img src="' + aURL + '" alt="" />' : "";
+  const bImg = bURL ? '<img src="' + bURL + '" alt="" />' : "";
+  popup.innerHTML =
+    aImg +
+    '<div style="flex:1;">' +
+      '<div style="color:#ffd0a0;font-weight:bold;letter-spacing:0.5px;">' + escapeHtml(declarer.name) + '</div>' +
+      '<div style="color:#ff8080;font-size:11px;letter-spacing:1px;">DECLARED WAR</div>' +
+      '<div style="color:#ffd0a0;font-weight:bold;letter-spacing:0.5px;">on ' + escapeHtml(target.name) + '</div>' +
+    '</div>' +
+    bImg;
+  stack.appendChild(popup);
+  // Auto-dismiss with fade.
+  setTimeout(() => { popup.classList.add("fading"); }, 4500);
+  setTimeout(() => { if (popup.parentNode) popup.parentNode.removeChild(popup); }, 5100);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, ch => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[ch]));
+}
+
+function applyFlagColor(civ) {
+  if (!civ || civ._flagColorApplied) return;
+  // Resolve URL the same way the country panel does.
+  let url = null;
+  if (civ.customFlag) {
+    url = civ.customFlag;
+  } else {
+    const tag = CIV_TAGS[civ.name];
+    if (tag) url = `flags_png/${tag}.png`;
+  }
+  if (!url) return;
+  civ._flagColorApplied = true;   // don't retry even if load fails
+
+  const apply = (hex) => {
+    civ.color = hex;
+    invalidateTintCache();
+  };
+  if (_flagColorCache.has(url)) { apply(_flagColorCache.get(url)); return; }
+
+  const img = new Image();
+  img.onload = () => {
+    try {
+      const c = document.createElement("canvas");
+      const W = Math.min(64, img.width || 64);
+      const H = Math.min(64, img.height || 64);
+      c.width = W; c.height = H;
+      const cx = c.getContext("2d");
+      cx.drawImage(img, 0, 0, W, H);
+      const data = cx.getImageData(0, 0, W, H).data;
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        const a = data[i + 3];
+        if (a < 32) continue;                       // skip transparent
+        const rr = data[i], gg = data[i + 1], bb = data[i + 2];
+        // Skip near-pure-white pixels that are usually borders/star fields and
+        // skew the average. Keep the bulk of the colored area.
+        if (rr > 245 && gg > 245 && bb > 245) continue;
+        r += rr; g += gg; b += bb; n++;
+      }
+      if (n === 0) return;
+      const avg = [Math.round(r / n), Math.round(g / n), Math.round(b / n)];
+      const hex = "#" + avg.map(v => v.toString(16).padStart(2, "0")).join("");
+      _flagColorCache.set(url, hex);
+      apply(hex);
+    } catch (e) {
+      // CORS or decode error - leave civ.color alone.
+    }
+  };
+  img.onerror = () => {};
+  img.src = url;
+}
+
+// Run once over every alive civ - useful right after spawn.
+function applyAllFlagColors() {
+  for (const civ of state.civs) {
+    if (civ.alive) applyFlagColor(civ);
+  }
+}
+
+function drawProceduralFlag(canvas, civ) {
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  // Deterministic seed from civ id+name
+  let seed = civ.id * 31 + civ.name.length * 17;
+  for (let i = 0; i < civ.name.length; i++) seed = (seed * 7 + civ.name.charCodeAt(i)) >>> 0;
+  const rand = () => { seed = (seed * 1103515245 + 12345) >>> 0; return (seed >>> 8) / 0xffffff; };
+
+  const c1 = civ.color;
+  // Companion colors based on civ.color brightness
+  const lum = colorLum(civ.color);
+  const c2 = lum > 0.55 ? "#1a1410" : "#f0e6cc";
+  const c3 = "#ffffff";
+  const c4 = adjustColor(civ.color, -0.3);
+
+  const pattern = Math.floor(rand() * 6);
+  if (pattern === 0) {
+    // 3 horizontal stripes
+    ctx.fillStyle = c1; ctx.fillRect(0, 0, W, H/3);
+    ctx.fillStyle = c2; ctx.fillRect(0, H/3, W, H/3);
+    ctx.fillStyle = c3; ctx.fillRect(0, 2*H/3, W, H/3);
+  } else if (pattern === 1) {
+    // 3 vertical stripes
+    ctx.fillStyle = c1; ctx.fillRect(0, 0, W/3, H);
+    ctx.fillStyle = c3; ctx.fillRect(W/3, 0, W/3, H);
+    ctx.fillStyle = c2; ctx.fillRect(2*W/3, 0, W/3, H);
+  } else if (pattern === 2) {
+    // 2 horizontal stripes with circle/sun
+    ctx.fillStyle = c1; ctx.fillRect(0, 0, W, H/2);
+    ctx.fillStyle = c4; ctx.fillRect(0, H/2, W, H/2);
+    ctx.fillStyle = c3;
+    ctx.beginPath();
+    ctx.arc(W/2, H/2, Math.min(W, H) * 0.18, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (pattern === 3) {
+    // Nordic-style cross
+    ctx.fillStyle = c1; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = c3;
+    ctx.fillRect(W * 0.28, 0, W * 0.12, H);
+    ctx.fillRect(0, H * 0.42, W, H * 0.16);
+  } else if (pattern === 4) {
+    // Quartered
+    ctx.fillStyle = c1; ctx.fillRect(0, 0, W/2, H/2);
+    ctx.fillStyle = c2; ctx.fillRect(W/2, 0, W/2, H/2);
+    ctx.fillStyle = c2; ctx.fillRect(0, H/2, W/2, H/2);
+    ctx.fillStyle = c1; ctx.fillRect(W/2, H/2, W/2, H/2);
+  } else {
+    // Solid with star
+    ctx.fillStyle = c1; ctx.fillRect(0, 0, W, H);
+    drawStar(ctx, W/2, H/2, Math.min(W, H) * 0.22, c3, "#000", null);
+  }
+  // Border
+  ctx.strokeStyle = "#000";
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(0.75, 0.75, W - 1.5, H - 1.5);
+}
+
+function colorLum(hex) {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+function adjustColor(hex, delta) {
+  const r = Math.max(0, Math.min(255, parseInt(hex.slice(1, 3), 16) + delta * 255));
+  const g = Math.max(0, Math.min(255, parseInt(hex.slice(3, 5), 16) + delta * 255));
+  const b = Math.max(0, Math.min(255, parseInt(hex.slice(5, 7), 16) + delta * 255));
+  return "#" + [r, g, b].map(v => Math.floor(v).toString(16).padStart(2, "0")).join("");
+}
+
+const LEADER_PLACEHOLDER =
+  "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 110">
+      <rect width="90" height="110" fill="#2a1a10"/>
+      <circle cx="45" cy="42" r="18" fill="#5a4a3a"/>
+      <ellipse cx="45" cy="95" rx="32" ry="22" fill="#5a4a3a"/>
+    </svg>`);
+
+function showCountryPanel(civ) {
+  if (!civ || !civ.alive) {
+    hideCountryPanel();
+    return;
+  }
+  const panel = document.getElementById("country-panel");
+  panel.classList.remove("hidden");
+
+  // Flag: prefer HOI4 PNG (via tag), else Wikipedia URL, else procedural.
+  const flagCanvas = document.getElementById("country-flag");
+  const tag = CIV_TAGS[civ.name];
+  const localPath = tag ? `flags_png/${tag}.png` : null;
+  const flagURL = FLAG_URLS[civ.name];
+
+  function drawFlagFromImg(img) {
+    const c = flagCanvas.getContext("2d");
+    c.clearRect(0, 0, flagCanvas.width, flagCanvas.height);
+    const r = Math.min(flagCanvas.width / img.width, flagCanvas.height / img.height);
+    const w = img.width * r, h = img.height * r;
+    c.drawImage(img, (flagCanvas.width - w) / 2, (flagCanvas.height - h) / 2, w, h);
+  }
+
+  // 1. Custom flag (player customized) wins. 2. HOI4 PNG via tag. 3. Wikipedia URL. 4. Procedural.
+  if (civ.customFlag) {
+    const img = new Image();
+    img.onload = () => drawFlagFromImg(img);
+    img.onerror = () => drawProceduralFlag(flagCanvas, civ);
+    img.src = civ.customFlag;
+  } else if (civ.isPlayer) {
+    drawProceduralFlag(flagCanvas, civ);
+  } else if (localPath || flagURL) {
+    const img = new Image();
+    img.onload = () => drawFlagFromImg(img);
+    img.onerror = () => {
+      // Fall through: try the alternate URL, then procedural
+      if (img.src.endsWith(localPath || "")) {
+        if (flagURL) {
+          const img2 = new Image();
+          img2.onload = () => drawFlagFromImg(img2);
+          img2.onerror = () => drawProceduralFlag(flagCanvas, civ);
+          img2.src = flagURL;
+        } else {
+          drawProceduralFlag(flagCanvas, civ);
+        }
+      } else {
+        drawProceduralFlag(flagCanvas, civ);
+      }
+    };
+    img.src = localPath || flagURL;
+  } else {
+    drawProceduralFlag(flagCanvas, civ);
+  }
+
+  document.getElementById("cp-name").textContent = civ.name;
+  document.getElementById("cp-name").style.color = civ.color;
+  document.getElementById("cp-era").textContent = ERAS[civ.era].name.toUpperCase();
+
+  // Leader: priority is custom (player-set) → hardcoded LEADERS table entry
+  // → HOI4 portrait fallback for late eras.
+  const leader = leaderFor(civ);
+  const leaderImg = document.getElementById("cp-leader-img");
+  leaderImg.onerror = () => { leaderImg.src = LEADER_PLACEHOLDER; };
+  let leaderName = null, leaderImgSrc = null;
+  if (civ.customLeaderName) leaderName = civ.customLeaderName;
+  if (civ.customLeaderImg) leaderImgSrc = civ.customLeaderImg;
+  if (!leaderName && leader) leaderName = leader.name;
+  if (!leaderImgSrc && leader) leaderImgSrc = leader.img || null;
+  // HOI4 fallback: if civ has a tag and HOI4_LEADERS has data, pick first
+  // leader with a portrait (only when in late era, since these are all WWII-era figures).
+  if (!leaderImgSrc && civ.era >= 5 && typeof HOI4_LEADERS !== "undefined") {
+    const flagTag = CIV_TAGS[civ.name] || "";
+    const tag = flagTag.split("_")[0];   // "POL_KINGDOM_neutrality" -> "POL"
+    const list = HOI4_LEADERS[tag];
+    if (list && list.length > 0) {
+      const withPortrait = list.find(l => l.portrait) || list[0];
+      leaderImgSrc = withPortrait.portrait ? `portraits/${tag}/${withPortrait.portrait}.png` : null;
+      leaderName = leaderName || withPortrait.name;
+    }
+  }
+  leaderImg.src = leaderImgSrc || LEADER_PLACEHOLDER;
+  document.getElementById("cp-leader-name").textContent =
+    leaderName || (civ.isPlayer ? "(your tribe's chieftain)" : "Unknown ruler");
+
+  // Customize button — only shown for the player's own civ.
+  const customBtn = document.getElementById("cp-customize-btn");
+  if (customBtn) customBtn.style.display = civ.isPlayer ? "" : "none";
+
+  // Declare War button - only when looking at OTHER civ panels. If already
+  // at war (rel <= -50) we show the AT WAR banner instead.
+  const warBtn = document.getElementById("cp-declare-war-btn");
+  const warBanner = document.getElementById("cp-war-state");
+  const player = state.civs[0];
+  if (warBtn && warBanner && player && player.isPlayer) {
+    if (civ.isPlayer || !civ.alive) {
+      warBtn.style.display = "none";
+      warBanner.style.display = "none";
+    } else {
+      const rel = player.relations[civ.id] || 0;
+      if (rel <= -50) {
+        warBtn.style.display = "none";
+        warBanner.style.display = "";
+      } else {
+        warBtn.style.display = "";
+        warBanner.style.display = "none";
+        warBtn.dataset.civId = civ.id;
+      }
+    }
+  }
+
+  // Stats
+  const tiles = countTiles(civ);
+  const totalPop = civ.settlements.reduce((s, x) => s + x.pop, 0);
+  const totalArmy = civ.armies.reduce((s, a) => s + a.count, 0);
+  document.getElementById("cp-stats").innerHTML = `
+    <div class="stat-row"><span class="stat-label">Settlements</span><span class="stat-val">${civ.settlements.length}</span></div>
+    <div class="stat-row"><span class="stat-label">Population</span><span class="stat-val">${totalPop}</span></div>
+    <div class="stat-row"><span class="stat-label">Territory</span><span class="stat-val">${tiles} tiles</span></div>
+    <div class="stat-row"><span class="stat-label">Army</span><span class="stat-val">${totalArmy} units</span></div>
+    <div class="stat-row"><span class="stat-label">Stability</span><span class="stat-val">${Math.round(civ.stability)}%</span></div>
+  `;
+
+  // Relations with other living civs
+  const relsEl = document.getElementById("cp-relations");
+  // First, collect every civ this one is AT WAR with (rel <= -50). Show them
+  // up top in a dedicated section so wars are immediately visible.
+  const wars = state.civs
+    .filter(c => c.alive && c.id !== civ.id && (civ.relations[c.id] || 0) <= -50)
+    .sort((a, b) => (civ.relations[a.id] || 0) - (civ.relations[b.id] || 0));
+  const warHtml = wars.length === 0 ? "" :
+    '<div style="margin-bottom:6px;padding:6px 8px;border:1px solid #c44;border-radius:3px;background:rgba(80,16,16,0.4);">' +
+      '<div style="color:#ff8080;font-size:11px;letter-spacing:1.5px;font-weight:bold;margin-bottom:4px;">⚔ AT WAR WITH</div>' +
+      wars.map(w => '<div class="rel-row" style="padding:2px 0;">' +
+        '<span class="rel-swatch" style="background:' + w.color + '"></span>' +
+        '<span class="rel-name" style="color:#ffd0a0;">' + w.name + '</span>' +
+        '<span class="rel-val rel-neg">' + Math.round(civ.relations[w.id] || 0) + '</span>' +
+        '</div>').join("") +
+    '</div>';
+  // Then show the broader top-8 relations. Skip civs already in the war
+  // block so they're not duplicated.
+  const warIds = new Set(wars.map(w => w.id));
+  const others = state.civs
+    .filter(c => c.alive && c.id !== civ.id && !warIds.has(c.id))
+    .map(c => ({ civ: c, rel: civ.relations[c.id] || 0 }))
+    .sort((a, b) => Math.abs(b.rel) - Math.abs(a.rel))
+    .slice(0, 8);
+  const otherHtml = others.map(({ civ: oc, rel }) => {
+    const cls = rel > 10 ? "rel-pos" : rel < -10 ? "rel-neg" : "rel-zero";
+    return '<div class="rel-row">' +
+      '<span class="rel-swatch" style="background:' + oc.color + '"></span>' +
+      '<span class="rel-name">' + oc.name + '</span>' +
+      '<span class="rel-val ' + cls + '">' + (rel >= 0 ? "+" : "") + Math.round(rel) + '</span>' +
+      '</div>';
+  }).join("");
+  relsEl.innerHTML = warHtml + otherHtml ||
+    '<div style="color:#8a7a5c;font-style:italic;">No diplomatic contacts.</div>';
+}
+
+function hideCountryPanel() {
+  document.getElementById("country-panel").classList.add("hidden");
+}
+
+// Populate the "PROVINCE" section of the panel from provinceInfo (definition.csv).
+function renderProvinceDetails(pid) {
+  const el = document.getElementById("cp-province");
+  if (!el) return;
+  if (!pid || !provinceInfo || !provinceInfo[pid]) {
+    el.innerHTML = `<div style="color:#8a7a5c;font-style:italic;font-size:11px;">No province selected.</div>`;
+    return;
+  }
+  const p = provinceInfo[pid];
+  const rgb = `rgb(${p.r}, ${p.g}, ${p.b})`;
+  const hex = "#" + [p.r, p.g, p.b].map(v => v.toString(16).padStart(2, "0")).join("");
+  el.innerHTML = `
+    <div class="stat-row"><span class="stat-label">ID</span><span class="stat-val">${p.id}</span></div>
+    <div class="stat-row"><span class="stat-label">RGB</span>
+      <span class="stat-val" style="display:flex;align-items:center;gap:4px;">
+        <span style="display:inline-block;width:12px;height:12px;background:${rgb};border:1px solid #000;"></span>
+        <span style="font-family:monospace;">${p.r},${p.g},${p.b}</span>
+      </span>
+    </div>
+    <div class="stat-row"><span class="stat-label">Hex</span><span class="stat-val" style="font-family:monospace;">${hex}</span></div>
+    <div class="stat-row"><span class="stat-label">Type</span><span class="stat-val">${p.type}</span></div>
+    <div class="stat-row"><span class="stat-label">Terrain</span><span class="stat-val">${p.terrain}</span></div>
+    <div class="stat-row"><span class="stat-label">Coastal</span><span class="stat-val">${p.coastal ? "yes" : "no"}</span></div>
+    <div class="stat-row"><span class="stat-label">Continent</span><span class="stat-val">${p.continent}</span></div>
+  `;
+}
+
+// Show the panel for an unowned province (skips the civ-specific bits).
+function showProvinceOnlyPanel(pid) {
+  const panel = document.getElementById("country-panel");
+  panel.classList.remove("hidden");
+  // Default flag = procedural (no civ exists)
+  drawProceduralFlag(document.getElementById("country-flag"), { id: pid, color: "#6b4f2c", name: "P" + pid });
+  document.getElementById("cp-name").textContent = "Province " + pid;
+  document.getElementById("cp-name").style.color = "#a89678";
+  document.getElementById("cp-era").textContent = "UNCLAIMED";
+  document.getElementById("cp-leader-img").src = LEADER_PLACEHOLDER;
+  document.getElementById("cp-leader-name").textContent = "-";
+  document.getElementById("cp-stats").innerHTML =
+    `<div style="color:#8a7a5c;font-style:italic;font-size:11px;">No civilization owns this province.</div>`;
+  document.getElementById("cp-relations").innerHTML = "";
+}
+
+document.getElementById("country-close").addEventListener("click", hideCountryPanel);
+
+// Declare-war button. Sets relations to -100 with the targeted civ and
+// records the AI's full-focus targeting in `state.warFocus[aiCivId] = playerCivId`
+// so that civ uses the player as its single combat target until peace returns.
+document.getElementById("cp-declare-war-btn").addEventListener("click", () => {
+  const player = state.civs[0];
+  if (!player || !player.isPlayer) return;
+  const targetId = parseInt(document.getElementById("cp-declare-war-btn").dataset.civId, 10);
+  const target = state.civs.find(c => c.id === targetId);
+  if (!target || !target.alive) return;
+  player.relations[target.id] = -100;
+  target.relations[player.id] = -100;
+  if (!state.warFocus) state.warFocus = {};
+  state.warFocus[target.id] = player.id;
+  // Explicit declaration unlocks the player's ability to invade. Without an
+  // entry in this set, tryMoveOrAttack refuses to move onto enemy tiles.
+  if (!state.playerWars) state.playerWars = new Set();
+  state.playerWars.add(target.id);
+  log("war", `${player.name} declares war on ${target.name}!`);
+  showWarPopup(player, target);
+  showCountryPanel(target);   // refresh panel to show "AT WAR"
+});
+
+// =================== PLAYER MINI-FLAG (top-left) ===================
+// Renders your civ's flag into the mini button and opens the country panel
+// when clicked. Hidden until you've placed your starting tribe.
+function updatePlayerFlagButton() {
+  const btn = document.getElementById("player-flag-btn");
+  if (!btn) return;
+  const civ = state.civs[0];
+  if (!civ || !civ.isPlayer || !civ.alive || civ.settlements.length === 0) {
+    btn.classList.add("hidden");
+    return;
+  }
+  btn.classList.remove("hidden");
+  const canvas = document.getElementById("player-flag-canvas");
+  if (!canvas) return;
+  // Custom flag wins, else procedural.
+  if (civ.customFlag) {
+    const img = new Image();
+    img.onload = () => {
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const r = Math.min(canvas.width / img.width, canvas.height / img.height);
+      const w = img.width * r, h = img.height * r;
+      ctx.drawImage(img, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
+    };
+    img.onerror = () => drawProceduralFlag(canvas, civ);
+    img.src = civ.customFlag;
+  } else {
+    drawProceduralFlag(canvas, civ);
+  }
+}
+
+document.getElementById("player-flag-btn").addEventListener("click", () => {
+  const civ = state.civs[0];
+  if (civ && civ.isPlayer && civ.alive) showCountryPanel(civ);
+});
+
+// =================== CUSTOMIZE MODAL ===================
+// Era-based naming template. Tribal age forces "[X] Tribe", classical/medieval/
+// renaissance forces "Kingdom of [X]", industrial+ allows free-form.
+function nameTemplateForEra(era) {
+  if (era <= 0) return { prefix: "",            suffix: " Tribe",     hint: "Tribal age - your name must end with \"Tribe\"." };
+  if (era <= 3) return { prefix: "Kingdom of ", suffix: "",           hint: "Pre-industrial - your name must start with \"Kingdom of\"." };
+  return         { prefix: "",            suffix: "",           hint: "Industrial age and beyond - any name allowed." };
+}
+
+// Strip a known prefix/suffix from the existing civ name so the input only
+// contains the user-editable middle.
+function stripTemplate(name, tpl) {
+  let n = name || "";
+  if (tpl.prefix && n.startsWith(tpl.prefix)) n = n.slice(tpl.prefix.length);
+  if (tpl.suffix && n.endsWith(tpl.suffix)) n = n.slice(0, -tpl.suffix.length);
+  return n.trim();
+}
+
+// Build flat list of available portraits. Prefers HOI4_ALL_PORTRAITS (every
+// PNG file actually present in portraits/, ~1.1k entries) since it picks up
+// portraits whose characters/*.txt entry was unparseable. Falls back to
+// HOI4_LEADERS for older builds.
+function listAvailablePortraits() {
+  const out = [];
+  if (typeof HOI4_ALL_PORTRAITS !== "undefined") {
+    for (const p of HOI4_ALL_PORTRAITS) {
+      out.push({ tag: p.tag, name: p.name || p.tag, src: `portraits/${p.tag}/${p.file}.png` });
+    }
+    return out;
+  }
+  if (typeof HOI4_LEADERS === "undefined") return out;
+  for (const tag of Object.keys(HOI4_LEADERS)) {
+    for (const l of HOI4_LEADERS[tag]) {
+      if (l.portrait) {
+        out.push({ tag, name: l.name || tag, src: `portraits/${tag}/${l.portrait}.png` });
+      }
+    }
+  }
+  return out;
+}
+
+// Build flat list of available flag tags. Prefers HOI4_ALL_FLAGS (the
+// complete enumeration of every PNG in flags_png/, ~2.5k files) when
+// available; falls back to HOI4_COUNTRY_COLORS + CIV_TAGS otherwise.
+function listAvailableFlags() {
+  const out = [];
+  const seen = new Set();
+  if (typeof HOI4_ALL_FLAGS !== "undefined") {
+    for (const tag of HOI4_ALL_FLAGS) {
+      if (seen.has(tag)) continue;
+      seen.add(tag);
+      out.push({ tag, src: `flags_png/${tag}.png` });
+    }
+    return out;   // already exhaustive, no need to merge other sources
+  }
+  if (typeof HOI4_COUNTRY_COLORS !== "undefined") {
+    for (const tag of Object.keys(HOI4_COUNTRY_COLORS)) {
+      if (seen.has(tag)) continue;
+      seen.add(tag);
+      out.push({ tag, src: `flags_png/${tag}.png` });
+    }
+  }
+  for (const tagFull of Object.values(CIV_TAGS)) {
+    if (!tagFull || seen.has(tagFull)) continue;
+    seen.add(tagFull);
+    out.push({ tag: tagFull, src: `flags_png/${tagFull}.png` });
+  }
+  out.sort((a, b) => a.tag.localeCompare(b.tag));
+  return out;
+}
+
+// Modal state — what's currently picked but not yet saved.
+let _cmDraft = { portraitSrc: null, portraitLabel: null, flagSrc: null, flagTag: null };
+
+function openCustomizeModal() {
+  const civ = state.civs[0];
+  if (!civ || !civ.isPlayer) return;
+  const modal = document.getElementById("customize-modal");
+  if (!modal) return;
+
+  // Pre-fill with current values.
+  const tpl = nameTemplateForEra(civ.era);
+  document.getElementById("cm-name-prefix").textContent = tpl.prefix;
+  document.getElementById("cm-name-suffix").textContent = tpl.suffix;
+  document.getElementById("cm-name-hint").textContent = tpl.hint;
+  document.getElementById("cm-name").value = stripTemplate(civ.name, tpl);
+  document.getElementById("cm-leader-name").value = civ.customLeaderName || "";
+
+  _cmDraft.portraitSrc   = civ.customLeaderImg || null;
+  _cmDraft.portraitLabel = civ.customLeaderName || null;
+  _cmDraft.flagSrc       = civ.customFlag || null;
+  _cmDraft.flagTag       = civ.customFlagTag || null;
+
+  // Previews
+  const pp = document.getElementById("cm-portrait-preview");
+  pp.src = _cmDraft.portraitSrc || LEADER_PLACEHOLDER;
+  document.getElementById("cm-portrait-label").textContent =
+    _cmDraft.portraitLabel ? _cmDraft.portraitLabel : "(none)";
+  const fp = document.getElementById("cm-flag-preview");
+  fp.src = _cmDraft.flagSrc || "";
+  fp.style.display = _cmDraft.flagSrc ? "" : "none";
+  document.getElementById("cm-flag-label").textContent =
+    _cmDraft.flagTag ? _cmDraft.flagTag : "(procedural)";
+
+  // Build grids (filtered by current search box content).
+  rebuildPortraitGrid();
+  rebuildFlagGrid();
+
+  modal.classList.remove("hidden");
+}
+
+function closeCustomizeModal() {
+  document.getElementById("customize-modal").classList.add("hidden");
+}
+
+function rebuildPortraitGrid() {
+  const grid = document.getElementById("cm-portrait-grid");
+  if (!grid) return;
+  const q = (document.getElementById("cm-portrait-search").value || "").toLowerCase().trim();
+  const all = listAvailablePortraits();
+  const items = q ? all.filter(p => p.tag.toLowerCase().includes(q) || p.name.toLowerCase().includes(q)) : all;
+  // Cap at 800. img loading="lazy" defers the actual fetches; search
+  // narrows things down further when needed.
+  grid.innerHTML = items.slice(0, 800).map(p => `
+    <div class="cm-grid-item ${_cmDraft.portraitSrc === p.src ? "selected" : ""}"
+         data-src="${p.src}" data-name="${p.name.replace(/"/g, "&quot;")}" title="${p.tag} - ${p.name.replace(/"/g, "&quot;")}">
+      <img src="${p.src}" loading="lazy" />
+      <div class="cm-tag-label">${p.tag}</div>
+    </div>
+  `).join("");
+  for (const el of grid.querySelectorAll(".cm-grid-item")) {
+    el.addEventListener("click", () => {
+      _cmDraft.portraitSrc   = el.dataset.src;
+      _cmDraft.portraitLabel = el.dataset.name;
+      document.getElementById("cm-portrait-preview").src = el.dataset.src;
+      document.getElementById("cm-portrait-label").textContent = el.dataset.name;
+      // Auto-fill the leader-name input if it's empty.
+      const ln = document.getElementById("cm-leader-name");
+      if (!ln.value.trim()) ln.value = el.dataset.name;
+      for (const e of grid.querySelectorAll(".cm-grid-item")) e.classList.remove("selected");
+      el.classList.add("selected");
+    });
+  }
+}
+
+function rebuildFlagGrid() {
+  const grid = document.getElementById("cm-flag-grid");
+  if (!grid) return;
+  const q = (document.getElementById("cm-flag-search").value || "").toLowerCase().trim();
+  const all = listAvailableFlags();
+  const items = q ? all.filter(p => p.tag.toLowerCase().includes(q)) : all;
+  // Cap at 800 — img loading="lazy" keeps the cost down (only visible images
+  // actually fetch). Search filters further when a query is typed.
+  grid.innerHTML = items.slice(0, 800).map(p => `
+    <div class="cm-grid-item ${_cmDraft.flagSrc === p.src ? "selected" : ""}"
+         data-src="${p.src}" data-tag="${p.tag}" title="${p.tag}">
+      <img src="${p.src}" loading="lazy" />
+      <div class="cm-tag-label">${p.tag}</div>
+    </div>
+  `).join("");
+  for (const el of grid.querySelectorAll(".cm-grid-item")) {
+    el.addEventListener("click", () => {
+      _cmDraft.flagSrc = el.dataset.src;
+      _cmDraft.flagTag = el.dataset.tag;
+      const fp = document.getElementById("cm-flag-preview");
+      fp.src = el.dataset.src;
+      fp.style.display = "";
+      document.getElementById("cm-flag-label").textContent = el.dataset.tag;
+      for (const e of grid.querySelectorAll(".cm-grid-item")) e.classList.remove("selected");
+      el.classList.add("selected");
+    });
+  }
+}
+
+function saveCustomization() {
+  const civ = state.civs[0];
+  if (!civ || !civ.isPlayer) return;
+  const tpl = nameTemplateForEra(civ.era);
+  const middle = (document.getElementById("cm-name").value || "").trim();
+  if (!middle) { alert("Please enter a name."); return; }
+  civ.name = tpl.prefix + middle + tpl.suffix;
+  civ.customLeaderName = (document.getElementById("cm-leader-name").value || "").trim() || null;
+  civ.customLeaderImg  = _cmDraft.portraitSrc || null;
+  civ.customFlag       = _cmDraft.flagSrc || null;
+  civ.customFlagTag    = _cmDraft.flagTag || null;
+  closeCustomizeModal();
+  showCountryPanel(civ);   // refresh
+  updateUI();
+  invalidateTintCache();
+  render();
+}
+
+// Wire up event listeners (called once, on first DOMContentLoaded basically).
+(function wireCustomizeModal() {
+  const btn = document.getElementById("cp-customize-btn");
+  if (btn) btn.addEventListener("click", openCustomizeModal);
+  const close = document.getElementById("cm-close");
+  if (close) close.addEventListener("click", closeCustomizeModal);
+  const cancel = document.getElementById("cm-cancel");
+  if (cancel) cancel.addEventListener("click", closeCustomizeModal);
+  const save = document.getElementById("cm-save");
+  if (save) save.addEventListener("click", saveCustomization);
+  const ps = document.getElementById("cm-portrait-search");
+  if (ps) ps.addEventListener("input", rebuildPortraitGrid);
+  const fs = document.getElementById("cm-flag-search");
+  if (fs) fs.addEventListener("input", rebuildFlagGrid);
+
+  // Read a File into a data URL string (~base64 inline). Resolves with the
+  // URL or null on failure. Used by the upload buttons.
+  function readImageFile(file, maxSide) {
+    return new Promise((resolve) => {
+      if (!file || !file.type.startsWith("image/")) { resolve(null); return; }
+      const reader = new FileReader();
+      reader.onerror = () => resolve(null);
+      reader.onload = () => {
+        // Re-encode through a canvas at a sane resolution so giant 4 MB
+        // photos don't bloat the saved civ object.
+        const img = new Image();
+        img.onload = () => {
+          const max = maxSide || 256;
+          const scale = Math.min(1, max / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const c = document.createElement("canvas");
+          c.width = w; c.height = h;
+          const cx = c.getContext("2d");
+          cx.drawImage(img, 0, 0, w, h);
+          resolve(c.toDataURL("image/png"));
+        };
+        img.onerror = () => resolve(null);
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  const portraitFile = document.getElementById("cm-portrait-file");
+  if (portraitFile) portraitFile.addEventListener("change", async (e) => {
+    const url = await readImageFile(e.target.files[0], 320);
+    if (!url) return;
+    _cmDraft.portraitSrc   = url;
+    _cmDraft.portraitLabel = "(uploaded)";
+    document.getElementById("cm-portrait-preview").src = url;
+    document.getElementById("cm-portrait-label").textContent = "(uploaded)";
+    // Clear grid selection.
+    for (const e2 of document.querySelectorAll("#cm-portrait-grid .cm-grid-item")) e2.classList.remove("selected");
+    e.target.value = "";   // allow picking the same file again later
+  });
+  const flagFile = document.getElementById("cm-flag-file");
+  if (flagFile) flagFile.addEventListener("change", async (e) => {
+    const url = await readImageFile(e.target.files[0], 256);
+    if (!url) return;
+    _cmDraft.flagSrc = url;
+    _cmDraft.flagTag = "(uploaded)";
+    const fp = document.getElementById("cm-flag-preview");
+    fp.src = url;
+    fp.style.display = "";
+    document.getElementById("cm-flag-label").textContent = "(uploaded)";
+    for (const e2 of document.querySelectorAll("#cm-flag-grid .cm-grid-item")) e2.classList.remove("selected");
+    e.target.value = "";
+  });
+
+  const portraitClear = document.getElementById("cm-portrait-clear");
+  if (portraitClear) portraitClear.addEventListener("click", () => {
+    _cmDraft.portraitSrc = null;
+    _cmDraft.portraitLabel = null;
+    document.getElementById("cm-portrait-preview").src = LEADER_PLACEHOLDER;
+    document.getElementById("cm-portrait-label").textContent = "(none)";
+    for (const e of document.querySelectorAll("#cm-portrait-grid .cm-grid-item")) e.classList.remove("selected");
+  });
+  const flagClear = document.getElementById("cm-flag-clear");
+  if (flagClear) flagClear.addEventListener("click", () => {
+    _cmDraft.flagSrc = null;
+    _cmDraft.flagTag = null;
+    const fp = document.getElementById("cm-flag-preview");
+    fp.src = "";
+    fp.style.display = "none";
+    document.getElementById("cm-flag-label").textContent = "(procedural)";
+    for (const e of document.querySelectorAll("#cm-flag-grid .cm-grid-item")) e.classList.remove("selected");
+  });
+})();
+
+// =================== STARTUP ===================
+function init() {
+  setupCanvas();
+  // Initialize an empty ownership grid so accessors don't crash before the
+  // HOI4 province data loads. spawnHistoricalCivs runs inside loadProvinceGrid
+  // once the map is ready.
+  initOwnership();
+  render();
+  updateUI();
+  setSpeed(0);                // start paused
+  state.lastTickAt = performance.now();
+  requestAnimationFrame(gameLoop);
+  // Async load of the HOI4 province grid + biome MAP. Game is gated behind
+  // this - the loading overlay covers the screen until it finishes.
+  loadProvinceGrid();
+}
+
+init();
