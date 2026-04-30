@@ -5080,6 +5080,10 @@ function buildCivFamilyTree() {
     // the proto-Germans tribe), not under the Soviet Union.
     "West Germany": "Germany",
     "East Germany": "Germany",
+    // USA was a British colony - declared independence in 1776 from Great
+    // Britain, so it descends from the English chain (Anglo-Saxons ->
+    // Kingdom of England -> Great Britain).
+    "USA": "Great Britain",
   };
   for (const [child, parent] of Object.entries(TREE_PARENT_OVERRIDES)) {
     link(parent, child);
