@@ -2186,6 +2186,10 @@ function fireEvent(ev) {
   }
 
   // SPAWN (default): create or replace a civ at a lat/lon.
+  // Strict replaces: if the predecessor is dead (e.g. wiped by console
+  // 'kill'), the descendant doesn't form either. So killing East Slavs
+  // means no Muscovy / Tsardom / Russian Empire chain. Set
+  // `force: true` on the event to bypass this and fresh-spawn anyway.
   if (ev.replaces) {
     const old = state.civs.find(c => c.alive && c.name === ev.replaces);
     if (old) {
@@ -2193,6 +2197,11 @@ function fireEvent(ev) {
       if (ev.civ.color) old.color = ev.civ.color;
       log("event", ev.message);
       invalidateTintCache();
+      return;
+    }
+    // Predecessor not alive - kill the chain unless explicitly forced.
+    if (!ev.force) {
+      log("event", ev.message + " - but " + ev.replaces + " is gone, no successor forms.");
       return;
     }
   }
