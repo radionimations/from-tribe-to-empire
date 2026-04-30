@@ -5023,8 +5023,14 @@ function buildCivFamilyTree() {
     if (!parentName || !childName || parentName === childName) return;
     const p = ensure(parentName, null);
     const c = ensure(childName, year);
-    if (!c.parents.includes(p)) c.parents.push(p);
-    if (!p.children.includes(c)) p.children.push(c);
+    // A civ's lineage is set ONCE - by whichever event first creates it.
+    // Re-independence events (Lithuania 1991 from USSR, etc.) shouldn't
+    // re-parent the civ under its temporary occupier; the civ already
+    // exists in the tree from its original creation, and "regaining
+    // independence" is just a continuation of that pre-occupation lineage.
+    if (c.parents.length > 0) return;
+    c.parents.push(p);
+    p.children.push(c);
   }
   // 1000 BC starting tribes - each becomes a root.
   if (typeof HISTORICAL_CIVS !== "undefined") {
