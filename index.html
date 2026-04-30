@@ -713,6 +713,28 @@
     letter-spacing: 0.3px;
   }
   #tree-modal .tree-card.dup { opacity: 0.55; border-style: dashed; }
+  /* Extinct lineage: civ + descendants will never appear (e.g. tribe was
+     killed before its children could spawn). Greyed, with a red ✕ stamp. */
+  #tree-modal .tree-card.extinct {
+    opacity: 0.5;
+    filter: grayscale(0.8);
+    border-color: #6a2a2a;
+    position: relative;
+  }
+  #tree-modal .tree-card.extinct .tree-flag { filter: grayscale(1); }
+  #tree-modal .tree-card.extinct .tree-name { color: #8a6060; }
+  #tree-modal .tree-card.extinct .tree-extinct-mark {
+    position: absolute;
+    inset: 0;
+    color: #c44;
+    font-size: 32px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    text-shadow: 0 0 4px rgba(0,0,0,0.9);
+  }
 
   /* HOI4-style console panel - opened by typing "admin". Spawns centered,
      drag the header to move it. */

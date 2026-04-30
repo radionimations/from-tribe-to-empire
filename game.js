@@ -5125,6 +5125,29 @@ function showCivFamilyTree() {
   const modal = document.getElementById("tree-modal");
   if (!scroll || !modal) return;
   const seen = new Set();
+  // Mark each node as "extinct" if no living civ in its subtree exists.
+  // A node is alive if state.civs has any alive civ with its name. A node
+  // is extinct iff: no civ with that name is alive AND every child is also
+  // extinct. So a tribe whose entire lineage was wiped out (e.g. East Slavs
+  // killed via console) gets X'd along with all its (never-to-appear)
+  // descendants.
+  const aliveNames = new Set();
+  for (const c of state.civs) if (c.alive) aliveNames.add(c.name);
+  function markExtinction(node, visiting) {
+    if (node._extinctionDone) return node._extinct;
+    if (visiting.has(node)) return false;   // cycle guard
+    visiting.add(node);
+    const selfAlive = aliveNames.has(node.name);
+    let anyChildAlive = false;
+    for (const ch of node.children) {
+      if (!markExtinction(ch, visiting)) anyChildAlive = true;
+    }
+    visiting.delete(node);
+    node._extinct = !selfAlive && !anyChildAlive;
+    node._extinctionDone = true;
+    return node._extinct;
+  }
+  for (const root of roots) markExtinction(root, new Set());
   function renderNode(node) {
     const li = document.createElement("li");
     li.className = "tree-node";
@@ -5132,7 +5155,7 @@ function showCivFamilyTree() {
     wrap.className = "tree-node-card-wrap";
     const isDup = seen.has(node.name);
     const card = document.createElement("div");
-    card.className = "tree-card" + (isDup ? " dup" : "");
+    card.className = "tree-card" + (isDup ? " dup" : "") + (node._extinct ? " extinct" : "");
     const url = flagUrlForName(node.name);
     if (url) {
       const img = document.createElement("img");
@@ -5160,6 +5183,12 @@ function showCivFamilyTree() {
       yr.className = "tree-year";
       yr.textContent = fmtTreeYear(node.year);
       card.appendChild(yr);
+    }
+    if (node._extinct) {
+      const x = document.createElement("div");
+      x.className = "tree-extinct-mark";
+      x.textContent = "✕";
+      card.appendChild(x);
     }
     wrap.appendChild(card);
     li.appendChild(wrap);
