@@ -4815,6 +4815,7 @@ function runConsoleCommand(line) {
     consoleEcho("  annex <civ name>           your civ absorbs target's territory + cities", "info");
     consoleEcho("  kill <civ name>            destroy target outright (territory becomes neutral)", "info");
     consoleEcho("  add_war <civ name>         declare war on target", "info");
+    consoleEcho("  ally <civ name>            forge an alliance (relations +100)", "info");
     consoleEcho("  peace <civ name>           reset relations to zero with target", "info");
     consoleEcho("  year                       print current year", "info");
     consoleEcho("  list                       list all alive civs", "info");
@@ -4833,7 +4834,7 @@ function runConsoleCommand(line) {
     return;
   }
 
-  if (cmd === "tag" || cmd === "annex" || cmd === "kill" || cmd === "add_war" || cmd === "peace") {
+  if (cmd === "tag" || cmd === "annex" || cmd === "kill" || cmd === "add_war" || cmd === "peace" || cmd === "ally") {
     if (!arg) { consoleEcho("usage: " + cmd + " <civ name>", "err"); return; }
     const result = consoleFindCiv(arg);
     if (!result) { consoleEcho("no civ matches: " + arg, "err"); return; }
@@ -4876,9 +4877,22 @@ function runConsoleCommand(line) {
     }
 
     if (cmd === "kill") {
-      // Force the target to die without an absorber - territory goes to no-man's land via the standard handler.
-      fireEvent({ type: "absorb", target: target.name, message: target.name + " is wiped from the map" });
-      consoleEcho("killed " + target.name, "ok");
+      // Wipe the target: every tile they own becomes -1 (no-man's land),
+      // settlements + armies vanish, civ flagged dead. We don't go through
+      // the absorb handler because that redistributes tiles to nearest
+      // neighbours - "kill" should leave the territory genuinely vacant.
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (state.ownership[r][c] === target.id) state.ownership[r][c] = -1;
+        }
+      }
+      target.settlements = [];
+      target.armies = [];
+      target.alive = false;
+      log("death", target.name + " is wiped from history - their lands fall to ruin.");
+      invalidateTintCache();
+      render();
+      consoleEcho("killed " + target.name + " - territory now no-man's land", "ok");
       return;
     }
 
@@ -4904,6 +4918,18 @@ function runConsoleCommand(line) {
       if (state.warFocus) delete state.warFocus[target.id];
       if (state.playerWars) state.playerWars.delete(target.id);
       consoleEcho("peace with " + target.name, "ok");
+      return;
+    }
+
+    if (cmd === "ally") {
+      if (!player) { consoleEcho("no player civ", "err"); return; }
+      if (target === player) { consoleEcho("can't ally with yourself", "err"); return; }
+      player.relations[target.id] = 100;
+      target.relations[player.id] = 100;
+      if (state.warFocus) delete state.warFocus[target.id];
+      if (state.playerWars) state.playerWars.delete(target.id);
+      log("peace", player.name + " and " + target.name + " forge an alliance!");
+      consoleEcho("allied with " + target.name, "ok");
       return;
     }
   }
@@ -5939,6 +5965,24 @@ document.getElementById("cp-declare-war-btn").addEventListener("click", () => {
   log("war", `${player.name} declares war on ${target.name}!`);
   showWarPopup(player, target);
   showCountryPanel(target);   // refresh panel to show "AT WAR"
+});
+
+// Form Alliance button. Locks both sides to +100 relations - the existing
+// shouldAttack / tryMoveOrAttack logic prevents both AIs and the player
+// from accidentally attacking allies.
+document.getElementById("cp-ally-btn").addEventListener("click", () => {
+  const player = state.civs[0];
+  if (!player || !player.isPlayer) return;
+  const targetId = parseInt(document.getElementById("cp-ally-btn").dataset.civId, 10);
+  const target = state.civs.find(c => c.id === targetId);
+  if (!target || !target.alive) return;
+  player.relations[target.id] = 100;
+  target.relations[player.id] = 100;
+  // If we were at war, the alliance overrides it - clear any war flags.
+  if (state.warFocus) delete state.warFocus[target.id];
+  if (state.playerWars) state.playerWars.delete(target.id);
+  log("peace", `${player.name} and ${target.name} forge an alliance!`);
+  showCountryPanel(target);   // refresh panel
 });
 
 // =================== PLAYER MINI-FLAG (top-left) ===================
