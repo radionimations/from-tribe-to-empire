@@ -319,10 +319,32 @@ const HISTORICAL_EVENTS = [
   // Byzantines retake the south + central Italy, but Lombard invasions split
   // the north into duchies, the Papacy emerges in Rome, and Venice forms in
   // the lagoon. We model this as a series of secessions over ~250 years.
-  // 553-554: Byzantium reconquers Italy and ends the Romano-Goth state.
-  { year:  554, type: "absorb", absorber: "Byzantium", target: "Romano-Goths", message: "Justinian's reconquest: Byzantium retakes Italy, ending the Romano-Goths" },
-  // 568: Lombards invade and seize the Po Valley + most of northern Italy.
-  { year:  568, type: "secede", target: "Byzantium", civ: "Lombards", spawn: { name: "Lombards", lat: 45.5, lon: 9.2, color: "#7a5a8a" }, region: { lat: [42, 47], lon: [7, 14] }, message: "Lombards invade Italy and carve out a kingdom in the Po Valley" },
+  // 553-554: Romano-Goths collapse fragments Italy into several successor
+  // states - Byzantine reconquest creates the Exarchate of Ravenna; Naples,
+  // Sicily and Sardinia split off as separate Byzantine-aligned territories;
+  // any leftover Romano-Goth land becomes no-man's land. Lombards arrive
+  // later in 568 and take northern Italy from the Exarchate.
+  { year:  554, type: "secede", target: "Romano-Goths", civ: "Exarchate of Ravenna",
+    spawn: { name: "Exarchate of Ravenna", lat: 44.42, lon: 12.20, color: "#a050c4" },
+    region: { lat: [42, 47], lon: [9, 14] },
+    message: "Justinian's reconquest - the Exarchate of Ravenna emerges in central/northern Italy" },
+  { year:  554, type: "secede", target: "Romano-Goths", civ: "Duchy of Naples",
+    spawn: { name: "Duchy of Naples", lat: 40.85, lon: 14.27, color: "#7a4a30" },
+    region: { lat: [38, 42], lon: [13, 17] },
+    message: "Duchy of Naples splinters off in southern Italy" },
+  { year:  554, type: "secede", target: "Romano-Goths", civ: "Byzantine Sicily",
+    spawn: { name: "Byzantine Sicily", lat: 37.50, lon: 14.05, color: "#9a3a8a" },
+    region: { lat: [36, 39], lon: [12, 16] },
+    message: "Sicily becomes a separate Byzantine theme after the Gothic War" },
+  { year:  554, type: "secede", target: "Romano-Goths", civ: "Byzantine Sardinia",
+    spawn: { name: "Byzantine Sardinia", lat: 39.30, lon: 9.13, color: "#5a4a8a" },
+    region: { lat: [38, 41], lon: [8, 10] },
+    message: "Sardinia held as a separate Byzantine outpost" },
+  // Whatever scraps Romano-Goths still has after the splinters become empty land.
+  { year:  555, type: "kill_civ", civ: "Romano-Goths", message: "The Ostrogothic Kingdom is no more - any unclaimed lands fall to ruin" },
+  // 568: Lombards invade and seize the Po Valley + most of northern Italy
+  // from the Byzantine-aligned Exarchate of Ravenna.
+  { year:  568, type: "secede", target: "Exarchate of Ravenna", civ: "Lombards", spawn: { name: "Lombards", lat: 45.5, lon: 9.2, color: "#7a5a8a" }, region: { lat: [43, 47], lon: [7, 12] }, message: "Lombards invade Italy and carve out a kingdom in the Po Valley" },
   // 571: Duchy of Benevento - autonomous Lombard duchy in southern Italy.
   { year:  571, type: "secede", target: "Lombards", civ: "Duchy of Benevento",
     spawn: { name: "Duchy of Benevento", lat: 41.13, lon: 14.78, color: "#6a4a7a" },
@@ -2093,6 +2115,30 @@ function fireEvent(ev) {
   // WARTIME: toggle global aggression. During wartime, civs attack each other
   // freely. Outside wartime, the AI sticks to conquering no-man's land and
   // only attacks deeply hostile neighbours (rel < -50).
+  // KILL_CIV: wipe a civ from history. Their tiles become no-man's land
+  // (-1), settlements + armies cleared, alive=false. Used when an empire
+  // collapse should leave genuinely empty territory rather than transferring
+  // it (e.g. after Romano-Goths splits into successor states, any leftover
+  // sliver becomes ruins instead of going to the nearest neighbour).
+  if (ev.type === "kill_civ") {
+    const target = state.civs.find(c => c.alive && c.name === ev.civ);
+    if (!target) {
+      log("event", ev.message + " - target already gone.");
+      return;
+    }
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (state.ownership[r][c] === target.id) state.ownership[r][c] = -1;
+      }
+    }
+    target.settlements = [];
+    target.armies = [];
+    target.alive = false;
+    log("death", ev.message);
+    invalidateTintCache();
+    return;
+  }
+
   if (ev.type === "wartime") {
     state.isWartime = !!ev.on;
     log(ev.on ? "war" : "peace", ev.message);
@@ -5370,6 +5416,10 @@ const CIV_TAGS = {
   // Italian fragmentation states (Venice / Benevento stay procedural - no
   // good HOI4 tag matches, and modern Venezuela's flag is wrong for Venice).
   "Papal States": "PAP",
+  // Romano-Goth successor states (554) - mostly Byzantine-flavoured small
+  // Italian / Mediterranean states. None have a perfect HOI4 tag match, so
+  // they all stay procedural (the Byzantine purple tone is set on spawn).
+  // (No CIV_TAGS entry = procedural flag.)
   // HRE petty states
   "Bavaria": "BAY",
   "Saxony": "SAX",
