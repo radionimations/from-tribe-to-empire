@@ -5074,6 +5074,12 @@ function buildCivFamilyTree() {
     // descends from Finns naturally; Estonia gets its proper ancestor here.
     "Republic of Estonia": "Finns",
     "Finland": "Finns",
+    // German Cold-War split: West and East Germany are formally Cold-War
+    // creations from the Soviet zone, but culturally/ethnically they're
+    // German - they belong under the Germany branch (which descends from
+    // the proto-Germans tribe), not under the Soviet Union.
+    "West Germany": "Germany",
+    "East Germany": "Germany",
   };
   for (const [child, parent] of Object.entries(TREE_PARENT_OVERRIDES)) {
     link(parent, child);
