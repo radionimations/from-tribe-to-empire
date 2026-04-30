@@ -1925,6 +1925,13 @@ function fireEvent(ev) {
   //           spawn: { name, color, lat, lon }, region: {lat,lon}, message }
   if (ev.type === "secede") {
     const target = state.civs.find(c => c.alive && c.name === ev.target);
+    // Independence events require the parent state to actually exist. If
+    // the empire we're seceding from is already gone (e.g. Russian Empire
+    // killed earlier), no new state forms - the event silently no-ops.
+    if (ev.target && !target) {
+      log("event", ev.message + " - " + ev.target + " doesn't exist; nothing happens.");
+      return;
+    }
     let newCiv = state.civs.find(c => c.alive && c.name === ev.civ);
     if (!newCiv && ev.spawn) {
       // Always use ev.civ as the canonical civ name (it's what later events
@@ -2060,9 +2067,15 @@ function fireEvent(ev) {
       log("event", ev.message + " - target civ is already gone.");
       return;
     }
-    // If target exists but absorber is missing, find the nearest living
-    // neighbor for each target tile so the territory becomes occupied land
-    // (whoever is closest steps in) rather than orphaned no-man's land.
+    // If the absorber is named but doesn't exist, the event simply doesn't
+    // happen - we don't redistribute tiles to "nearest neighbours" anymore
+    // because that produced ahistorical results (e.g. Sweden randomly
+    // grabbing the Baltics during WWII because the Soviet absorber was
+    // unavailable). The target stays alive and keeps its territory.
+    if (ev.absorber && !absorber) {
+      log("event", ev.message + " - " + ev.absorber + " doesn't exist; nothing happens.");
+      return;
+    }
     if (absorber) {
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
