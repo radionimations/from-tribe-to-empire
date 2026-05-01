@@ -1928,6 +1928,53 @@ function fireEvent(ev) {
   // independence movements (Poland/Lithuania seceding from Russia).
   // Format: { type: "secede", target: "Western Rome", civ: "Visigoths",
   //           spawn: { name, color, lat, lon }, region: {lat,lon}, message }
+  // Build a "name -> chain of all names this civ has ever had" lookup once
+  // and check if ALL names in the chain refer to dead/missing civs. The
+  // chain comes from rename + replaces edges in HISTORICAL_EVENTS plus the
+  // civ's own previousNames history at runtime.
+  // (Cached on first call per fireEvent invocation - cheap rebuild.)
+  if (!window._lineageChainCache) {
+    const renameTo = {};   // from -> [to, to2, ...]
+    for (const e of HISTORICAL_EVENTS) {
+      if ((e.type === "rename" && e.from && e.to) || (!e.type && e.civ && e.replaces)) {
+        const from = e.from || e.replaces;
+        const to = e.to || e.civ.name;
+        if (!renameTo[from]) renameTo[from] = [];
+        renameTo[from].push(to);
+      }
+    }
+    window._lineageRenameTo = renameTo;
+  }
+  function isLineageExtinct(rootName) {
+    // Collect every name in the lineage starting from rootName, walking
+    // forward through rename edges (e.g. Polans -> Duchy of Poland ->
+    // Kingdom of Poland -> Polish-Lithuanian Commonwealth).
+    const visited = new Set();
+    const queue = [rootName];
+    while (queue.length) {
+      const n = queue.shift();
+      if (visited.has(n)) continue;
+      visited.add(n);
+      const next = window._lineageRenameTo[n] || [];
+      for (const x of next) queue.push(x);
+    }
+    // Also include any civ in state.civs whose previousNames list contains
+    // any visited name (those are renamed-in-place civs, same lineage).
+    for (const c of state.civs) {
+      if (visited.has(c.name)) continue;
+      for (const old of c.previousNames || []) {
+        if (visited.has(old)) { visited.add(c.name); break; }
+      }
+    }
+    // Lineage is extinct iff none of its names refer to an alive civ.
+    for (const c of state.civs) {
+      if (c.alive && (visited.has(c.name) || (c.previousNames || []).some(n => visited.has(n)))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   if (ev.type === "secede") {
     const target = state.civs.find(c => c.alive && c.name === ev.target);
     // Independence events require the parent state to actually exist. If
@@ -1936,6 +1983,18 @@ function fireEvent(ev) {
     if (ev.target && !target) {
       log("event", ev.message + " - " + ev.target + " doesn't exist; nothing happens.");
       return;
+    }
+    // Tribal lineage check: if the seceding civ has a cultural override
+    // parent (e.g. Republic of Poland -> Kingdom of Poland -> ... -> Polans)
+    // and that whole lineage has been wiped out, the civ doesn't get to
+    // re-emerge. So killing the Polans tribe blocks Republic of Poland from
+    // forming in 1918, even though it formally "secedes from Russian Empire".
+    const civName = typeof ev.civ === "string" ? ev.civ : (ev.civ && ev.civ.name);
+    if (civName && window.TREE_PARENT_OVERRIDES && window.TREE_PARENT_OVERRIDES[civName]) {
+      if (isLineageExtinct(window.TREE_PARENT_OVERRIDES[civName])) {
+        log("event", ev.message + " - the " + civName + " lineage is extinct; the state cannot reform.");
+        return;
+      }
     }
     let newCiv = state.civs.find(c => c.alive && c.name === ev.civ);
     if (!newCiv && ev.spawn) {
@@ -5098,6 +5157,9 @@ function buildCivFamilyTree() {
     // Kingdom of England -> Great Britain).
     "USA": "Great Britain",
   };
+  // Make this map available globally so the secede handler can use it to
+  // gate independence events on the tribal-lineage being alive.
+  window.TREE_PARENT_OVERRIDES = TREE_PARENT_OVERRIDES;
   for (const [child, parent] of Object.entries(TREE_PARENT_OVERRIDES)) {
     link(parent, child);
   }
