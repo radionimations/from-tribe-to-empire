@@ -6794,6 +6794,17 @@ function applyMobileLayout() {
     return Math.sqrt(dx * dx + dy * dy);
   }
 
+  // Midpoint between two touches in canvas-local CSS pixels.
+  function pinchCenter(e) {
+    const rect = canvas.getBoundingClientRect();
+    const t0 = e.touches[0], t1 = e.touches[1];
+    return {
+      x: ((t0.clientX + t1.clientX) / 2) - rect.left,
+      y: ((t0.clientY + t1.clientY) / 2) - rect.top,
+    };
+  }
+  let pinchAnchor = null;   // { mapX, mapY } - map-coords under the pinch midpoint at start
+
   canvas.addEventListener("touchstart", (e) => {
     if (e.touches.length === 1) {
       const t = e.touches[0];
@@ -6803,6 +6814,15 @@ function applyMobileLayout() {
     } else if (e.touches.length === 2) {
       pinchDist = dist(e.touches[0], e.touches[1]);
       pinchZoom = view.zoom;
+      // Anchor the pinch on the map point currently under the midpoint, so
+      // zoom keeps that point fixed instead of always zooming toward (0,0).
+      const mid = pinchCenter(e);
+      pinchAnchor = {
+        screenX: mid.x,
+        screenY: mid.y,
+        mapX: (mid.x - view.panX) / view.zoom,
+        mapY: (mid.y - view.panY) / view.zoom,
+      };
       lastSingle = null;
     }
   }, { passive: true });
@@ -6817,11 +6837,16 @@ function applyMobileLayout() {
       view.panY += dy;
       lastSingle = { x: t.clientX, y: t.clientY };
       render();
-    } else if (e.touches.length === 2 && pinchDist > 0) {
+    } else if (e.touches.length === 2 && pinchDist > 0 && pinchAnchor) {
       const d = dist(e.touches[0], e.touches[1]);
       const factor = d / pinchDist;
       const minZoom = Math.min(canvas.width / MAP_W, canvas.height / MAP_H) * 0.6;
-      view.zoom = Math.max(minZoom, Math.min(10, pinchZoom * factor));
+      const newZoom = Math.max(minZoom, Math.min(10, pinchZoom * factor));
+      view.zoom = newZoom;
+      // Keep the anchor map-point fixed under the (possibly shifted) midpoint.
+      const mid = pinchCenter(e);
+      view.panX = mid.x - pinchAnchor.mapX * newZoom;
+      view.panY = mid.y - pinchAnchor.mapY * newZoom;
       didDrag = true;
       render();
     }
@@ -6842,7 +6867,7 @@ function applyMobileLayout() {
         canvas.dispatchEvent(click);
       }
     }
-    if (e.touches.length === 0) { lastSingle = null; pinchDist = 0; }
+    if (e.touches.length === 0) { lastSingle = null; pinchDist = 0; pinchAnchor = null; }
     touchStart = null;
   });
 })();
