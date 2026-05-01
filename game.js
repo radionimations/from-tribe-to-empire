@@ -4990,6 +4990,7 @@ function runConsoleCommand(line) {
     consoleEcho("  year                       print current year", "info");
     consoleEcho("  list                       list all alive civs", "info");
     consoleEcho("  showtree                   family tree of every civ ever", "info");
+    consoleEcho("  debug                      enter observer/debug mode (unlocks 20x speed)", "info");
     return;
   }
 
@@ -5000,6 +5001,13 @@ function runConsoleCommand(line) {
 
   if (cmd === "showtree") {
     showCivFamilyTree();
+    return;
+  }
+
+  if (cmd === "debug") {
+    if (state.debug) { consoleEcho("already in debug mode", "err"); return; }
+    enterDebugMode();
+    consoleEcho("debug mode enabled - 20x speed slot unlocked", "ok");
     return;
   }
 
