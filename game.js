@@ -1768,6 +1768,11 @@ function fireEvent(ev) {
   if (ev.type === "rename") {
     const civ = state.civs.find(c => c.alive && c.name === ev.from);
     if (civ) {
+      // Track rename history so commands like `kill Polans` still find the
+      // civ even after it's been renamed to Duchy of Poland / Kingdom of
+      // Poland / etc. - all the previous names point to the same civ.
+      if (!civ.previousNames) civ.previousNames = [];
+      civ.previousNames.push(civ.name);
       civ.name = ev.to;
       if (ev.color) civ.color = ev.color;
       civ._flagColorApplied = false;   // new name -> new flag -> re-derive avg color
@@ -2206,6 +2211,10 @@ function fireEvent(ev) {
   if (ev.replaces) {
     const old = state.civs.find(c => c.alive && c.name === ev.replaces);
     if (old) {
+      // Track previous names so commands like `kill Polans` still find this
+      // civ after Polans has been renamed to Duchy of Poland.
+      if (!old.previousNames) old.previousNames = [];
+      old.previousNames.push(old.name);
       old.name = ev.civ.name;
       if (ev.civ.color) old.color = ev.civ.color;
       log("event", ev.message);
@@ -4852,17 +4861,21 @@ function toggleConsole() {
 })();
 
 // Resolve a civ by name (case-insensitive, allows partial matches if unique).
+// Also matches previous names from rename history, so `kill Polans` still
+// works after Polans has been renamed to Duchy of Poland / Kingdom of Poland.
 function consoleFindCiv(query) {
   if (!query) return null;
   const q = query.trim().toLowerCase();
-  // Exact (case-insensitive) match first.
-  let exact = state.civs.filter(c => c.alive && c.name.toLowerCase() === q);
+  function namesOf(c) {
+    return [c.name, ...(c.previousNames || [])].map(n => n.toLowerCase());
+  }
+  // Exact (case-insensitive) match first - on current OR previous names.
+  let exact = state.civs.filter(c => c.alive && namesOf(c).includes(q));
   if (exact.length === 1) return exact[0];
-  // Prefix / substring match if exactly one hit.
-  const partial = state.civs.filter(c => c.alive && c.name.toLowerCase().includes(q));
+  // Substring match if exactly one hit.
+  const partial = state.civs.filter(c => c.alive && namesOf(c).some(n => n.includes(q)));
   if (partial.length === 1) return partial[0];
   if (partial.length === 0) return null;
-  // Multiple matches - tell the caller (returns array).
   return partial;
 }
 
