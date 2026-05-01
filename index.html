@@ -615,9 +615,19 @@
   }
   #tree-modal .tree-scroll {
     flex: 1;
-    overflow: auto;
-    padding: 32px;
+    overflow: hidden;          /* manual pan/zoom, not native scrolling */
+    position: relative;
     background: radial-gradient(circle at 50% 0%, #1a1208 0%, #0a0604 100%);
+    cursor: grab;
+    touch-action: none;        /* swallow native gestures */
+  }
+  #tree-modal .tree-scroll.dragging { cursor: grabbing; }
+  #tree-modal .tree-canvas {
+    position: absolute;
+    top: 0; left: 0;
+    transform-origin: 0 0;
+    padding: 32px;
+    will-change: transform;
   }
   /* Classic CSS family-tree pattern. Each ul is a level of children. Each
      li has top + bottom connector lines drawn via ::before / ::after that

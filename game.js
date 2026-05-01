@@ -5350,12 +5350,124 @@ function showCivFamilyTree() {
     return li;
   }
   scroll.innerHTML = "";
+  // The transformable canvas inside .tree-scroll. We move + scale this
+  // instead of relying on the browser's native scrollbars, so pan/zoom
+  // work the same way on desktop (mouse) and mobile (touch).
+  const canvasDiv = document.createElement("div");
+  canvasDiv.className = "tree-canvas";
   const ul = document.createElement("ul");
   ul.className = "tree-root-list";
   for (const root of roots) ul.appendChild(renderNode(root));
-  scroll.appendChild(ul);
+  canvasDiv.appendChild(ul);
+  scroll.appendChild(canvasDiv);
   modal.classList.add("open");
+  // Reset view: center on the first root.
+  state._treeView = { panX: 32, panY: 32, zoom: 1 };
+  applyTreeTransform();
 }
+
+function applyTreeTransform() {
+  const canvasDiv = document.querySelector("#tree-modal .tree-canvas");
+  if (!canvasDiv || !state._treeView) return;
+  const { panX, panY, zoom } = state._treeView;
+  canvasDiv.style.transform = "translate(" + panX + "px, " + panY + "px) scale(" + zoom + ")";
+}
+
+(function wireTreePanZoom() {
+  const scroll = document.getElementById("tree-scroll");
+  if (!scroll) return;
+  function tv() { return state._treeView || (state._treeView = { panX: 0, panY: 0, zoom: 1 }); }
+
+  // ---- mouse drag pan ----
+  let dragging = false, dragStart = null;
+  scroll.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    dragging = true;
+    dragStart = { x: e.clientX, y: e.clientY, panX: tv().panX, panY: tv().panY };
+    scroll.classList.add("dragging");
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const v = tv();
+    v.panX = dragStart.panX + (e.clientX - dragStart.x);
+    v.panY = dragStart.panY + (e.clientY - dragStart.y);
+    applyTreeTransform();
+  });
+  document.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    scroll.classList.remove("dragging");
+  });
+
+  // ---- mouse wheel zoom (centered on cursor) ----
+  scroll.addEventListener("wheel", (e) => {
+    if (!document.getElementById("tree-modal").classList.contains("open")) return;
+    e.preventDefault();
+    const v = tv();
+    const rect = scroll.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    const newZoom = Math.max(0.15, Math.min(4, v.zoom * factor));
+    // Keep the point under the cursor stationary.
+    v.panX = cx - (cx - v.panX) * (newZoom / v.zoom);
+    v.panY = cy - (cy - v.panY) * (newZoom / v.zoom);
+    v.zoom = newZoom;
+    applyTreeTransform();
+  }, { passive: false });
+
+  // ---- touch: 1 finger pan, 2 finger pinch zoom ----
+  let lastTouch = null;
+  let pinchStart = null;
+  function dist(a, b) { const dx = a.clientX - b.clientX, dy = a.clientY - b.clientY; return Math.sqrt(dx*dx + dy*dy); }
+  function midPoint(e) {
+    const rect = scroll.getBoundingClientRect();
+    const t0 = e.touches[0], t1 = e.touches[1];
+    return { x: ((t0.clientX + t1.clientX) / 2) - rect.left, y: ((t0.clientY + t1.clientY) / 2) - rect.top };
+  }
+  scroll.addEventListener("touchstart", (e) => {
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      lastTouch = { x: t.clientX, y: t.clientY };
+      pinchStart = null;
+    } else if (e.touches.length === 2) {
+      const v = tv();
+      const mid = midPoint(e);
+      pinchStart = {
+        d: dist(e.touches[0], e.touches[1]),
+        zoom: v.zoom,
+        midX: mid.x, midY: mid.y,
+        anchorX: (mid.x - v.panX) / v.zoom,
+        anchorY: (mid.y - v.panY) / v.zoom,
+      };
+      lastTouch = null;
+    }
+  }, { passive: true });
+  scroll.addEventListener("touchmove", (e) => {
+    if (e.touches.length === 1 && lastTouch) {
+      const t = e.touches[0];
+      const v = tv();
+      v.panX += t.clientX - lastTouch.x;
+      v.panY += t.clientY - lastTouch.y;
+      lastTouch = { x: t.clientX, y: t.clientY };
+      applyTreeTransform();
+    } else if (e.touches.length === 2 && pinchStart) {
+      const v = tv();
+      const d = dist(e.touches[0], e.touches[1]);
+      const newZoom = Math.max(0.15, Math.min(4, pinchStart.zoom * (d / pinchStart.d)));
+      const mid = midPoint(e);
+      v.zoom = newZoom;
+      v.panX = mid.x - pinchStart.anchorX * newZoom;
+      v.panY = mid.y - pinchStart.anchorY * newZoom;
+      applyTreeTransform();
+    }
+    e.preventDefault();
+  }, { passive: false });
+  scroll.addEventListener("touchend", (e) => {
+    if (e.touches.length === 0) { lastTouch = null; pinchStart = null; }
+  });
+})();
 
 (function wireTreeModal() {
   const close = document.getElementById("tree-close");
