@@ -855,6 +855,52 @@ const HISTORICAL_EVENTS = [
     message: "Hay-Herbert Treaty - the USA and Canada lock in permanent peace" },
 
   // ============================================================
+  // HISTORICAL PEACE TREATIES - end specific wars between specific civs.
+  // peace_treaty sets relations from -100 to +30, clears war-focus, and
+  // logs the treaty to the chronicle. It does NOT transfer territory -
+  // any cessions are handled by separate claim/secede events. Civs that
+  // no longer exist are silently skipped.
+  // ============================================================
+  { year: 1648, type: "peace_treaty", a: "Holy Roman Empire", b: "Sweden",
+    message: "Peace of Westphalia - the Thirty Years' War ends; sovereign-state diplomacy is born" },
+  { year: 1659, type: "peace_treaty", a: "Kingdom of Spain", b: "Kingdom of France",
+    message: "Treaty of the Pyrenees - France and Spain end their long border war" },
+  { year: 1713, type: "peace_treaty", a: "Holy Roman Empire", b: "Kingdom of France",
+    message: "Treaty of Utrecht - the War of Spanish Succession is settled" },
+  { year: 1721, type: "peace_treaty", a: "Sweden", b: "Russian Empire",
+    message: "Treaty of Nystad - the Great Northern War ends; Russia replaces Sweden as the Baltic power" },
+  { year: 1763, type: "peace_treaty", a: "Kingdom of Prussia", b: "Holy Roman Empire",
+    message: "Treaty of Hubertusburg - the Seven Years' War ends; Prussia keeps Silesia" },
+  { year: 1783, type: "peace_treaty", a: "USA", b: "United Kingdom",
+    message: "Treaty of Paris - Britain recognizes American independence" },
+  { year: 1815, type: "peace_treaty", a: "Kingdom of France", b: "United Kingdom",
+    message: "Congress of Vienna - the Napoleonic Wars end; Europe redrawn" },
+  { year: 1815, type: "peace_treaty", a: "Kingdom of France", b: "Russian Empire",
+    message: "Congress of Vienna - France and Russia formally make peace" },
+  { year: 1856, type: "peace_treaty", a: "Russian Empire", b: "Ottomans",
+    message: "Treaty of Paris - the Crimean War ends" },
+  { year: 1871, type: "peace_treaty", a: "Kingdom of Prussia", b: "Kingdom of France",
+    message: "Treaty of Frankfurt - the Franco-Prussian War ends; Alsace-Lorraine ceded to Germany" },
+  { year: 1898, type: "peace_treaty", a: "USA", b: "Kingdom of Spain",
+    message: "Treaty of Paris - the Spanish-American War ends; Spain cedes its remaining colonies" },
+  { year: 1905, type: "peace_treaty", a: "Yamato", b: "Russian Empire",
+    message: "Treaty of Portsmouth - the Russo-Japanese War ends; Japan emerges as a great power" },
+  { year: 1918, type: "peace_treaty", a: "Soviet Union", b: "Germany",
+    message: "Treaty of Brest-Litovsk - Russia exits World War I" },
+  { year: 1919, type: "peace_treaty", a: "Germany", b: "France",
+    message: "Treaty of Versailles - World War I formally ends; punitive terms imposed on Germany" },
+  { year: 1919, type: "peace_treaty", a: "Germany", b: "United Kingdom",
+    message: "Treaty of Versailles - Britain signs the post-war settlement" },
+  { year: 1953, type: "peace_treaty", a: "People's Republic of China", b: "Korea",
+    message: "Korean Armistice - the Korean War ends in stalemate at the 38th parallel" },
+  { year: 1973, type: "peace_treaty", a: "USA", b: "People's Republic of China",
+    message: "Paris Peace Accords - the United States withdraws from Vietnam" },
+  { year: 1979, type: "peace_treaty", a: "Modern Egypt", b: "Israel",
+    message: "Camp David Accords - Egypt and Israel sign a historic peace treaty" },
+  { year: 1989, type: "peace_treaty", a: "Soviet Union", b: "Saudi Arabia",
+    message: "Geneva Accords - the Soviets withdraw from Afghanistan" },
+
+  // ============================================================
   // ENDINGS for empires/tribes that historically collapsed but were
   // previously left lingering on the map. Fixes "Phoenicia at year 2024"
   // weirdness.
@@ -1930,6 +1976,33 @@ function fireEvent(ev) {
       showWarPopup(a, b);
     }
     log("war", ev.message);
+    return;
+  }
+
+  // PEACE_TREATY: end a war between two specific civs. Sets relations to a
+  // moderate positive value (+30) so the war state clears (rel <= -50 was
+  // the "at war" gate) without making them allies. Also clears any war
+  // focus targeting each other and drops the player's playerWars flag if
+  // either side is the player. Used for historical treaties (Westphalia,
+  // Versailles, Camp David, etc).
+  if (ev.type === "peace_treaty") {
+    const a = state.civs.find(c => c.alive && c.name === ev.a);
+    const b = state.civs.find(c => c.alive && c.name === ev.b);
+    if (!a || !b) {
+      log("event", ev.message + " - one of the signatories is no longer extant.");
+      return;
+    }
+    a.relations[b.id] = 30;
+    b.relations[a.id] = 30;
+    if (state.warFocus) {
+      if (state.warFocus[a.id] === b.id) delete state.warFocus[a.id];
+      if (state.warFocus[b.id] === a.id) delete state.warFocus[b.id];
+    }
+    if (state.playerWars) {
+      state.playerWars.delete(a.id);
+      state.playerWars.delete(b.id);
+    }
+    log("peace", ev.message);
     return;
   }
 
