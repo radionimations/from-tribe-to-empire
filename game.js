@@ -6636,7 +6636,105 @@ function saveCustomization() {
 })();
 
 // =================== STARTUP ===================
+// =================== MOBILE / TOUCH SUPPORT ===================
+function isMobileDevice() {
+  if (/iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent)) return true;
+  // Treat narrow windows as mobile too (handy for desktop testing).
+  if (window.innerWidth < 768) return true;
+  // iPads on iOS 13+ report as desktop Safari but expose touch points.
+  if (navigator.maxTouchPoints && navigator.maxTouchPoints > 1 && window.innerWidth < 1100) return true;
+  return false;
+}
+
+function applyMobileLayout() {
+  const mobile = isMobileDevice();
+  document.body.classList.toggle("mobile", mobile);
+  return mobile;
+}
+
+(function wireMobileToggle() {
+  const toggle = document.getElementById("mobile-sidebar-toggle");
+  if (!toggle) return;
+  toggle.addEventListener("click", () => {
+    const sb = document.getElementById("sidebar");
+    if (!sb) return;
+    sb.classList.toggle("collapsed");
+    toggle.textContent = sb.classList.contains("collapsed") ? "▲" : "▼";
+  });
+})();
+
+// Touch input on the map canvas: 1 finger drag = pan, 2 fingers = pinch zoom,
+// short tap = treated as a mouse click (existing click handler does the work).
+(function wireMobileTouch() {
+  const canvas = document.getElementById("map");
+  if (!canvas) return;
+  let lastSingle = null;     // {x, y} - last single-touch position for panning
+  let pinchDist = 0;         // initial finger distance for pinch
+  let pinchZoom = 1;         // initial view.zoom at pinch start
+  let touchStart = null;     // {x, y, t} - to distinguish tap from drag
+  let didDrag = false;
+
+  function dist(a, b) {
+    const dx = a.clientX - b.clientX, dy = a.clientY - b.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  canvas.addEventListener("touchstart", (e) => {
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      lastSingle = { x: t.clientX, y: t.clientY };
+      touchStart = { x: t.clientX, y: t.clientY, t: Date.now() };
+      didDrag = false;
+    } else if (e.touches.length === 2) {
+      pinchDist = dist(e.touches[0], e.touches[1]);
+      pinchZoom = view.zoom;
+      lastSingle = null;
+    }
+  }, { passive: true });
+
+  canvas.addEventListener("touchmove", (e) => {
+    if (e.touches.length === 1 && lastSingle) {
+      const t = e.touches[0];
+      const dx = t.clientX - lastSingle.x;
+      const dy = t.clientY - lastSingle.y;
+      if (Math.abs(dx) + Math.abs(dy) > 5) didDrag = true;
+      view.panX += dx;
+      view.panY += dy;
+      lastSingle = { x: t.clientX, y: t.clientY };
+      render();
+    } else if (e.touches.length === 2 && pinchDist > 0) {
+      const d = dist(e.touches[0], e.touches[1]);
+      const factor = d / pinchDist;
+      const minZoom = Math.min(canvas.width / MAP_W, canvas.height / MAP_H) * 0.6;
+      view.zoom = Math.max(minZoom, Math.min(10, pinchZoom * factor));
+      didDrag = true;
+      render();
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  canvas.addEventListener("touchend", (e) => {
+    // If single quick tap (no drag, < 250ms), simulate a click.
+    if (touchStart && !didDrag && e.changedTouches.length === 1) {
+      const dt = Date.now() - touchStart.t;
+      if (dt < 250) {
+        const t = e.changedTouches[0];
+        const click = new MouseEvent("click", {
+          bubbles: true, cancelable: true,
+          clientX: t.clientX, clientY: t.clientY,
+          button: 0,
+        });
+        canvas.dispatchEvent(click);
+      }
+    }
+    if (e.touches.length === 0) { lastSingle = null; pinchDist = 0; }
+    touchStart = null;
+  });
+})();
+
 function init() {
+  applyMobileLayout();
+  window.addEventListener("resize", applyMobileLayout);
   setupCanvas();
   // Initialize an empty ownership grid so accessors don't crash before the
   // HOI4 province data loads. spawnHistoricalCivs runs inside loadProvinceGrid

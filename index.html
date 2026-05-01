@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
 <title>From Tribe to Empire</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -973,6 +976,75 @@
   ::-webkit-scrollbar-track { background: #1a1410; }
   ::-webkit-scrollbar-thumb { background: #4a3520; border-radius: 4px; }
   ::-webkit-scrollbar-thumb:hover { background: #6b4f2c; }
+
+  /* ============================================================
+     MOBILE / iPad layout. Body gets the .mobile class on phones and
+     iPads. Map fills the viewport; the sidebar collapses into a bottom
+     drawer that slides up on tap.
+     ============================================================ */
+  body.mobile #game { flex-direction: column; }
+  body.mobile #map-wrap {
+    flex: 1;
+    min-height: 0;
+    height: 60vh;
+  }
+  body.mobile #sidebar {
+    width: 100%;
+    height: 40vh;
+    border-left: none;
+    border-top: 2px solid #6b4f2c;
+    padding: 10px 14px;
+  }
+  body.mobile #sidebar.collapsed {
+    height: 36px;
+    overflow: hidden;
+    padding: 6px 14px;
+  }
+  body.mobile h1 { font-size: 16px; margin-bottom: 2px; }
+  body.mobile .subtitle { font-size: 9px; margin-bottom: 6px; }
+  body.mobile .year-display { font-size: 18px; }
+  body.mobile button { padding: 12px 14px; font-size: 14px; }
+  body.mobile .speed-btn { padding: 8px 6px; font-size: 13px; }
+  body.mobile .action-btns button { padding: 12px 8px; font-size: 12px; }
+  /* Mobile sidebar toggle - small handle to expand/collapse the drawer. */
+  body.mobile #mobile-sidebar-toggle {
+    position: absolute;
+    top: -22px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 80px;
+    height: 22px;
+    background: linear-gradient(180deg, #2a1a10, #1a1208);
+    border: 2px solid #6b4f2c;
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    color: #d4a657;
+    font-size: 14px;
+    text-align: center;
+    cursor: pointer;
+    user-select: none;
+  }
+  body:not(.mobile) #mobile-sidebar-toggle { display: none; }
+  /* Country panel - fullscreen on mobile. */
+  body.mobile #country-panel {
+    width: 100%;
+    height: 100%;
+    left: 0; top: 0;
+    border-radius: 0;
+    transform: none;
+  }
+  /* Customize modal - more compact on mobile. */
+  body.mobile #customize-modal .cm-card {
+    width: 92vw;
+    max-height: 90vh;
+  }
+  /* Console panel + tree modal - mobile-sized. */
+  body.mobile #console-panel { width: 92vw; max-width: 480px; }
+  body.mobile #tree-modal .tree-card { width: 78px; }
+  /* Larger tap targets on the speed bar + action buttons. */
+  body.mobile .speed-bar { gap: 4px; }
+  body.mobile #player-flag-btn { width: 50px; height: 34px; }
+  body.mobile #version-tag { font-size: 13px; bottom: 12px; }
 </style>
 </head>
 <body>
@@ -1072,6 +1144,7 @@
     </div>
   </div>
   <div id="sidebar">
+    <div id="mobile-sidebar-toggle" title="Tap to expand/collapse">▲</div>
     <h1>FROM TRIBE TO EMPIRE</h1>
     <div class="subtitle">1000 BC - ?</div>
     <div class="year-display" id="year-display">1000 BC</div>
