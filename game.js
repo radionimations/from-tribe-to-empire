@@ -780,6 +780,8 @@ const HISTORICAL_EVENTS = [
   // called "Kingdom of France" all the way through. spawnIfMissing keeps
   // the chain alive even if the kingdom died in some odd playthrough.
   { year: 1871, type: "rename", from: "Kingdom of France", to: "France", color: "#1a4ba8", spawnIfMissing: { lat: 48.86, lon: 2.35 }, message: "French Third Republic - Napoleon III deposed, the Republic returns" },
+  // Modern France gets its full HOI4 1936 metropolitan territory.
+  { year: 1871, type: "claim", civ: "France", byOwner: "FRA", message: "France consolidates its modern metropolitan territory" },
   { year: 1894, type: "war", a: "Yamato", b: "Qing China", region: { lat: [30, 42], lon: [115, 125] }, reinforce: 8, message: "First Sino-Japanese War" },
   { year: 1898, type: "war", a: "USA", b: "Kingdom of Spain", region: { lat: [18, 24], lon: [-86, -65] }, reinforce: 6, message: "Spanish-American War" },
 
@@ -873,6 +875,8 @@ const HISTORICAL_EVENTS = [
   // 1871: Germans (the proto-tribe) coalesce into modern Germany - if Germany
   // hasn't been spawned yet we use the existing 1871-style entry.
   { year: 1871, type: "rename", from: "Germans", to: "Germany", color: "#202020", spawnIfMissing: { lat: 52.52, lon: 13.40 }, message: "Bismarck unifies the German states into the German Empire" },
+  // Give the new German Empire its full HOI4 1936 territory.
+  { year: 1871, type: "claim", civ: "Germany", byOwner: "GER", message: "Germany consolidates its modern territory" },
   // 1917: Finns subsume into the new state of Finland.
   { year: 1917, type: "absorb", absorber: "Finland", target: "Finns", message: "Finnish proto-tribe gives way to the modern Republic of Finland" },
   // 1453: After the Hagia Sophia falls Goths persist as a name only - rename
@@ -1211,6 +1215,12 @@ const HISTORICAL_EVENTS = [
   { year:  843, type: "rename", from: "Carolingian Empire", to: "Kingdom of France", color: "#4a6ae8", message: "Treaty of Verdun: Carolingian Empire splits - West Francia → Kingdom of France" },
   // 962: Otto I crowned - Holy Roman Empire forms in the East Frankish lands.
   { year:  962, civ: { name: "Holy Roman Empire", lat: 50, lon: 11, color: "#e8b020" }, message: "Otto I crowned - Holy Roman Empire begins" },
+  // The HRE at its founding spans modern Germany, Austria, Czech, Slovenia,
+  // northern Italy, Switzerland and the Low Countries. We use HOI4 1936
+  // tags for everything inside that medieval imperial frontier.
+  { year:  962, type: "claim", civ: "Holy Roman Empire",
+    byOwner: ["GER", "AUS", "CZE", "SWI", "LUX", "HOL", "BEL", "DEN"],
+    message: "Otto I's Holy Roman Empire spans the German, Italian and Burgundian kingdoms" },
   // --- Scandinavian chain ---
   // 793: Viking age begins - Norse become a unified raiding power.
   { year:  793, type: "rename", from: "Norse", to: "Vikings", color: "#1a3a6a", spawnIfMissing: { lat: 60, lon: 16 }, message: "Lindisfarne raid - the Viking Age begins" },
@@ -1318,6 +1328,9 @@ const HISTORICAL_EVENTS = [
     message: "Personal union with Britain - Electorate of Hannover gains prominence" },
   // 1701: Brandenburg becomes Kingdom of Prussia (rename, not new civ).
   { year: 1701, type: "rename", from: "Brandenburg", to: "Kingdom of Prussia", color: "#202020", spawnIfMissing: { lat: 52.5, lon: 13.4 }, message: "Frederick I crowned in Königsberg - Brandenburg becomes the Kingdom of Prussia" },
+  // Give Prussia its full HOI4 1936 PRE territory (includes East Prussia
+  // / Königsberg / Pomerania / Silesia etc).
+  { year: 1701, type: "claim", civ: "Kingdom of Prussia", byOwner: "PRE", message: "Prussia consolidates its kingdom (Brandenburg, Pomerania, East Prussia incl. Königsberg)" },
   // 1806: When Napoleon dissolves the HRE, the petty states reorganize. We
   // simulate this by absorbing many of them into the strongest German power
   // available at that moment (Prussia for the north, France for the west,
