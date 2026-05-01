@@ -1048,13 +1048,24 @@
     user-select: none;
   }
   body:not(.mobile) #mobile-sidebar-toggle { display: none; }
-  /* Country panel - fullscreen on mobile. */
+  /* Country panel - full-screen overlay on mobile (sits above the flex
+     layout instead of squeezing into it). */
   body.mobile #country-panel {
-    width: 100%;
-    height: 100%;
-    left: 0; top: 0;
+    position: fixed !important;
+    top: 0; left: 0; right: 0; bottom: 0;
+    width: 100% !important;
+    height: 100dvh !important;
     border-radius: 0;
+    border-right: none;
     transform: none;
+    z-index: 220;
+    padding: 14px 16px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  body.mobile #country-panel.hidden {
+    display: none;
+    width: 0 !important;
   }
   /* Customize modal - more compact on mobile. */
   body.mobile #customize-modal .cm-card {
