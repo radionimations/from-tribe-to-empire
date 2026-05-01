@@ -263,11 +263,24 @@ const HISTORICAL_EVENTS = [
   { year:   80, type: "claim", civ: "Rome", region: { lat: [50, 55], lon: [-6, 2] },
     requireDeadCivs: ["Celts"],
     message: "Roman Britannia established" },
-  // Trajan's empire at its greatest extent: only fires once the previous
-  // chunks are sealed. We don't gate it on specific civ deaths since by
-  // 117 most rivals are already gone; we just leave it as the final
-  // territorial roundup.
-  { year:  117, type: "claim", civ: "Rome", region: { lat: [22, 55], lon: [-9, 44] }, message: "Trajan reaches the empire's greatest extent" },
+  // Trajan's empire at its greatest extent (117 AD).
+  // We claim by HOI4 modern country tag so the borders snap to provinces
+  // instead of a giant rectangle that would steal Germania (east of the
+  // Rhine), Sarmatia, Persia, deep Sahara, and Scotland - none of which
+  // were ever Roman. The region acts as a constraint: Rhine/Danube line
+  // in the north (lat 51 caps Hungary/Austria south of the Danube and
+  // trims the Netherlands at the Rhine), Mesopotamia in the east, Aswan
+  // in the south. Britain is already established by the year 80 claim.
+  { year:  117, type: "claim", civ: "Rome",
+    byOwner: [
+      "POR","SPR","FRA","BEL","LUX","HOL","SWI",
+      "ITA",
+      "GRE","ALB","BUL","YUG","ROM","HUN","AUS",
+      "TUR","SYR","PAL","JOR","IRQ",
+      "EGY","LIB","TUN","ALG","MOR"
+    ],
+    region: { lat: [22, 51], lon: [-10, 48] },
+    message: "Trajan reaches the empire's greatest extent" },
   { year:  330, civ: { name: "Byzantium", lat: 41, lon: 28.9, color: "#a050c4" }, message: "Constantine founds Constantinople - the New Rome" },
   // Reinforce Byzantium with a starting army so they can defend Constantinople.
   { year:  330, type: "reinforce", civ: "Byzantium", count: 6, message: "Imperial garrison stationed at Constantinople" },
