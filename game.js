@@ -4909,6 +4909,14 @@ function toggleConsole() {
   }
 }
 
+(function wireConsoleCloseBtn() {
+  const btn = document.getElementById("console-close-btn");
+  if (btn) btn.addEventListener("click", () => {
+    const panel = document.getElementById("console-panel");
+    if (panel) panel.classList.remove("open");
+  });
+})();
+
 // Drag-to-move on the console header. Once the user drags, the panel sticks
 // to its dropped position (the centering transform stops applying).
 (function wireConsoleDrag() {
