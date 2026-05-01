@@ -4683,11 +4683,13 @@ canvas.addEventListener("click", (e) => {
   }
   state.selectedProvince = pid;
   state.selectedState = (pid > 0 && provinceToState) ? provinceToState[pid] : 0;
-  // Open the country panel only if a civ owns this tile.
+  // Open the country panel only if a civ owns this tile - and never auto-
+  // open it for the player's OWN tiles (use the top-left flag button if you
+  // want to view your own civ).
   const owner = state.ownership[row][col];
   if (owner >= 0) {
     const civ = state.civs[civIndexById(owner)];
-    if (civ && civ.alive) showCountryPanel(civ);
+    if (civ && civ.alive && !civ.isPlayer) showCountryPanel(civ);
     else hideCountryPanel();
   } else {
     hideCountryPanel();
@@ -6159,12 +6161,6 @@ function showCountryPanel(civ) {
   }
   const panel = document.getElementById("country-panel");
   panel.classList.remove("hidden");
-  // On mobile, opening a country panel takes over the screen, so auto-pause
-  // the game and remember the speed so we can resume on close.
-  if (document.body.classList.contains("mobile") && state.phase === "playing" && state.speed > 0) {
-    state._mobileResumeSpeed = state.speed;
-    setSpeed(0);
-  }
 
   // Flag: prefer HOI4 PNG (via tag), else Wikipedia URL, else procedural.
   const flagCanvas = document.getElementById("country-flag");
@@ -6331,12 +6327,6 @@ function showCountryPanel(civ) {
 
 function hideCountryPanel() {
   document.getElementById("country-panel").classList.add("hidden");
-  // Resume the game on mobile when the panel closes.
-  if (document.body.classList.contains("mobile") && state._mobileResumeSpeed) {
-    const resume = state._mobileResumeSpeed;
-    state._mobileResumeSpeed = 0;
-    setSpeed(resume);
-  }
 }
 
 // Populate the "PROVINCE" section of the panel from provinceInfo (definition.csv).
