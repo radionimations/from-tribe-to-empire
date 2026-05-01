@@ -615,16 +615,24 @@ const HISTORICAL_EVENTS = [
   // territory + Eastern Front gains) goes to the USSR.
   { year: 1945, type: "absorb", absorber: "Soviet Union", target: "Nazi Germany", message: "Berlin falls - Nazi Germany is dismantled, Soviets take what remains" },
   // --- Post-WWII division of Germany ---
-  // 1949: West Germany (Bundesrepublik) breaks free from the Soviet zone -
-  // it takes the Allied (American/British/French) occupation regions.
+  // 1949: West Germany (Bundesrepublik) breaks free from the Soviet zone.
+  // We claim by HOI4 1936 GER tag (constrained to the German national area)
+  // so every German tile that the USSR holds transfers, including eastern
+  // Bavaria - otherwise lat/lon bboxes leave a strip of Russian-owned tiles
+  // inside Germany that survive into 1991 and look like "Russia took East
+  // Germany" after reunification.
   { year: 1949, type: "secede", target: "Soviet Union", civ: "West Germany",
     spawn: { name: "West Germany", lat: 50.11, lon: 8.68, color: "#202020" },
-    region: { lat: [47, 55], lon: [5, 11] },
+    byOwner: "GER",
+    region: { lat: [47, 55.5], lon: [5, 16] },
     message: "West Germany (Bundesrepublik Deutschland) is founded in the Allied zones" },
-  // 1949: East Germany (DDR) - Soviet zone formally splits off as a satellite.
-  { year: 1949, type: "secede", target: "Soviet Union", civ: "East Germany",
+  // 1949: East Germany (DDR) - the Soviet zone formally splits off, this
+  // time SECEDING FROM WEST GERMANY (not the USSR), since West Germany now
+  // holds all of 1936-Germany's tiles. This guarantees the eastern half
+  // returns cleanly when WG re-absorbs EG in 1990.
+  { year: 1949, type: "secede", target: "West Germany", civ: "East Germany",
     spawn: { name: "East Germany", lat: 52.52, lon: 13.40, color: "#a02828" },
-    region: { lat: [50.5, 54.5], lon: [11, 15] },
+    region: { lat: [50.5, 54.7], lon: [10.5, 15] },
     message: "East Germany (DDR) declared - the Soviet zone becomes a separate state" },
   // 1989-1990: Berlin Wall falls; East Germany absorbed into West Germany.
   { year: 1989, type: "wartime", on: false, message: "Berlin Wall falls - the Cold War winds down" },
