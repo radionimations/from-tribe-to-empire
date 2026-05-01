@@ -741,6 +741,28 @@ const HISTORICAL_EVENTS = [
   { year: 1991, type: "alliance", a: "Russia", b: "Republic of Latvia",    message: "Russia and Latvia sign a non-aggression pact" },
   { year: 1991, type: "alliance", a: "Russia", b: "Republic of Estonia",   message: "Russia and Estonia sign a non-aggression pact" },
 
+  // 1991: NATO consolidates after the Soviet collapse. Listed members are
+  // every civ in the game that was a NATO member by ~2004 - including the
+  // Cold War founders (USA, UK, France, Italy, Belgium, Netherlands,
+  // Denmark, Norway, Portugal, Canada), Cold War additions (Greece,
+  // Turkey, Germany, Spain), and the post-Soviet Eastern European wave
+  // (Poland, Czech, Hungary, Baltic states, Romania, Bulgaria - skipped
+  // here if the corresponding civ doesn't exist in our timeline). The
+  // form_faction handler silently skips members that aren't alive, so
+  // missing civs don't break the event.
+  { year: 1991, type: "form_faction", name: "NATO", color: "#1a4ba8",
+    members: [
+      "USA", "Canada",
+      "United Kingdom", "France", "Italy", "Germany",
+      "Belgium", "Netherlands", "Luxembourg",
+      "Denmark", "Norway",
+      "Kingdom of Portugal", "Francoist Spain",
+      "Greece", "Turkey",
+      "Republic of Poland",
+      "Republic of Lithuania", "Republic of Latvia", "Republic of Estonia",
+    ],
+    message: "NATO consolidates after the Soviet collapse - members sign a mutual non-aggression pact" },
+
   // ============================================================
   // HISTORICAL WARS - drawn from Wikipedia's "List of wars" series.
   // Each war drops relations between the named civs to -100, makes both
@@ -1421,9 +1443,24 @@ const state = {
   selectedProvince: 0, // HOI4 province ID picked by last click; 0 = none
   selectedState: 0,    // parent state of the selected province; 0 = none
   isWartime: false,    // true during world wars - unlocks aggressive AI
+  // Multi-civ alliances triggered by historical events (NATO, etc.). The
+  // player can't create these - they're event-driven only. Each entry is
+  // { name, color, memberIds: [civId, ...] }. Dead members are filtered
+  // at display time (we don't mutate the array on civ death).
+  factions: [],
   // "loading" while fetching, "ready" after success, "failed:reason" on error.
   provinceStatus: "loading",
 };
+
+// Returns the faction this civ belongs to, or null. Helper used by the
+// country panel + AI checks.
+function findFactionForCiv(civId) {
+  if (!state.factions || state.factions.length === 0) return null;
+  for (const f of state.factions) {
+    if (f.memberIds && f.memberIds.indexOf(civId) >= 0) return f;
+  }
+  return null;
+}
 
 function updateProvinceStatusOverlay() {
   const el = document.getElementById("province-status");
@@ -1905,6 +1942,36 @@ function fireEvent(ev) {
       a.relations[b.id] = 100;
       b.relations[a.id] = 100;
     }
+    log("peace", ev.message);
+    return;
+  }
+
+  // FORM_FACTION: create a multi-civ pact (NATO etc). Every pair of living
+  // members locks to +100 relations - same effect as a chain of alliance
+  // events, but tracked as a named bloc so the country panel can show
+  // "Faction: NATO" with the member list. Missing/dead members are
+  // skipped silently so the event still works if some civs never spawned.
+  if (ev.type === "form_faction") {
+    const memberCivs = (ev.members || [])
+      .map(name => state.civs.find(c => c.alive && c.name === name))
+      .filter(Boolean);
+    if (memberCivs.length < 2) {
+      log("event", ev.message + " - too few members alive to form the faction.");
+      return;
+    }
+    for (let i = 0; i < memberCivs.length; i++) {
+      for (let j = i + 1; j < memberCivs.length; j++) {
+        const a = memberCivs[i], b = memberCivs[j];
+        a.relations[b.id] = 100;
+        b.relations[a.id] = 100;
+      }
+    }
+    if (!state.factions) state.factions = [];
+    state.factions.push({
+      name: ev.name,
+      color: ev.color || "#5d8acf",
+      memberIds: memberCivs.map(c => c.id),
+    });
     log("peace", ev.message);
     return;
   }
@@ -6446,11 +6513,33 @@ function showCountryPanel(civ) {
         '<span class="rel-val rel-neg">' + Math.round(civ.relations[w.id] || 0) + '</span>' +
         '</div>').join("") +
     '</div>';
+  // Faction block: if this civ is in a faction, show every other living
+  // member as "AT FACTION WITH" - mirrors the AT WAR WITH layout but in
+  // friendly blue. Dead members are filtered out.
+  const faction = findFactionForCiv(civ.id);
+  let factionHtml = "";
+  if (faction) {
+    const allies = state.civs
+      .filter(c => c.alive && c.id !== civ.id && faction.memberIds.indexOf(c.id) >= 0)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (allies.length > 0) {
+      factionHtml =
+        '<div style="margin-bottom:6px;padding:6px 8px;border:1px solid ' + faction.color + ';border-radius:3px;background:rgba(20,40,80,0.4);">' +
+          '<div style="color:#9bc8ff;font-size:11px;letter-spacing:1.5px;font-weight:bold;margin-bottom:4px;">🤝 AT FACTION WITH (' + faction.name + ')</div>' +
+          allies.map(w => '<div class="rel-row" style="padding:2px 0;">' +
+            '<span class="rel-swatch" style="background:' + w.color + '"></span>' +
+            '<span class="rel-name" style="color:#cfe4ff;">' + w.name + '</span>' +
+            '<span class="rel-val rel-pos">+100</span>' +
+            '</div>').join("") +
+        '</div>';
+    }
+  }
   // Then show the broader top-8 relations. Skip civs already in the war
-  // block so they're not duplicated.
+  // or faction blocks so they're not duplicated.
   const warIds = new Set(wars.map(w => w.id));
+  const factionIds = faction ? new Set(faction.memberIds) : new Set();
   const others = state.civs
-    .filter(c => c.alive && c.id !== civ.id && !warIds.has(c.id))
+    .filter(c => c.alive && c.id !== civ.id && !warIds.has(c.id) && !factionIds.has(c.id))
     .map(c => ({ civ: c, rel: civ.relations[c.id] || 0 }))
     .sort((a, b) => Math.abs(b.rel) - Math.abs(a.rel))
     .slice(0, 8);
@@ -6462,7 +6551,7 @@ function showCountryPanel(civ) {
       '<span class="rel-val ' + cls + '">' + (rel >= 0 ? "+" : "") + Math.round(rel) + '</span>' +
       '</div>';
   }).join("");
-  relsEl.innerHTML = warHtml + otherHtml ||
+  relsEl.innerHTML = warHtml + factionHtml + otherHtml ||
     '<div style="color:#8a7a5c;font-style:italic;">No diplomatic contacts.</div>';
 }
 
