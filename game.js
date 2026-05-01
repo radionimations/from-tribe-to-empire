@@ -803,6 +803,13 @@ const HISTORICAL_EVENTS = [
   { year: 1991, type: "war", a: "USA", b: "Kingdom of Iraq", region: { lat: [28, 36], lon: [40, 50] }, reinforce: 14, message: "Gulf War - coalition vs. Iraq" },
   { year: 2003, type: "war", a: "USA", b: "Kingdom of Iraq", region: { lat: [28, 36], lon: [40, 50] }, reinforce: 14, message: "Iraq War" },
   { year: 2022, type: "war", a: "Russia", b: "Ukraine", region: { lat: [45, 53], lon: [22, 41] }, reinforce: 16, message: "Russian invasion of Ukraine" },
+  // 2080: Hay-Herbert Treaty (alt-history far-future). USA cedes Alaska to
+  // Canada and the two sign a permanent peace.
+  { year: 2080, type: "secede", target: "USA", civ: "Canada",
+    region: { lat: [51, 72], lon: [-180, -129] },
+    message: "Hay-Herbert Treaty - the United States cedes Alaska to Canada" },
+  { year: 2080, type: "alliance", a: "USA", b: "Canada",
+    message: "Hay-Herbert Treaty - the USA and Canada lock in permanent peace" },
 
   // ============================================================
   // ENDINGS for empires/tribes that historically collapsed but were
