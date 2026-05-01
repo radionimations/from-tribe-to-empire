@@ -1045,6 +1045,26 @@
   body.mobile .speed-bar { gap: 4px; }
   body.mobile #player-flag-btn { width: 50px; height: 34px; }
   body.mobile #version-tag { font-size: 13px; bottom: 12px; }
+  /* Mobile splash text: scale way down so the headline fits a phone screen
+     and the body paragraphs aren't clipped by the 60vh map area. */
+  body.mobile #splash h2 {
+    font-size: 24px;
+    letter-spacing: 3px;
+    margin-bottom: 8px;
+    padding: 0 12px;
+  }
+  body.mobile #splash p {
+    font-size: 12px;
+    margin: 3px 12px;
+    line-height: 1.35;
+  }
+  body.mobile #splash p[style] {
+    font-size: 11px !important;
+  }
+  body.mobile #splash .hint {
+    font-size: 13px;
+    margin-top: 14px;
+  }
 </style>
 </head>
 <body>

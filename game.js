@@ -6834,8 +6834,17 @@ function applyMobileLayout() {
 
 function init() {
   applyMobileLayout();
-  window.addEventListener("resize", applyMobileLayout);
+  window.addEventListener("resize", () => { applyMobileLayout(); setupCanvas(); render(); });
+  // Also re-fit on orientation change (mobile/iPad rotation).
+  window.addEventListener("orientationchange", () => {
+    applyMobileLayout();
+    setTimeout(() => { setupCanvas(); render(); }, 100);
+  });
   setupCanvas();
+  // On mobile, the layout box may not be fully measured until the next
+  // animation frame after applyMobileLayout adds the class. Re-run
+  // setupCanvas a frame later to catch the proper map-wrap dimensions.
+  requestAnimationFrame(() => { setupCanvas(); render(); });
   // Initialize an empty ownership grid so accessors don't crash before the
   // HOI4 province data loads. spawnHistoricalCivs runs inside loadProvinceGrid
   // once the map is ready.
