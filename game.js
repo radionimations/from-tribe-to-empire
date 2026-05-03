@@ -411,10 +411,15 @@ const HISTORICAL_EVENTS = [
     spawn: { name: "Despotate of Epirus", lat: 39.66, lon: 20.85, color: "#8a4a4a" },
     region: { lat: [38, 41], lon: [19, 22] },
     message: "Despotate of Epirus founded - Greek successor in western Greece and Albania" },
-  // BUG FIX: previously we absorbed old Byzantium into Latin Empire here,
-  // which then collapsed back into Nicaea -> renamed to Byzantium = the
-  // original empire effectively reassembled itself. Instead, let Byzantium
-  // die naturally with whatever tiny remnant it has after the 4 secessions.
+  // After the four 1204 secessions, the original Byzantine civ is left
+  // hollow (no tiles, maybe no settlements) but still alive=true. Without
+  // killing it explicitly, the 1261 "Empire of Nicaea -> Byzantium" rename
+  // creates a SECOND civ named "Byzantium", and the 1453 absorb event
+  // grabs the dead-end old shell first, leaving the real restored empire
+  // alive forever. kill_civ here makes 1204 the genuine end of the
+  // pre-Latin Byzantine state - the 1261 restoration is a fresh entity.
+  { year: 1204, type: "kill_civ", civ: "Byzantium",
+    message: "The pre-Crusade Byzantine state is finished - Constantinople is in Latin hands and the surviving Greeks rally to Nicaea" },
   // 1261: Empire of Nicaea retakes Constantinople and absorbs the Latin Empire.
   { year: 1261, type: "absorb", absorber: "Empire of Nicaea", target: "Latin Empire", message: "Michael VIII Palaiologos retakes Constantinople - the Latin Empire collapses" },
   { year: 1261, type: "rename", from: "Empire of Nicaea", to: "Byzantium", color: "#a050c4", spawnIfMissing: { lat: 41, lon: 28.9 }, message: "Restored Byzantine Empire - Palaiologan dynasty returns to Constantinople" },
