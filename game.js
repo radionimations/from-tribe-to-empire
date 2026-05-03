@@ -2771,6 +2771,23 @@ function tick() {
   if (state.phase !== "playing") return;
   // Block ticks while the province grid is loading or failed.
   if (state.provinceStatus !== "ready") return;
+  // Debug-mode auto-slow: 1900-2000 packs 80+ historical events (WWI/WWII,
+  // every decolonization, Soviet collapse, NATO/CSTO). At debug turbo the
+  // chronicle blasts past unreadably. While in debug, drop to 1x on the
+  // way in and restore the player's previous speed on the way out.
+  if (state.debug) {
+    const inWindow = state.year >= 1900 && state.year < 2000;
+    if (inWindow && state._autoSlowOriginalSpeed == null && state.speed > 1) {
+      state._autoSlowOriginalSpeed = state.speed;
+      setSpeed(1);
+      log("event", "Debug auto-slow: dropping to 1x for the 1900-2000 chronicle. Speed restores at year 2000.");
+    } else if (!inWindow && state._autoSlowOriginalSpeed != null) {
+      const restored = state._autoSlowOriginalSpeed;
+      state._autoSlowOriginalSpeed = null;
+      setSpeed(restored);
+      log("event", "Debug auto-slow: 20th century done; restoring previous speed.");
+    }
+  }
   const _tickStart = performance.now();
 
   // 1. Resolve build queues + city growth
