@@ -3068,9 +3068,9 @@ function tick() {
       // Bigger empires are harder to keep stable - their per-check fracture
       // chance scales with size so Russia-sized civs don't sit eligible
       // for centuries before they finally split.
-      const chance = pieces === 4 ? 0.40 :
-                     pieces === 3 ? 0.28 :
-                     0.18;
+      const chance = pieces === 4 ? 0.65 :
+                     pieces === 3 ? 0.40 :
+                     0.22;
       if (Math.random() < chance) splitCiv(civ, pieces);
     }
   }
@@ -5778,6 +5778,8 @@ function runConsoleCommand(line) {
     consoleEcho("  year                       print current year", "info");
     consoleEcho("  list                       list all alive civs", "info");
     consoleEcho("  showtree                   family tree of every civ ever", "info");
+    consoleEcho("  splitinfo <civ name>       dump splitter eligibility for a civ", "info");
+    consoleEcho("  splitnow <civ name>        force-split a civ regardless of gates", "info");
     consoleEcho("  debug                      enter observer/debug mode (unlocks 20x speed)", "info");
     return;
   }
@@ -5803,6 +5805,51 @@ function runConsoleCommand(line) {
     const alive = state.civs.filter(c => c.alive).sort((a, b) => a.name.localeCompare(b.name));
     consoleEcho(alive.length + " civs alive:", "info");
     for (const c of alive) consoleEcho("  " + c.name + (c.isPlayer ? "  [PLAYER]" : ""), "info");
+    return;
+  }
+
+  // `splitinfo <civ>` - dump the splitter's view of a civ so you can see
+  // why it has or hasn't fragmented yet (lifespan, stale, tile count,
+  // and the eligibility checks).
+  if (cmd === "splitinfo") {
+    const result = consoleFindCiv(arg);
+    if (!result || Array.isArray(result)) { consoleEcho("usage: splitinfo <civ name>", "err"); return; }
+    const c = result;
+    const lifespan = state.year - (c.foundedYear != null ? c.foundedYear : -1000);
+    const stale = state.year - (c.lastChangeYear != null ? c.lastChangeYear : -1000);
+    const tiles = countTiles(c);
+    let pieces = 0;
+    if (tiles >= 1500) pieces = 4;
+    else if (tiles >= 800) pieces = 3;
+    else if (tiles >= 250) pieces = 2;
+    consoleEcho(c.name + ":", "info");
+    consoleEcho("  foundedYear: " + c.foundedYear + "   (lifespan " + lifespan + ")", "info");
+    consoleEcho("  lastChangeYear: " + c.lastChangeYear + "   (stale " + stale + ")", "info");
+    consoleEcho("  tiles: " + tiles + "   pieces: " + pieces, "info");
+    consoleEcho("  isStartingTribe: " + !!c.isStartingTribe, "info");
+    consoleEcho("  isPlayer: " + !!c.isPlayer, "info");
+    const blocklist = ["Rome", "Western Rome", "Romano-Goths"];
+    const blocked = blocklist.includes(c.name) || (c.previousNames || []).some(n => blocklist.includes(n));
+    consoleEcho("  blocklisted: " + blocked, "info");
+    const eligible = !c.isPlayer && !c.isStartingTribe && !blocked &&
+      lifespan >= 1200 && stale >= 300 && pieces > 0;
+    consoleEcho("  eligible to split: " + eligible, eligible ? "ok" : "err");
+    return;
+  }
+
+  // `splitnow <civ>` - force-split the named civ right now (skips the
+  // random-chance and eligibility gates). Useful for testing the splitter
+  // without waiting centuries.
+  if (cmd === "splitnow") {
+    const result = consoleFindCiv(arg);
+    if (!result || Array.isArray(result)) { consoleEcho("usage: splitnow <civ name>", "err"); return; }
+    const c = result;
+    const tiles = countTiles(c);
+    let pieces = tiles >= 1500 ? 4 : tiles >= 800 ? 3 : tiles >= 250 ? 2 : 2;
+    splitCiv(c, pieces);
+    invalidateTintCache();
+    render();
+    consoleEcho("forced split of " + c.name + " into " + pieces + " pieces", "ok");
     return;
   }
 
