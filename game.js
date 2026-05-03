@@ -3917,16 +3917,29 @@ function splitCiv(civ, n) {
   if (tiles.length < 50) return;
 
   // Prefer landmass-based splitting: each connected component becomes
-  // a separate fragment. The largest component stays with the original
-  // civ. If the civ has fewer components than the requested piece count,
-  // we fall back to bbox subdivision on the largest component.
+  // a separate fragment. The component that holds the civ's CAPITAL is
+  // the surviving fragment (it keeps the original name + diplomacy +
+  // faction memberships, since the capital represents the country).
+  // Largest component is just a fallback when no capital exists.
   const components = (civ._components || []).slice().sort((a, b) => b.tiles - a.tiles);
   let seeds = [];
   let coreIdx = 0;
   if (components.length >= 2) {
     const top = components.slice(0, Math.min(n, components.length));
     seeds = top.map(c => ({ c: c.col, r: c.row }));
-    coreIdx = 0;   // largest component is the surviving fragment
+    // Find the seed closest to the capital - that fragment is the
+    // continuation of the country and keeps name/diplomacy/faction.
+    const cap = civ.settlements[0];
+    if (cap) {
+      let best = Infinity;
+      for (let i = 0; i < seeds.length; i++) {
+        const dc = seeds[i].c - cap.col, dr = seeds[i].r - cap.row;
+        const d = dc * dc + dr * dr;
+        if (d < best) { best = d; coreIdx = i; }
+      }
+    } else {
+      coreIdx = 0;   // fallback: largest component
+    }
   } else {
     // Single landmass - bbox subdivide along the dominant axis.
     let minC = Infinity, maxC = -Infinity, minR = Infinity, maxR = -Infinity;
