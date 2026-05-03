@@ -2073,6 +2073,10 @@ function fireEvent(ev) {
       if (ev.color) civ.color = ev.color;
       civ._flagColorApplied = false;   // new name -> new flag -> re-derive avg color
       civ.lastChangeYear = state.year;
+      // Once a starting tribe takes on a civilized name (Polans -> Duchy
+      // of Poland, East Slavs -> Muscovy, etc), it's no longer a tribe -
+      // its descendants should be eligible for stale-empire splitting.
+      civ.isStartingTribe = false;
       applyFlagColor(civ);
       log("event", ev.message);
       invalidateTintCache();
@@ -2644,6 +2648,8 @@ function fireEvent(ev) {
       old.name = ev.civ.name;
       if (ev.civ.color) old.color = ev.civ.color;
       old.lastChangeYear = state.year;
+      // No longer a starting tribe once it adopts a civilized successor name.
+      old.isStartingTribe = false;
       log("event", ev.message);
       invalidateTintCache();
       return;
@@ -3007,7 +3013,7 @@ function tick() {
       const lifespan = state.year - civ.foundedYear;
       const stale = state.year - civ.lastChangeYear;
       if (lifespan < 1200) continue;     // longer than Rome
-      if (stale < 300) continue;         // grant time between fractures
+      if (stale < 150) continue;         // grant time between fractures
       const tiles = countTiles(civ);
       let pieces = 0;
       if (tiles >= 1500) pieces = 4;
