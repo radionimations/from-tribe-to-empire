@@ -1730,6 +1730,11 @@ function makeCiv(opts) {
     // Expansion goals: AI biases settling/conquering toward these regions.
     // [{ region: {lat: [s, n], lon: [w, e]}, priority: 0..1, since: year, label }]
     expansionGoals: [],
+    // Stale-empire splitting timestamps. foundedYear marks when the civ
+    // first came into being; lastChangeYear updates on rename/secede/etc
+    // so that empires which haven't changed in centuries can fragment.
+    foundedYear: (typeof state !== "undefined" && state) ? state.year : -1000,
+    lastChangeYear: (typeof state !== "undefined" && state) ? state.year : -1000,
   };
 }
 
@@ -2058,6 +2063,7 @@ function fireEvent(ev) {
       civ.name = ev.to;
       if (ev.color) civ.color = ev.color;
       civ._flagColorApplied = false;   // new name -> new flag -> re-derive avg color
+      civ.lastChangeYear = state.year;
       applyFlagColor(civ);
       log("event", ev.message);
       invalidateTintCache();
@@ -2434,6 +2440,7 @@ function fireEvent(ev) {
       target.settlements = remaining;
       target.relations[newCiv.id] = -80;
       newCiv.relations[target.id] = -80;
+      target.lastChangeYear = state.year;
     }
     // Give the new civ a starting army if it has nothing else.
     if (newCiv.armies.length === 0 && newCiv.settlements.length > 0) {
@@ -2611,6 +2618,7 @@ function fireEvent(ev) {
       old.previousNames.push(old.name);
       old.name = ev.civ.name;
       if (ev.civ.color) old.color = ev.civ.color;
+      old.lastChangeYear = state.year;
       log("event", ev.message);
       invalidateTintCache();
       return;
@@ -2926,6 +2934,30 @@ function tick() {
   state.turn++;
   state.year += YEARS_PER_TURN;
   processEvents();
+
+  // 5b. Stale-empire splitting. Civs that have outlived Rome (>1200 years)
+  // and haven't had a major event in centuries can fragment based on
+  // their territorial size. Lithuania-sized empires don't split, Germany-
+  // sized split in two, Russia-sized fragment into 3+ successors. The
+  // surviving fragment keeps the original civ-id so its history,
+  // relations, and family-tree lineage stay intact.
+  if (state.turn % 5 === 0) {
+    for (const civ of state.civs.slice()) {
+      if (!civ.alive || civ.isPlayer) continue;
+      if (civ.foundedYear == null || civ.lastChangeYear == null) continue;
+      const lifespan = state.year - civ.foundedYear;
+      const stale = state.year - civ.lastChangeYear;
+      if (lifespan < 1200) continue;     // longer than Rome
+      if (stale < 300) continue;         // grant time between fractures
+      const tiles = countTiles(civ);
+      let pieces = 0;
+      if (tiles >= 1500) pieces = 4;
+      else if (tiles >= 800) pieces = 3;
+      else if (tiles >= 250) pieces = 2;
+      else continue;                     // Lithuania-sized, leave alone
+      if (Math.random() < 0.18) splitCiv(civ, pieces);
+    }
+  }
 
   // 6. Win/lose check
   const player = state.civs[0];
@@ -3685,6 +3717,127 @@ function countTiles(civ) {
     }
   }
   return n;
+}
+
+// Adjust a hex color toward black (negative pct) or white (positive pct).
+function shiftColor(hex, pct) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
+  if (!m) return hex;
+  const v = parseInt(m[1], 16);
+  let r = (v >> 16) & 0xff, g = (v >> 8) & 0xff, b = v & 0xff;
+  const t = Math.max(-1, Math.min(1, pct));
+  if (t > 0) { r = Math.round(r + (255 - r) * t); g = Math.round(g + (255 - g) * t); b = Math.round(b + (255 - b) * t); }
+  else { r = Math.round(r * (1 + t)); g = Math.round(g * (1 + t)); b = Math.round(b * (1 + t)); }
+  return "#" + [r, g, b].map(x => x.toString(16).padStart(2, "0")).join("");
+}
+
+// Split a long-stale empire into N successor states. One fragment keeps
+// the original civ object (renamed) so its lineage, relations, family-tree
+// position, and history all stay intact. The other fragments spawn as
+// fresh civs with mildly tinted versions of the parent's color and
+// directional names ("Northern <X>", "Eastern <X>", etc).
+function splitCiv(civ, n) {
+  if (n < 2) return;
+  const tiles = [];
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (state.ownership[r][c] === civ.id) tiles.push({ c, r });
+    }
+  }
+  if (tiles.length < 50) return;
+  let minC = Infinity, maxC = -Infinity, minR = Infinity, maxR = -Infinity;
+  for (const t of tiles) {
+    if (t.c < minC) minC = t.c; if (t.c > maxC) maxC = t.c;
+    if (t.r < minR) minR = t.r; if (t.r > maxR) maxR = t.r;
+  }
+  const bw = Math.max(1, maxC - minC), bh = Math.max(1, maxR - minR);
+  // Place N seeds. For 2-3 we strip along the major axis. For 4+ we use a
+  // 2-row grid. Each seed becomes the centroid of one successor state.
+  const seeds = [];
+  if (n === 2) {
+    if (bw >= bh) { seeds.push({ c: minC + bw * 0.25, r: (minR + maxR) / 2 }); seeds.push({ c: minC + bw * 0.75, r: (minR + maxR) / 2 }); }
+    else { seeds.push({ c: (minC + maxC) / 2, r: minR + bh * 0.25 }); seeds.push({ c: (minC + maxC) / 2, r: minR + bh * 0.75 }); }
+  } else if (n === 3) {
+    if (bw >= bh) {
+      seeds.push({ c: minC + bw / 6, r: (minR + maxR) / 2 });
+      seeds.push({ c: minC + bw / 2, r: (minR + maxR) / 2 });
+      seeds.push({ c: minC + 5 * bw / 6, r: (minR + maxR) / 2 });
+    } else {
+      seeds.push({ c: (minC + maxC) / 2, r: minR + bh / 6 });
+      seeds.push({ c: (minC + maxC) / 2, r: minR + bh / 2 });
+      seeds.push({ c: (minC + maxC) / 2, r: minR + 5 * bh / 6 });
+    }
+  } else {
+    // 4+: 2x2 grid (truncate to 4 even if n>4 to keep the split tractable).
+    seeds.push({ c: minC + bw * 0.25, r: minR + bh * 0.25 });
+    seeds.push({ c: minC + bw * 0.75, r: minR + bh * 0.25 });
+    seeds.push({ c: minC + bw * 0.25, r: minR + bh * 0.75 });
+    seeds.push({ c: minC + bw * 0.75, r: minR + bh * 0.75 });
+  }
+  // The fragment closest to the civ's capital keeps the original civ-id.
+  const cap = civ.settlements[0];
+  let coreIdx = 0;
+  if (cap) {
+    let best = Infinity;
+    for (let i = 0; i < seeds.length; i++) {
+      const dc = seeds[i].c - cap.col, dr = seeds[i].r - cap.row;
+      const d = dc * dc + dr * dr;
+      if (d < best) { best = d; coreIdx = i; }
+    }
+  }
+  // Origin name + directional suffix for siblings.
+  const originName = civ.name;
+  function dirFor(seed) {
+    const cx = (minC + maxC) / 2, cy = (minR + maxR) / 2;
+    const dx = seed.c - cx, dy = seed.r - cy;
+    if (Math.abs(dx) > Math.abs(dy) * 1.5) return dx < 0 ? "Western " : "Eastern ";
+    if (Math.abs(dy) > Math.abs(dx) * 1.5) return dy < 0 ? "Northern " : "Southern ";
+    return (dy < 0 ? "North" : "South") + (dx < 0 ? "western " : "eastern ");
+  }
+  const newCivs = [];
+  for (let i = 0; i < seeds.length; i++) {
+    if (i === coreIdx) continue;
+    const dir = dirFor(seeds[i]);
+    const tint = shiftColor(civ.color, (i % 2 === 0 ? 0.18 : -0.18));
+    const fresh = makeCiv({ name: dir + originName, color: tint });
+    state.civs.push(fresh);
+    fresh.foundedYear = state.year;
+    fresh.lastChangeYear = state.year;
+    fresh.era = civ.era;
+    for (const c of state.civs) {
+      if (c.id !== fresh.id) {
+        fresh.relations[c.id] = (c.id === civ.id) ? 30 : 0;
+        c.relations[fresh.id] = (c.id === civ.id) ? 30 : 0;
+      }
+    }
+    // Plant a starting army at the seed so the new state isn't immediately
+    // capitulated to a neighbour with armies.
+    const sCol = Math.max(0, Math.min(COLS - 1, Math.round(seeds[i].c)));
+    const sRow = Math.max(0, Math.min(ROWS - 1, Math.round(seeds[i].r)));
+    fresh.armies.push({ id: nextArmyId++, col: sCol, row: sRow, type: bestUnitForEra(fresh.era), count: 3, civId: fresh.id, moves: 1 });
+    newCivs.push({ civ: fresh, seedIdx: i });
+  }
+  // Reassign each tile to its nearest seed.
+  for (const t of tiles) {
+    let bestI = 0, bestD = Infinity;
+    for (let i = 0; i < seeds.length; i++) {
+      const dc = seeds[i].c - t.c, dr = seeds[i].r - t.r;
+      const d = dc * dc + dr * dr;
+      if (d < bestD) { bestD = d; bestI = i; }
+    }
+    if (bestI === coreIdx) continue;   // stays with the original civ
+    const target = newCivs.find(nc => nc.seedIdx === bestI);
+    if (target) state.ownership[t.r][t.c] = target.civ.id;
+  }
+  reassignSettlementsByTileOwner();
+  // Rename the surviving fragment so the player sees that fragmentation
+  // happened. previousNames tracks the old name for `kill <X>` lookups.
+  if (!civ.previousNames) civ.previousNames = [];
+  civ.previousNames.push(civ.name);
+  civ.name = dirFor(seeds[coreIdx]) + originName;
+  civ.lastChangeYear = state.year;
+  invalidateTintCache();
+  log("event", originName + " has fragmented into " + (newCivs.length + 1) + " successor states after centuries without change.");
 }
 
 function civIndexById(id) {
