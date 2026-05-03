@@ -1494,9 +1494,63 @@ const state = {
   // { name, color, memberIds: [civId, ...] }. Dead members are filtered
   // at display time (we don't mutate the array on civ death).
   factions: [],
+  // Lineage names (lowercase) that the player has wiped via console `kill`.
+  // Forward-walks the rename/replaces/merge chain so killing Polans also
+  // marks Duchy of Poland, Kingdom of Poland, and the Polish-Lithuanian
+  // Commonwealth as extinct. Used by the secede handler to block
+  // descendants (Republic of Poland, etc) from re-emerging, and by the
+  // family-tree X-marker to gray-X the whole subtree.
+  consoleKilledLineages: new Set(),
   // "loading" while fetching, "ready" after success, "failed:reason" on error.
   provinceStatus: "loading",
 };
+
+// Tree-shape overrides: civs whose natural event-derived parent doesn't
+// match the cultural/ethnic lineage. e.g. Republic of Latvia gains
+// independence from the Russian Empire (1918), but Latvians ARE Balts -
+// they should sit in the Balt branch, not under Russia. Defined at module
+// scope so the secede handler + console kill can both consult it without
+// having to open the family tree first.
+const TREE_PARENT_OVERRIDES = {
+  // Baltic peoples (Latvians + Lithuanians)
+  "Republic of Latvia": "Balts",
+  "Livonian Order": "Balts",
+  "Republic of Lithuania": "Grand Duchy of Lithuania",
+  // Polish lineage continues independently of the Russian Empire that
+  // partitioned it. Polans -> Duchy -> Kingdom -> Commonwealth -> ... ->
+  // Republic of Poland.
+  "Republic of Poland": "Kingdom of Poland",
+  // East Slavs are the proto-Russian/Ukrainian/Belarusian people. Ukraine
+  // and Belarus descend from them, not from the Soviet Union that briefly
+  // absorbed them.
+  "Ukraine": "East Slavs",
+  "Belarus": "East Slavs",
+  // Estonia + Finland are Finnic peoples (NOT Balts). Finland already
+  // descends from Finns naturally; Estonia gets its proper ancestor here.
+  "Republic of Estonia": "Finns",
+  "Finland": "Finns",
+  // German Cold-War split: West and East Germany are Cold-War creations
+  // from the Soviet zone, but ethnically German.
+  "West Germany": "Germany",
+  "East Germany": "Germany",
+  // USA was a British colony.
+  "USA": "Great Britain",
+};
+// "Same-identity" override: when the descendant is the SAME political
+// entity reborn under a new name (Republic of Lithuania = Lithuania, just
+// a republic now). If the listed parent is alive, we rename it instead of
+// spawning a duplicate. Otherwise the descendant spawns fresh.
+// Tribal/cultural overrides (Republic of Latvia -> Balts) are NOT in this
+// set, because Latvia is a different political entity from the Balts.
+const SAME_IDENTITY_OVERRIDES = new Set([
+  "Republic of Lithuania",
+  "Republic of Poland",
+]);
+// Make this map available globally so legacy paths can also see it.
+if (typeof window !== "undefined") {
+  window.TREE_PARENT_OVERRIDES = TREE_PARENT_OVERRIDES;
+  window.SAME_IDENTITY_OVERRIDES = SAME_IDENTITY_OVERRIDES;
+}
 
 // Returns the faction this civ belongs to, or null. Helper used by the
 // country panel + AI checks.
@@ -1506,6 +1560,83 @@ function findFactionForCiv(civId) {
     if (f.memberIds && f.memberIds.indexOf(civId) >= 0) return f;
   }
   return null;
+}
+
+// Build the rename/replaces/merge edge map ONCE per page load (events are
+// constant). Forward edges only - used to walk a lineage from any name to
+// its eventual political descendants.
+let _lineageRenameTo = null;
+function getLineageRenameTo() {
+  if (_lineageRenameTo) return _lineageRenameTo;
+  const renameTo = {};
+  if (typeof HISTORICAL_EVENTS === "undefined") { _lineageRenameTo = renameTo; return renameTo; }
+  function add(from, to) {
+    if (!from || !to || from === to) return;
+    if (!renameTo[from]) renameTo[from] = [];
+    if (renameTo[from].indexOf(to) < 0) renameTo[from].push(to);
+  }
+  for (const e of HISTORICAL_EVENTS) {
+    if (e.type === "rename" && e.from && e.to) {
+      add(e.from, e.to);
+    } else if (!e.type && e.civ && e.replaces) {
+      add(e.replaces, e.civ.name || (typeof e.civ === "string" ? e.civ : null));
+    } else if (e.type === "merge" && Array.isArray(e.from) && e.to && e.to.name) {
+      // Merge: every from-civ descends INTO the merged civ.
+      for (const f of e.from) add(f, e.to.name);
+    }
+  }
+  // Tree overrides (Republic of Latvia -> Balts means Balts -> Republic
+  // of Latvia in the forward graph). We add these so console-kill of
+  // Balts forward-marks Republic of Latvia too.
+  for (const [child, parent] of Object.entries(TREE_PARENT_OVERRIDES)) {
+    add(parent, child);
+  }
+  _lineageRenameTo = renameTo;
+  return renameTo;
+}
+
+// Forward-walk a lineage starting at rootName. Returns a Set of canonical
+// names reachable from the root via rename/replaces/merge/override edges.
+function walkLineageForward(rootName) {
+  const renameTo = getLineageRenameTo();
+  const visited = new Set();
+  const queue = [rootName];
+  while (queue.length) {
+    const n = queue.shift();
+    if (visited.has(n)) continue;
+    visited.add(n);
+    const next = renameTo[n] || [];
+    for (const x of next) queue.push(x);
+  }
+  return visited;
+}
+
+// Mark every name in the forward lineage of `name` as console-killed.
+// Stored lowercase for case-insensitive matching against user input.
+function markLineageKilled(name) {
+  if (!name) return;
+  if (!state.consoleKilledLineages) state.consoleKilledLineages = new Set();
+  // Find a canonical-cased name for the typed input by checking events.
+  const lower = name.toLowerCase();
+  let canonical = name;
+  if (typeof HISTORICAL_EVENTS !== "undefined") {
+    for (const e of HISTORICAL_EVENTS) {
+      const candidates = [];
+      if (e.civ && typeof e.civ === "object" && e.civ.name) candidates.push(e.civ.name);
+      if (e.from && typeof e.from === "string") candidates.push(e.from);
+      if (Array.isArray(e.from)) candidates.push(...e.from);
+      if (e.to && typeof e.to === "string") candidates.push(e.to);
+      if (e.to && typeof e.to === "object" && e.to.name) candidates.push(e.to.name);
+      if (e.replaces) candidates.push(e.replaces);
+      if (e.target) candidates.push(e.target);
+      if (e.absorber) candidates.push(e.absorber);
+      const found = candidates.find(c => c && c.toLowerCase() === lower);
+      if (found) { canonical = found; break; }
+    }
+  }
+  for (const n of walkLineageForward(canonical)) {
+    state.consoleKilledLineages.add(n.toLowerCase());
+  }
 }
 
 function updateProvinceStatusOverlay() {
@@ -1942,6 +2073,14 @@ function fireEvent(ev) {
         c.relations[merged.id] = 0;
       }
     }
+    // Propagate previousNames into the merged civ so console kill / lineage
+    // lookup can still find this civ by any of its predecessors' names
+    // (e.g. `kill Polans` after PLC has formed should find PLC).
+    merged.previousNames = [];
+    for (const civ of civs) {
+      merged.previousNames.push(civ.name);
+      if (civ.previousNames) merged.previousNames.push(...civ.previousNames);
+    }
     // Transfer all tiles, settlements, and armies
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
@@ -2109,53 +2248,6 @@ function fireEvent(ev) {
   // independence movements (Poland/Lithuania seceding from Russia).
   // Format: { type: "secede", target: "Western Rome", civ: "Visigoths",
   //           spawn: { name, color, lat, lon }, region: {lat,lon}, message }
-  // Build a "name -> chain of all names this civ has ever had" lookup once
-  // and check if ALL names in the chain refer to dead/missing civs. The
-  // chain comes from rename + replaces edges in HISTORICAL_EVENTS plus the
-  // civ's own previousNames history at runtime.
-  // (Cached on first call per fireEvent invocation - cheap rebuild.)
-  if (!window._lineageChainCache) {
-    const renameTo = {};   // from -> [to, to2, ...]
-    for (const e of HISTORICAL_EVENTS) {
-      if ((e.type === "rename" && e.from && e.to) || (!e.type && e.civ && e.replaces)) {
-        const from = e.from || e.replaces;
-        const to = e.to || e.civ.name;
-        if (!renameTo[from]) renameTo[from] = [];
-        renameTo[from].push(to);
-      }
-    }
-    window._lineageRenameTo = renameTo;
-  }
-  function isLineageExtinct(rootName) {
-    // Collect every name in the lineage starting from rootName, walking
-    // forward through rename edges (e.g. Polans -> Duchy of Poland ->
-    // Kingdom of Poland -> Polish-Lithuanian Commonwealth).
-    const visited = new Set();
-    const queue = [rootName];
-    while (queue.length) {
-      const n = queue.shift();
-      if (visited.has(n)) continue;
-      visited.add(n);
-      const next = window._lineageRenameTo[n] || [];
-      for (const x of next) queue.push(x);
-    }
-    // Also include any civ in state.civs whose previousNames list contains
-    // any visited name (those are renamed-in-place civs, same lineage).
-    for (const c of state.civs) {
-      if (visited.has(c.name)) continue;
-      for (const old of c.previousNames || []) {
-        if (visited.has(old)) { visited.add(c.name); break; }
-      }
-    }
-    // Lineage is extinct iff none of its names refer to an alive civ.
-    for (const c of state.civs) {
-      if (c.alive && (visited.has(c.name) || (c.previousNames || []).some(n => visited.has(n)))) {
-        return false;
-      }
-    }
-    return true;
-  }
-
   if (ev.type === "secede") {
     const target = state.civs.find(c => c.alive && c.name === ev.target);
     // Independence events require the parent state to actually exist. If
@@ -2165,19 +2257,45 @@ function fireEvent(ev) {
       log("event", ev.message + " - " + ev.target + " doesn't exist; nothing happens.");
       return;
     }
-    // Tribal lineage check: if the seceding civ has a cultural override
-    // parent (e.g. Republic of Poland -> Kingdom of Poland -> ... -> Polans)
-    // and that whole lineage has been wiped out, the civ doesn't get to
-    // re-emerge. So killing the Polans tribe blocks Republic of Poland from
-    // forming in 1918, even though it formally "secedes from Russian Empire".
     const civName = typeof ev.civ === "string" ? ev.civ : (ev.civ && ev.civ.name);
-    if (civName && window.TREE_PARENT_OVERRIDES && window.TREE_PARENT_OVERRIDES[civName]) {
-      if (isLineageExtinct(window.TREE_PARENT_OVERRIDES[civName])) {
-        log("event", ev.message + " - the " + civName + " lineage is extinct; the state cannot reform.");
-        return;
+    // Lineage block: if the player console-killed any name in the cultural
+    // ancestry of this civ (Polans, Balts, Kingdom of Poland, etc.), the
+    // descendant cannot re-form. This catches both direct kills (kill
+    // Polans -> no Republic of Poland) and forward-walked ones (kill
+    // Polans also marks Duchy/Kingdom/Commonwealth, blocking Republic of
+    // Poland which descends from Kingdom of Poland in TREE_PARENT_OVERRIDES).
+    const overrideParent = TREE_PARENT_OVERRIDES[civName];
+    if (overrideParent && state.consoleKilledLineages && state.consoleKilledLineages.size > 0) {
+      const lineage = walkLineageForward(overrideParent);
+      // Also check overrideParent itself, in case the user killed only
+      // the override-parent and walkLineageForward starts past it.
+      lineage.add(overrideParent);
+      for (const n of lineage) {
+        if (state.consoleKilledLineages.has(n.toLowerCase())) {
+          log("event", ev.message + " - the " + civName + " lineage was wiped from history; the state cannot reform.");
+          return;
+        }
       }
     }
     let newCiv = state.civs.find(c => c.alive && c.name === ev.civ);
+    // Same-identity rename: when the descendant IS the live ancestor under
+    // a new name (Republic of Lithuania = Grand Duchy of Lithuania, just a
+    // republic now), don't spawn a duplicate - rename the live ancestor.
+    if (!newCiv && overrideParent && SAME_IDENTITY_OVERRIDES.has(civName)) {
+      const lineage = walkLineageForward(overrideParent);
+      lineage.add(overrideParent);
+      const aliveAncestor = state.civs.find(c => c.alive && (lineage.has(c.name) || (c.previousNames || []).some(n => lineage.has(n))));
+      if (aliveAncestor) {
+        if (!aliveAncestor.previousNames) aliveAncestor.previousNames = [];
+        aliveAncestor.previousNames.push(aliveAncestor.name);
+        aliveAncestor.name = civName;
+        if (ev.spawn && ev.spawn.color) aliveAncestor.color = ev.spawn.color;
+        applyFlagColor(aliveAncestor);
+        log("event", ev.message + " - " + (aliveAncestor.previousNames[aliveAncestor.previousNames.length - 1]) + " transitions into " + civName + ".");
+        invalidateTintCache();
+        newCiv = aliveAncestor;
+      }
+    }
     if (!newCiv && ev.spawn) {
       // Always use ev.civ as the canonical civ name (it's what later events
       // look up by). spawn just supplies color/lat/lon.
@@ -5179,7 +5297,47 @@ function runConsoleCommand(line) {
     return;
   }
 
-  if (cmd === "tag" || cmd === "annex" || cmd === "kill" || cmd === "add_war" || cmd === "peace" || cmd === "ally") {
+  // `kill` accepts dead-lineage names (e.g. "Polans" after Polans renamed
+  // long ago) by always marking the typed name's forward lineage as
+  // console-killed, even when no live civ matches. Handled before the
+  // shared lookup below so it can return early.
+  if (cmd === "kill") {
+    if (!arg) { consoleEcho("usage: kill <civ name>", "err"); return; }
+    markLineageKilled(arg);
+    const result = consoleFindCiv(arg);
+    if (Array.isArray(result)) {
+      consoleEcho("ambiguous - " + result.length + " matches:", "err");
+      for (const c of result.slice(0, 10)) consoleEcho("  " + c.name, "err");
+      return;
+    }
+    const target = result;
+    if (target) {
+      // Wipe the target: every tile they own becomes -1 (no-man's land),
+      // settlements + armies vanish, civ flagged dead.
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (state.ownership[r][c] === target.id) state.ownership[r][c] = -1;
+        }
+      }
+      target.settlements = [];
+      target.armies = [];
+      target.alive = false;
+      // Forward-mark the live civ's name + every previousName in the
+      // lineage so descendants are blocked even if the user typed a stale
+      // ancestor name.
+      markLineageKilled(target.name);
+      for (const old of target.previousNames || []) markLineageKilled(old);
+      log("death", target.name + " is wiped from history - their lands fall to ruin.");
+      invalidateTintCache();
+      render();
+      consoleEcho("killed " + target.name + " - lineage extinct, territory now no-man's land", "ok");
+    } else {
+      consoleEcho("'" + arg + "' lineage marked extinct (no live civ to wipe)", "ok");
+    }
+    return;
+  }
+
+  if (cmd === "tag" || cmd === "annex" || cmd === "add_war" || cmd === "peace" || cmd === "ally") {
     if (!arg) { consoleEcho("usage: " + cmd + " <civ name>", "err"); return; }
     const result = consoleFindCiv(arg);
     if (!result) { consoleEcho("no civ matches: " + arg, "err"); return; }
@@ -5218,26 +5376,6 @@ function runConsoleCommand(line) {
       // Reuse the absorb event handler logic.
       fireEvent({ type: "absorb", absorber: player.name, target: target.name, message: player.name + " annexes " + target.name });
       consoleEcho("annexed " + target.name, "ok");
-      return;
-    }
-
-    if (cmd === "kill") {
-      // Wipe the target: every tile they own becomes -1 (no-man's land),
-      // settlements + armies vanish, civ flagged dead. We don't go through
-      // the absorb handler because that redistributes tiles to nearest
-      // neighbours - "kill" should leave the territory genuinely vacant.
-      for (let r = 0; r < ROWS; r++) {
-        for (let c = 0; c < COLS; c++) {
-          if (state.ownership[r][c] === target.id) state.ownership[r][c] = -1;
-        }
-      }
-      target.settlements = [];
-      target.armies = [];
-      target.alive = false;
-      log("death", target.name + " is wiped from history - their lands fall to ruin.");
-      invalidateTintCache();
-      render();
-      consoleEcho("killed " + target.name + " - territory now no-man's land", "ok");
       return;
     }
 
@@ -5320,45 +5458,10 @@ function buildCivFamilyTree() {
   if (typeof HISTORICAL_CIVS !== "undefined") {
     for (const t of HISTORICAL_CIVS) ensure(t.name, -1000, "starting tribe");
   }
-  // Tree-shape overrides: civs whose natural event-derived parent doesn't
-  // match the cultural/ethnic lineage. e.g. Republic of Latvia gains
-  // independence from the Russian Empire (1918), but Latvians ARE Balts -
-  // they should sit in the Balt branch, not under Russia. Same for the
-  // Livonian Order's Latvian-speaking territory.
-  // Pre-linking these BEFORE walking events ensures the override wins
-  // (since link() only takes the first parent).
-  const TREE_PARENT_OVERRIDES = {
-    // Baltic peoples (Latvians + Lithuanians)
-    "Republic of Latvia": "Balts",
-    "Livonian Order": "Balts",
-    "Republic of Lithuania": "Grand Duchy of Lithuania",
-    // Polish lineage continues independently of the Russian Empire that
-    // partitioned it. Polans -> Duchy -> Kingdom -> Commonwealth -> ... ->
-    // Republic of Poland.
-    "Republic of Poland": "Kingdom of Poland",
-    // East Slavs are the proto-Russian/Ukrainian/Belarusian people. Ukraine
-    // and Belarus descend from them, not from the Soviet Union that briefly
-    // absorbed them.
-    "Ukraine": "East Slavs",
-    "Belarus": "East Slavs",
-    // Estonia + Finland are Finnic peoples (NOT Balts). Finland already
-    // descends from Finns naturally; Estonia gets its proper ancestor here.
-    "Republic of Estonia": "Finns",
-    "Finland": "Finns",
-    // German Cold-War split: West and East Germany are formally Cold-War
-    // creations from the Soviet zone, but culturally/ethnically they're
-    // German - they belong under the Germany branch (which descends from
-    // the proto-Germans tribe), not under the Soviet Union.
-    "West Germany": "Germany",
-    "East Germany": "Germany",
-    // USA was a British colony - declared independence in 1776 from Great
-    // Britain, so it descends from the English chain (Anglo-Saxons ->
-    // Kingdom of England -> Great Britain).
-    "USA": "Great Britain",
-  };
-  // Make this map available globally so the secede handler can use it to
-  // gate independence events on the tribal-lineage being alive.
-  window.TREE_PARENT_OVERRIDES = TREE_PARENT_OVERRIDES;
+  // Tree-shape overrides live at module scope (TREE_PARENT_OVERRIDES) so
+  // the secede handler + console kill can consult them without opening
+  // the tree first. Pre-link them BEFORE walking events so the override
+  // wins (link() only takes the first parent).
   for (const [child, parent] of Object.entries(TREE_PARENT_OVERRIDES)) {
     link(parent, child);
   }
@@ -5452,6 +5555,31 @@ function showCivFamilyTree() {
     return node._status;
   }
   for (const root of roots) markStatus(root, new Set());
+  // Top-down extinct propagation: if a parent is extinct (whole subtree
+  // gone or wiped via console kill) then any FUTURE child below it also
+  // can never appear - mark them extinct too. This shows the X-stamp on
+  // the entire blocked branch ("if a country dies without leaving any
+  // children, all its descendants should be extinct too").
+  function propagateExtinct(node, parentExtinct) {
+    const myExtinct = node._status === "extinct" || (parentExtinct && node._status !== "alive");
+    if (myExtinct) node._status = "extinct";
+    for (const ch of node.children) propagateExtinct(ch, myExtinct);
+  }
+  for (const root of roots) propagateExtinct(root, false);
+  // Console-killed override: any node whose name is in
+  // state.consoleKilledLineages is forced to extinct (even if its own
+  // status said "alive" because of a stale reference).
+  if (state.consoleKilledLineages && state.consoleKilledLineages.size > 0) {
+    function killWalk(node) {
+      if (state.consoleKilledLineages.has(node.name.toLowerCase())) {
+        node._status = "extinct";
+        for (const ch of node.children) killWalk(ch);
+      } else {
+        for (const ch of node.children) killWalk(ch);
+      }
+    }
+    for (const root of roots) killWalk(root);
+  }
   function renderNode(node) {
     const li = document.createElement("li");
     li.className = "tree-node";
