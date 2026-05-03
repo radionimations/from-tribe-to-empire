@@ -1583,6 +1583,15 @@ function getLineageRenameTo() {
     } else if (e.type === "merge" && Array.isArray(e.from) && e.to && e.to.name) {
       // Merge: every from-civ descends INTO the merged civ.
       for (const f of e.from) add(f, e.to.name);
+    } else if (e.type === "secede" && e.target && e.civ) {
+      // Secede: child descends from the seceding parent UNLESS the child
+      // has a TREE_PARENT_OVERRIDES entry (which redirects to a different
+      // cultural ancestor - e.g. Republic of Estonia secedes from Russian
+      // Empire politically but its cultural lineage is Finns).
+      const childName = typeof e.civ === "string" ? e.civ : (e.civ && e.civ.name);
+      if (childName && !TREE_PARENT_OVERRIDES[childName]) {
+        add(e.target, childName);
+      }
     }
   }
   // Tree overrides (Republic of Latvia -> Balts means Balts -> Republic
@@ -2562,6 +2571,15 @@ function fireEvent(ev) {
   }
 
   // SPAWN (default): create or replace a civ at a lat/lon.
+  // Console-kill block: if the spawning civ's name was wiped from history
+  // by `kill <ancestor>` (its lineage is in consoleKilledLineages), don't
+  // let it spawn. Catches fresh spawns like Byzantium 330, which has no
+  // explicit `replaces` but is still a Roman successor culturally.
+  const spawnName = ev.civ && (typeof ev.civ === "string" ? ev.civ : ev.civ.name);
+  if (spawnName && state.consoleKilledLineages && state.consoleKilledLineages.has(spawnName.toLowerCase())) {
+    log("event", ev.message + " - " + spawnName + " was wiped from history; the state cannot reform.");
+    return;
+  }
   // Strict replaces: if the predecessor is dead (e.g. wiped by console
   // 'kill'), the descendant doesn't form either. So killing East Slavs
   // means no Muscovy / Tsardom / Russian Empire chain. Set
