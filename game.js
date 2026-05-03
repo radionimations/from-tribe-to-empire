@@ -988,8 +988,13 @@ const HISTORICAL_EVENTS = [
   // unified Mongol civ ends.
   { year: 1294, type: "absorb", absorber: "Yuan China", target: "Mongols", message: "Kublai Khan dies - the unified Mongol Empire is gone, only the khanates remain" },
   // 1453: Antigonid stays absorbed; this is the line for completeness.
-  // 1806: Napoleon dissolves the Holy Roman Empire.
-  { year: 1806, type: "absorb", absorber: "Kingdom of France", target: "Holy Roman Empire", message: "Napoleon dissolves the Holy Roman Empire - the German lands reorganize" },
+  // 1806: Napoleon dissolves the Holy Roman Empire. Historically the HRE's
+  // German lands didn't end up French - they passed through the
+  // Confederation of the Rhine, the German Confederation, and finally
+  // consolidated under Bismarck's German Empire in 1871. We hand the
+  // territory to "Germans" (the proto-German tribe that renames into
+  // Germany at 1871) so it ends up where it should: in Germany.
+  { year: 1806, type: "absorb", absorber: "Germans", target: "Holy Roman Empire", message: "Napoleon dissolves the Holy Roman Empire - the German lands begin coalescing toward unification" },
   // 1858: Last Mughal emperor exiled by the British after the Indian Mutiny.
   { year: 1858, type: "absorb", absorber: "United Kingdom", target: "Mughal Empire", message: "Indian Mutiny crushed - Britain abolishes the Mughal throne" },
   // 1871: Germans (the proto-tribe) coalesce into modern Germany - if Germany
