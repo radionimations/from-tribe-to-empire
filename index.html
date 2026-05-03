@@ -734,6 +734,15 @@
     border-style: dashed;
   }
   #tree-modal .tree-card.future .tree-name { color: #a89678; }
+  /* Independence-pending: a future civ that will appear via a secede
+     event. Blue glow tells the player "this country is coming, born from
+     its parent's collapse". Overrides the grayscale of plain .future. */
+  #tree-modal .tree-card.future-independence {
+    filter: grayscale(0.2) brightness(1.05);
+    border-color: #5da9e8;
+    box-shadow: 0 0 12px rgba(93, 169, 232, 0.65), 0 0 22px rgba(93, 169, 232, 0.35);
+  }
+  #tree-modal .tree-card.future-independence .tree-name { color: #a8c8ff; }
   /* Extinct lineage: civ + descendants will never appear (e.g. tribe was
      killed before its children could spawn). Greyed, with a red ✕ stamp. */
   #tree-modal .tree-card.extinct {

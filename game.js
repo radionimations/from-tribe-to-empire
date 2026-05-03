@@ -5474,7 +5474,13 @@ function buildCivFamilyTree() {
         link(ev.from, ev.to, y);
       } else if (ev.type === "secede" && ev.civ && ev.target) {
         const civName = typeof ev.civ === "string" ? ev.civ : (ev.civ && ev.civ.name);
-        if (civName) link(ev.target, civName, y);
+        if (civName) {
+          link(ev.target, civName, y);
+          // Flag this node as spawned via independence so the tree can
+          // glow it blue while it's still in the future.
+          const n = nodes.get(civName);
+          if (n) n.viaIndependence = true;
+        }
       } else if (ev.type === "merge" && Array.isArray(ev.from) && ev.to) {
         const toName = typeof ev.to === "string" ? ev.to : ev.to.name;
         for (const fromName of ev.from) link(fromName, toName, y);
@@ -5590,6 +5596,10 @@ function showCivFamilyTree() {
     let cls = "tree-card" + (isDup ? " dup" : "");
     if (node._status === "extinct") cls += " extinct";
     else if (node._status === "future") cls += " future";
+    // Independence-pending: a future civ that will appear via a secede
+    // event (Republic of Latvia, Republic of Poland, etc). Gets a blue
+    // glow so the player can see what's coming.
+    if (node._status === "future" && node.viaIndependence) cls += " future-independence";
     card.className = cls;
     const url = flagUrlForName(node.name);
     if (url) {
