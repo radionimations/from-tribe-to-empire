@@ -865,8 +865,14 @@ const HISTORICAL_EVENTS = [
   { year: 2003, type: "war", a: "USA", b: "Kingdom of Iraq", region: { lat: [28, 36], lon: [40, 50] }, reinforce: 14, message: "Iraq War" },
   { year: 2022, type: "war", a: "Russia", b: "Ukraine", region: { lat: [45, 53], lon: [22, 41] }, reinforce: 16, message: "Russian invasion of Ukraine" },
   // 2080: Hay-Herbert Treaty (alt-history far-future). USA cedes Alaska to
-  // Canada and the two sign a permanent peace.
-  { year: 2080, type: "secede", target: "USA", civ: "Canada",
+  // Canada and the two sign a permanent peace. We use byOwner USA inside
+  // an Alaska-only region so the transfer works regardless of who CURRENTLY
+  // holds Alaska tiles - if USA was conquered or the player tagged into
+  // it, Alaska still goes to Canada. spawn lets Canada respawn if it died.
+  // target is omitted so the event still fires when USA isn't alive.
+  { year: 2080, type: "secede", civ: "Canada",
+    spawn: { name: "Canada", lat: 45.42, lon: -75.7, color: "#c83030" },
+    byOwner: "USA",
     region: { lat: [51, 72], lon: [-180, -129] },
     message: "Hay-Herbert Treaty - the United States cedes Alaska to Canada" },
   { year: 2080, type: "alliance", a: "USA", b: "Canada",
@@ -2367,22 +2373,38 @@ function fireEvent(ev) {
         if (!sd.owner || !sTagSet.has(sd.owner)) continue;
         for (const pid of sd.provinces || []) sPidToTag[pid] = sd.owner;
       }
+      // Optional region constraint: when a region is set alongside byOwner,
+      // only tagged tiles INSIDE the region transfer. Lets us cede a slice
+      // (e.g. Alaska from USA-tagged provinces) without giving away the
+      // whole 1936 USA.
+      let rLo = 0, rHi = ROWS - 1, cLo = 0, cHi = COLS - 1;
+      let useRegion = false;
+      if (ev.region) {
+        useRegion = true;
+        const t1 = latLonToTile(ev.region.lat[1], ev.region.lon[0]);
+        const t2 = latLonToTile(ev.region.lat[0], ev.region.lon[0]);
+        const t3 = latLonToTile(0, ev.region.lon[0]);
+        const t4 = latLonToTile(0, ev.region.lon[1]);
+        rLo = Math.min(t1.row, t2.row); rHi = Math.max(t1.row, t2.row);
+        cLo = Math.min(t3.col, t4.col); cHi = Math.max(t3.col, t4.col);
+      }
       // For byOwner secedes (independence events) we transfer EVERY tagged
       // tile regardless of who currently owns it. So if France or anyone
       // else has been holding chunks of the seceding state's homeland, they
       // lose them too. The newly independent country always gets its full
       // HOI4 1936 territory. The player's own tiles are still preserved.
-      for (let r = 0; r < ROWS; r++) {
-        for (let c = 0; c < COLS; c++) {
-          const owner = state.ownership[r][c];
+      for (let r = rLo; r <= rHi; r++) {
+        for (let c = cLo; c <= cHi; c++) {
+          const cc = useRegion ? (((c % COLS) + COLS) % COLS) : c;
+          const owner = state.ownership[r][cc];
           if (owner === newCiv.id) continue;
           if (playerCiv && owner === playerCiv.id) continue;
-          if (!PASSABLE(MAP[r][c])) continue;
-          const px = c * TILE + (TILE >> 1);
+          if (!PASSABLE(MAP[r][cc])) continue;
+          const px = cc * TILE + (TILE >> 1);
           const py = r * TILE + (TILE >> 1);
           const pid = provinceGrid[py * MAP_W + px];
           if (pid === 0 || !sPidToTag[pid]) continue;
-          state.ownership[r][c] = newCiv.id;
+          state.ownership[r][cc] = newCiv.id;
           transferred++;
         }
       }
