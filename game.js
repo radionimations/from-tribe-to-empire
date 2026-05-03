@@ -4679,6 +4679,10 @@ function buildTintCache() {
 // Vector border path (Path2D) computed from the same ownership grid; rendered
 // in render() with anti-aliased stroke. Built fresh each tint rebuild.
 let borderPath = null;
+// Borders where at least one side is a tribe (era 0 / isStartingTribe).
+// Drawn with a soft halo + dashed thin line so tribes look visibly
+// different from established countries on the map.
+let tribalBorderPath = null;
 // Faint state-border path: edges between adjacent provinces that share an
 // owning civ but belong to different HOI4 states. Drawn under the main border.
 let stateBorderPath = null;
@@ -4758,8 +4762,20 @@ function buildTintCacheProvinces(tctx) {
 
   // Vector border path - sample every 2 pixels for ~4× speed; AA hides the gap.
   // Plus a separate stateBorderPath for state boundaries WITHIN a civ.
+  // tribalBorderPath collects edges where at least one side belongs to a
+  // tribal-era civ (era 0 or isStartingTribe) - these are drawn with a
+  // softer, fuzzier stroke so tribes look visibly distinct from countries.
   borderPath = new Path2D();
   stateBorderPath = new Path2D();
+  tribalBorderPath = new Path2D();
+  // civ-id set: which civs are still tribes (fuzzy borders)?
+  const _tribeIdSet = new Set();
+  for (const civ of state.civs) {
+    if (!civ.alive) continue;
+    if (civ.isStartingTribe || civ.era === 0) _tribeIdSet.add(civ.id);
+  }
+  // provinceCiv stores civ-id per province; map it to the tribe-set.
+  function _isTribeCiv(civId) { return civId >= 0 && _tribeIdSet.has(civId); }
   const STEP = 2;
   const haveStates = provinceToState !== null;
   for (let y = 0; y < h; y += STEP) {
@@ -4773,8 +4789,10 @@ function buildTintCacheProvinces(tctx) {
         const rightPid = provinceGrid[i + STEP];
         const rightCiv = provinceCiv[rightPid];
         if (meCiv !== rightCiv && (meCiv >= 0 || rightCiv >= 0)) {
-          borderPath.moveTo(x + STEP, y);
-          borderPath.lineTo(x + STEP, y + STEP);
+          const isTribal = _isTribeCiv(meCiv) || _isTribeCiv(rightCiv);
+          const path = isTribal ? tribalBorderPath : borderPath;
+          path.moveTo(x + STEP, y);
+          path.lineTo(x + STEP, y + STEP);
         } else if (haveStates && meCiv >= 0 && meCiv === rightCiv) {
           const rightState = rightPid > 0 ? provinceToState[rightPid] : 0;
           if (meState !== rightState && meState !== 0 && rightState !== 0) {
@@ -4787,8 +4805,10 @@ function buildTintCacheProvinces(tctx) {
         const botPid = provinceGrid[i + w * STEP];
         const botCiv = provinceCiv[botPid];
         if (meCiv !== botCiv && (meCiv >= 0 || botCiv >= 0)) {
-          borderPath.moveTo(x, y + STEP);
-          borderPath.lineTo(x + STEP, y + STEP);
+          const isTribal = _isTribeCiv(meCiv) || _isTribeCiv(botCiv);
+          const path = isTribal ? tribalBorderPath : borderPath;
+          path.moveTo(x, y + STEP);
+          path.lineTo(x + STEP, y + STEP);
         } else if (haveStates && meCiv >= 0 && meCiv === botCiv) {
           const botState = botPid > 0 ? provinceToState[botPid] : 0;
           if (meState !== botState && meState !== 0 && botState !== 0) {
@@ -4895,6 +4915,27 @@ function render() {
     ctx.lineCap = "square";
     ctx.lineJoin = "miter";
     ctx.stroke(stateBorderPath);
+  }
+  // Tribal borders FIRST so the country borders draw over the top of any
+  // overlap. A wide, soft halo stroke + a thin dashed line gives the
+  // hand-drawn fuzzy feel from the early days of the game.
+  if (tribalBorderPath) {
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    // Soft halo - thick, low-alpha, zoom-stable.
+    ctx.strokeStyle = "rgba(50, 30, 12, 0.28)";
+    ctx.lineWidth = Math.max(2.5, 6 / view.zoom);
+    ctx.stroke(tribalBorderPath);
+    ctx.strokeStyle = "rgba(60, 38, 14, 0.45)";
+    ctx.lineWidth = Math.max(1.4, 3 / view.zoom);
+    ctx.stroke(tribalBorderPath);
+    // Dashed thin line for the actual border edge.
+    ctx.setLineDash([Math.max(1.5, 3 / view.zoom), Math.max(1.5, 3 / view.zoom)]);
+    ctx.strokeStyle = "rgba(30, 18, 6, 0.8)";
+    ctx.lineWidth = Math.max(0.5, 1 / view.zoom);
+    ctx.stroke(tribalBorderPath);
+    ctx.restore();
   }
   // Country borders on top - anti-aliased, width inversely scaled with zoom.
   if (borderPath) {
@@ -7256,6 +7297,20 @@ function showCountryPanel(civ) {
   // Customize button — only shown for the player's own civ.
   const customBtn = document.getElementById("cp-customize-btn");
   if (customBtn) customBtn.style.display = civ.isPlayer ? "" : "none";
+  // Upgrade-to-country button - only when the player is still a tribe
+  // AND has reached eligibility (3+ settlements OR 50+ tiles OR has
+  // moved past the tribal era). Hidden once they've graduated.
+  const upgradeBtn = document.getElementById("cp-upgrade-btn");
+  if (upgradeBtn) {
+    let showUpgrade = false;
+    if (civ.isPlayer && civ.isStartingTribe) {
+      const tiles = countTiles(civ);
+      if (civ.settlements.length >= 3 || tiles >= 50 || civ.era >= 1) {
+        showUpgrade = true;
+      }
+    }
+    upgradeBtn.style.display = showUpgrade ? "" : "none";
+  }
 
   // Declare War + Form Alliance buttons - only when looking at OTHER civ
   // panels. If already at war/allied we show a banner instead of the button.
@@ -7694,6 +7749,13 @@ function saveCustomization() {
     log("event", civ.name + " renames itself to " + newName + ".");
   }
   civ.name = newName;
+  // Player taking on a civilized name graduates them out of the tribal
+  // bucket - their map borders flip from fuzzy to crisp and they become
+  // eligible for stale-empire splitting in the long run.
+  if (civ.isStartingTribe) {
+    civ.isStartingTribe = false;
+    log("event", civ.name + " emerges from the tribal age.");
+  }
   civ.customLeaderName = (document.getElementById("cm-leader-name").value || "").trim() || null;
   civ.customLeaderImg  = _cmDraft.portraitSrc || null;
   const flagChanged = (civ.customFlag || null) !== (_cmDraft.flagSrc || null);
@@ -7717,6 +7779,11 @@ function saveCustomization() {
 (function wireCustomizeModal() {
   const btn = document.getElementById("cp-customize-btn");
   if (btn) btn.addEventListener("click", openCustomizeModal);
+  // Upgrade-to-country button reuses the customize modal - the player
+  // picks a civilized name (era-appropriate prefix/suffix), and the save
+  // handler clears isStartingTribe.
+  const upBtn = document.getElementById("cp-upgrade-btn");
+  if (upBtn) upBtn.addEventListener("click", openCustomizeModal);
   const close = document.getElementById("cm-close");
   if (close) close.addEventListener("click", closeCustomizeModal);
   const cancel = document.getElementById("cm-cancel");
