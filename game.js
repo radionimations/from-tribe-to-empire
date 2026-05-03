@@ -3821,8 +3821,42 @@ function splitCiv(civ, n) {
       if (d < best) { best = d; coreIdx = i; }
     }
   }
-  // Origin name + directional suffix for siblings.
-  const originName = civ.name;
+  // Strip any directional prefix that a previous split tacked on so a
+  // re-split doesn't stack ("Northeastern Eastern Russia"). We walk back
+  // through previousNames to find the deepest non-directional ancestor.
+  const DIR_PREFIXES = [
+    "Northeastern ", "Northwestern ", "Southeastern ", "Southwestern ",
+    "Northern ", "Southern ", "Eastern ", "Western ", "Central ",
+  ];
+  function stripDir(name) {
+    let n = name;
+    for (let pass = 0; pass < 5; pass++) {
+      let stripped = false;
+      for (const p of DIR_PREFIXES) {
+        if (n.startsWith(p)) { n = n.slice(p.length); stripped = true; break; }
+      }
+      if (!stripped) break;
+    }
+    return n;
+  }
+  let originName = stripDir(civ.name);
+  // Walk previousNames for an even older un-prefixed ancestor.
+  for (const old of (civ.previousNames || []).slice().reverse()) {
+    const stripped = stripDir(old);
+    if (stripped === old) { originName = stripped; break; }
+  }
+  // After two or more rounds of splits, a name like "Western Russia"
+  // collides with another fragment's "Western Russia". A small Roman
+  // numeral disambiguates.
+  function uniqueName(candidate) {
+    if (!state.civs.some(c => c.alive && c.name === candidate)) return candidate;
+    const numerals = ["", " II", " III", " IV", " V", " VI", " VII", " VIII", " IX", " X"];
+    for (let i = 1; i < numerals.length; i++) {
+      const n = candidate + numerals[i];
+      if (!state.civs.some(c => c.alive && c.name === n)) return n;
+    }
+    return candidate + " " + state.year;   // last resort
+  }
   function dirFor(seed) {
     const cx = (minC + maxC) / 2, cy = (minR + maxR) / 2;
     const dx = seed.c - cx, dy = seed.r - cy;
@@ -3835,7 +3869,7 @@ function splitCiv(civ, n) {
     if (i === coreIdx) continue;
     const dir = dirFor(seeds[i]);
     const tint = shiftColor(civ.color, (i % 2 === 0 ? 0.18 : -0.18));
-    const fresh = makeCiv({ name: dir + originName, color: tint });
+    const fresh = makeCiv({ name: uniqueName(dir + originName), color: tint });
     state.civs.push(fresh);
     fresh.foundedYear = state.year;
     fresh.lastChangeYear = state.year;
@@ -3870,7 +3904,7 @@ function splitCiv(civ, n) {
   // happened. previousNames tracks the old name for `kill <X>` lookups.
   if (!civ.previousNames) civ.previousNames = [];
   civ.previousNames.push(civ.name);
-  civ.name = dirFor(seeds[coreIdx]) + originName;
+  civ.name = uniqueName(dirFor(seeds[coreIdx]) + originName);
   civ.lastChangeYear = state.year;
   invalidateTintCache();
   log("event", originName + " has fragmented into " + (newCivs.length + 1) + " successor states after centuries without change.");
