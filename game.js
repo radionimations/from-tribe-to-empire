@@ -3874,6 +3874,10 @@ function splitCiv(civ, n) {
     return uniqueName(genProcName());
   }
   const newCivs = [];
+  // Capture the parent's pre-split name so the family tree can link the
+  // freshly-spawned siblings under the original civ. Done before the
+  // surviving fragment gets renamed below.
+  const splitParentName = civ.name;
   for (let i = 0; i < seeds.length; i++) {
     if (i === coreIdx) continue;
     const tint = shiftColor(civ.color, (i % 2 === 0 ? 0.18 : -0.18));
@@ -3882,6 +3886,7 @@ function splitCiv(civ, n) {
     fresh.foundedYear = state.year;
     fresh.lastChangeYear = state.year;
     fresh.era = civ.era;
+    fresh.splitParentName = splitParentName;
     for (const c of state.civs) {
       if (c.id !== fresh.id) {
         fresh.relations[c.id] = (c.id === civ.id) ? 30 : 0;
@@ -5881,6 +5886,20 @@ function buildCivFamilyTree() {
         if (ev.replaces) link(ev.replaces, ev.civ.name, y);
       }
     }
+  }
+  // Runtime-created civs (stale-empire splits, console-spawned, etc) are
+  // not in HISTORICAL_EVENTS, so we walk live state.civs and graft their
+  // lineage onto the tree. previousNames captures rename chains (the
+  // surviving fragment of a split keeps its civ-id but gets a new name).
+  // splitParentName is set on freshly-spawned split siblings.
+  for (const civ of state.civs) {
+    if (!civ) continue;
+    ensure(civ.name, civ.foundedYear != null ? civ.foundedYear : null);
+    if (Array.isArray(civ.previousNames) && civ.previousNames.length > 0) {
+      const chain = [...civ.previousNames, civ.name];
+      for (let i = 0; i + 1 < chain.length; i++) link(chain[i], chain[i + 1], civ.lastChangeYear);
+    }
+    if (civ.splitParentName) link(civ.splitParentName, civ.name, civ.foundedYear);
   }
   // Roots = nodes with no parent.
   const roots = [];
