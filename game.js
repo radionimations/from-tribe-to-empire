@@ -1581,6 +1581,20 @@ if (typeof window !== "undefined") {
   window.SAME_IDENTITY_OVERRIDES = SAME_IDENTITY_OVERRIDES;
 }
 
+// Map a game year to the appropriate era index, using each era's
+// yearGuide as the boundary. Used when fresh-spawning civs (independence
+// secedes, post-WWII liberations, far-future events) so a country born
+// in 1991 doesn't start at Tribal Age 0 and get rendered as a fuzzy
+// meatball blob just because its techPoints haven't accumulated yet.
+function yearToEra(year) {
+  if (typeof ERAS === "undefined") return 0;
+  let era = 0;
+  for (let i = 0; i < ERAS.length; i++) {
+    if (year >= ERAS[i].yearGuide) era = i;
+  }
+  return era;
+}
+
 // Returns the faction this civ belongs to, or null. Helper used by the
 // country panel + AI checks.
 function findFactionForCiv(civId) {
@@ -2082,6 +2096,14 @@ function fireEvent(ev) {
       // of Poland, East Slavs -> Muscovy, etc), it's no longer a tribe -
       // its descendants should be eligible for stale-empire splitting.
       civ.isStartingTribe = false;
+      // Catch the era up to the calendar - a civ being renamed to its
+      // modern form (Germans -> Germany 1871) shouldn't still be Tribal
+      // Age just because its techPoints haven't ticked up enough.
+      const yearEra = yearToEra(state.year);
+      if (civ.era < yearEra) {
+        civ.era = yearEra;
+        civ.techPoints = Math.max(civ.techPoints, ERAS[yearEra].threshold);
+      }
       applyFlagColor(civ);
       log("event", ev.message);
       invalidateTintCache();
@@ -2352,6 +2374,12 @@ function fireEvent(ev) {
       // look up by). spawn just supplies color/lat/lon.
       newCiv = makeCiv({ name: ev.civ || ev.spawn.name, color: ev.spawn.color || "#888888" });
       state.civs.push(newCiv);
+      // A new state seceding in 1991 isn't a stone-age tribe - bring its
+      // era up to the current year (Industrial / Modern / Information)
+      // so its borders render crisp instead of fuzzy and so it qualifies
+      // for late-era unit production right away.
+      newCiv.era = yearToEra(state.year);
+      newCiv.techPoints = ERAS[newCiv.era].threshold;
       applyFlagColor(newCiv);   // pull avg color from the flag if there's a tag
       for (const c of state.civs) {
         if (c.id !== newCiv.id) {
@@ -2655,6 +2683,12 @@ function fireEvent(ev) {
       old.lastChangeYear = state.year;
       // No longer a starting tribe once it adopts a civilized successor name.
       old.isStartingTribe = false;
+      // Catch the era up to the calendar.
+      const yearEra = yearToEra(state.year);
+      if (old.era < yearEra) {
+        old.era = yearEra;
+        old.techPoints = Math.max(old.techPoints, ERAS[yearEra].threshold);
+      }
       log("event", ev.message);
       invalidateTintCache();
       return;
@@ -2682,6 +2716,11 @@ function fireEvent(ev) {
   // the tile from the previous owner.
   const civ = makeCiv({ name: ev.civ.name, color: ev.civ.color });
   state.civs.push(civ);
+  // Era from the current year so a Mongol spawn at 1206 isn't suddenly
+  // a Tribal Age civ with fuzzy borders, and a Modern Egypt 1956 starts
+  // already rendered as a country, not a tribe.
+  civ.era = yearToEra(state.year);
+  civ.techPoints = ERAS[civ.era].threshold;
   applyFlagColor(civ);   // pull avg color from the flag if there's a tag
   for (const c of state.civs) {
     if (c.id !== civ.id) {
