@@ -3065,7 +3065,13 @@ function tick() {
       else if (tiles >= 800) pieces = 3;
       else if (tiles >= 250) pieces = 2;
       else continue;                     // Lithuania-sized, leave alone
-      if (Math.random() < 0.18) splitCiv(civ, pieces);
+      // Bigger empires are harder to keep stable - their per-check fracture
+      // chance scales with size so Russia-sized civs don't sit eligible
+      // for centuries before they finally split.
+      const chance = pieces === 4 ? 0.40 :
+                     pieces === 3 ? 0.28 :
+                     0.18;
+      if (Math.random() < chance) splitCiv(civ, pieces);
     }
   }
 
