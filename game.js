@@ -2989,6 +2989,51 @@ function tick() {
   state.year += YEARS_PER_TURN;
   processEvents();
 
+  // 5a. Faction recruitment. NATO recruits non-member civs that have
+  // non-negative relations with Germany; CSTO does the same with Russia.
+  // An invitation roll happens every 50 game years (10 ticks); the
+  // candidate then rolls an acceptance check biased by their relation
+  // with the anchor. Joining locks relations with every existing member
+  // to +100. Already-faction'd civs are skipped.
+  if (state.turn % 10 === 0 && state.factions && state.factions.length > 0) {
+    const recruitConfigs = [
+      { name: "NATO", anchor: "Germany" },
+      { name: "CSTO", anchor: "Russia" },
+    ];
+    for (const cfg of recruitConfigs) {
+      const faction = state.factions.find(f => f.name === cfg.name);
+      if (!faction) continue;
+      const anchorCiv = state.civs.find(c => c.alive && (c.name === cfg.anchor || (c.previousNames || []).includes(cfg.anchor)));
+      if (!anchorCiv) continue;
+      const memberIdSet = new Set(faction.memberIds);
+      for (const candidate of state.civs) {
+        if (!candidate.alive || candidate.isPlayer) continue;
+        if (memberIdSet.has(candidate.id)) continue;
+        if (findFactionForCiv(candidate.id)) continue;   // already in some bloc
+        const rel = candidate.relations[anchorCiv.id] || 0;
+        if (rel < 0) continue;                           // hostile -> no invite
+        if (Math.random() > 0.04) continue;              // ~4% per check per pair
+        // Acceptance probability scales with how friendly they already
+        // are toward the anchor (0 -> 30%, 100 -> 80%).
+        const acceptChance = 0.3 + Math.min(1, rel / 100) * 0.5;
+        if (Math.random() > acceptChance) {
+          log("event", candidate.name + " declines an invitation to join " + cfg.name + ".");
+          continue;
+        }
+        faction.memberIds.push(candidate.id);
+        memberIdSet.add(candidate.id);
+        for (const memberId of faction.memberIds) {
+          if (memberId === candidate.id) continue;
+          const m = state.civs.find(c => c.id === memberId && c.alive);
+          if (!m) continue;
+          candidate.relations[m.id] = 100;
+          m.relations[candidate.id] = 100;
+        }
+        log("peace", candidate.name + " joins " + cfg.name + ".");
+      }
+    }
+  }
+
   // 5b. Stale-empire splitting. Civs that have outlived Rome (>1200 years)
   // and haven't had a major event in centuries can fragment based on
   // their territorial size. Lithuania-sized empires don't split, Germany-
@@ -3919,10 +3964,39 @@ function splitCiv(civ, n) {
     if (target) state.ownership[t.r][t.c] = target.civ.id;
   }
   reassignSettlementsByTileOwner();
+  // Make sure every fragment has at least one settlement, otherwise it
+  // capitulates the moment a neighbour glances at it. Each fresh sibling
+  // (and the surviving fragment, in the rare case it lost its only city
+  // to a sibling) gets a capital planted on the tile closest to its seed.
+  function plantCapitalIfEmpty(fragment, seedC, seedR) {
+    if (fragment.settlements.length > 0) return;
+    let bestC = -1, bestR = -1, bestD = Infinity;
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (state.ownership[r][c] !== fragment.id) continue;
+        if (!PASSABLE(MAP[r][c])) continue;
+        const dc = c - seedC, dr = r - seedR;
+        const d = dc * dc + dr * dr;
+        if (d < bestD) { bestD = d; bestC = c; bestR = r; }
+      }
+    }
+    if (bestC < 0) return;
+    fragment.settlements.push({
+      id: nextSettlementId++, col: bestC, row: bestR,
+      name: settlementName(fragment, 0),
+      pop: 3, food: 0, prod: 0, queue: [], walls: false,
+    });
+  }
+  for (const nc of newCivs) plantCapitalIfEmpty(nc.civ, seeds[nc.seedIdx].c, seeds[nc.seedIdx].r);
+  plantCapitalIfEmpty(civ, seeds[coreIdx].c, seeds[coreIdx].r);
   // Rename the surviving fragment with a fresh procedural name too. The
   // civ-id and previousNames stay intact so its history, relations, and
   // family-tree position survive the split - only the display name and
-  // territory change.
+  // territory change. Crucially the surviving fragment KEEPS its
+  // diplomatic relations (relations dict is keyed by civ-id) AND its
+  // faction memberships (state.factions[*].memberIds reference civ.id),
+  // so a NATO Russia that splits leaves the surviving fragment in NATO
+  // while the breakaway siblings start with neutral relations.
   const oldName = civ.name;
   if (!civ.previousNames) civ.previousNames = [];
   civ.previousNames.push(civ.name);
