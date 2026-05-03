@@ -1852,6 +1852,9 @@ function spawnHistoricalCivs() {
     let pos = h.state ? tileFromHoi4State(h.state) : null;
     if (!pos) pos = latLonToTile(h.lat, h.lon);
     const civ = makeCiv({ name: h.name, color: h.color });
+    // Tribes don't fragment from staleness - they're meant to be replaced
+    // by their successors (Polans -> Duchy of Poland, etc) instead.
+    civ.isStartingTribe = true;
     state.civs.push(civ);
     placeCivOnMap(civ, pos.col, pos.row);
   }
@@ -2891,6 +2894,29 @@ function tick() {
   // tick instead of every tick. Keeps the per-tick AI cost flat as more civs
   // accumulate later in history.
   const aiPeriod = state.speed >= 5 ? 3 : (state.speed >= 4 ? 2 : 1);
+  // Player auto-path: armies with a `dest` (set by right-click) walk one
+  // tile per tick toward their goal. If the path hits an enemy, the move
+  // resolves into combat and the dest clears. If blocked or arrived,
+  // the dest also clears.
+  const player = state.civs[0];
+  if (player && player.isPlayer && player.alive) {
+    for (const army of player.armies.slice()) {
+      if (!army.dest) continue;
+      while (army.moves > 0) {
+        if (army.col === army.dest.col && army.row === army.dest.row) { army.dest = null; break; }
+        const step = stepTowards(army.col, army.row, army.dest.col, army.dest.row, army.civId, false);
+        if (!step) { army.dest = null; break; }
+        const before = army.moves;
+        tryMoveOrAttack(army, step.col, step.row);
+        if (army.moves >= before) { army.dest = null; break; }
+        // If combat resolved, the army may have died - drop out cleanly.
+        if (!player.armies.includes(army)) break;
+        // If we just took a tile, that single step is enough this tick -
+        // the user wanted "one tile per cooldown" pacing.
+        break;
+      }
+    }
+  }
   for (const civ of state.civs) {
     if (!civ.alive || civ.isPlayer) continue;
     if (((civ.id + state.turn) % aiPeriod) !== 0) continue;
@@ -2942,8 +2968,19 @@ function tick() {
   // surviving fragment keeps the original civ-id so its history,
   // relations, and family-tree lineage stay intact.
   if (state.turn % 5 === 0) {
+    // Civs that are themselves the "founding template" of a chronicle
+    // skip stale-empire splitting. Starting tribes evolve through their
+    // own rename chains; Rome itself is preserved so its full historical
+    // arc (Republic -> Empire -> split into East/West) plays out via
+    // scripted events rather than random fragmentation. Includes any
+    // name in the civ's previousNames history so killing+renaming Rome
+    // wouldn't bypass the rule.
+    const SPLIT_BLOCKLIST = new Set(["Rome", "Western Rome", "Romano-Goths"]);
     for (const civ of state.civs.slice()) {
       if (!civ.alive || civ.isPlayer) continue;
+      if (civ.isStartingTribe) continue;
+      if (SPLIT_BLOCKLIST.has(civ.name)) continue;
+      if ((civ.previousNames || []).some(n => SPLIT_BLOCKLIST.has(n))) continue;
       if (civ.foundedYear == null || civ.lastChangeYear == null) continue;
       const lifespan = state.year - civ.foundedYear;
       const stale = state.year - civ.lastChangeYear;
@@ -2960,7 +2997,6 @@ function tick() {
   }
 
   // 6. Win/lose check
-  const player = state.civs[0];
   if (player && player.isPlayer && player.settlements.length === 0 && player.armies.length === 0) {
     state.phase = "gameover";
     log("death", "Your people have been wiped from history. Game over.");
@@ -4759,6 +4795,28 @@ function render() {
       }
     }
   }
+  // Auto-path destination markers for player units. A small gold X over
+  // the target tile + a faint line from the unit so the player can see
+  // where each unit is heading.
+  const _player = state.civs[0];
+  if (_player && _player.isPlayer && _player.alive) {
+    for (const a of _player.armies) {
+      if (!a.dest) continue;
+      const dx = a.dest.col * TILE + TILE / 2;
+      const dy = a.dest.row * TILE + TILE / 2;
+      const ax = a.col * TILE + TILE / 2;
+      const ay = a.row * TILE + TILE / 2;
+      ctx.strokeStyle = "rgba(255, 210, 74, 0.7)";
+      ctx.lineWidth = Math.max(0.5, 1 / view.zoom);
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(dx, dy); ctx.stroke();
+      ctx.strokeStyle = "#ffd24a";
+      ctx.lineWidth = Math.max(0.8, 1.5 / view.zoom);
+      ctx.beginPath();
+      ctx.moveTo(dx - 2.2, dy - 2.2); ctx.lineTo(dx + 2.2, dy + 2.2);
+      ctx.moveTo(dx - 2.2, dy + 2.2); ctx.lineTo(dx + 2.2, dy - 2.2);
+      ctx.stroke();
+    }
+  }
 
   // Real-world cities from HOI4 state files: major shown with names, minor as dots
   drawHoi4Cities();
@@ -5340,7 +5398,10 @@ canvas.addEventListener("wheel", (e) => {
   render();
 }, { passive: false });
 
-// Pan: right-click drag, middle-click drag, or space+drag
+// Pan: right-click drag, middle-click drag, or space+drag.
+// Right-click WITHOUT drag (single click) is a "move-here" command for
+// the currently-selected player unit - it auto-paths there one tile per
+// turn until it arrives, gets blocked, or starts a fight.
 let dragging = null;
 canvas.addEventListener("mousedown", (e) => {
   if (e.button === 2 || e.button === 1 || (e.button === 0 && e.shiftKey)) {
@@ -5349,6 +5410,8 @@ canvas.addEventListener("mousedown", (e) => {
       startX: e.clientX, startY: e.clientY,
       panX: view.panX, panY: view.panY,
       moved: false,
+      button: e.button,
+      clientX: e.clientX, clientY: e.clientY,
     };
   }
 });
@@ -5364,9 +5427,31 @@ window.addEventListener("mousemove", (e) => {
 window.addEventListener("mouseup", (e) => {
   if (dragging) {
     if (dragging.moved) suppressNextClick = true;
+    // Right-click without drag = "auto-path here" for the selected unit.
+    if (!dragging.moved && dragging.button === 2 && state.phase === "playing") {
+      const hit = pixelToTile(dragging.clientX, dragging.clientY);
+      if (hit.col >= 0 && hit.col < COLS && hit.row >= 0 && hit.row < ROWS) {
+        setPlayerUnitDestination(hit.col, hit.row);
+      }
+    }
     dragging = null;
   }
 });
+
+// Find the player's currently-selected army (if any) and queue an
+// auto-walk to (col, row). The unit will step one tile per tick using
+// stepTowards until it arrives, hits an enemy, or gets blocked.
+function setPlayerUnitDestination(col, row) {
+  const player = state.civs[0];
+  if (!player || !player.isPlayer || !player.alive) return;
+  if (!state.selectedTile) return;
+  const { col: sc, row: sr } = state.selectedTile;
+  const army = player.armies.find(a => a.col === sc && a.row === sr);
+  if (!army) return;
+  if (army.col === col && army.row === row) { army.dest = null; return; }
+  army.dest = { col, row };
+  flashHint("Auto-moving to (" + col + "," + row + ") - one tile per turn");
+}
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
 // =================== HOVER TOOLTIP (city/settlement names) ===================
