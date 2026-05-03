@@ -3013,7 +3013,7 @@ function tick() {
       const lifespan = state.year - civ.foundedYear;
       const stale = state.year - civ.lastChangeYear;
       if (lifespan < 1200) continue;     // longer than Rome
-      if (stale < 150) continue;         // grant time between fractures
+      if (stale < 300) continue;         // grant time between fractures
       const tiles = countTiles(civ);
       let pieces = 0;
       if (tiles >= 1500) pieces = 4;
@@ -4560,7 +4560,7 @@ function buildTintCache() {
     }
     for (const civ of state.civs) {
       const a = acc.get(civ.id);
-      if (!a || a.n === 0) { civ._centroid = null; civ._angle = 0; continue; }
+      if (!a || a.n === 0) { civ._centroid = null; civ._angle = 0; civ._components = []; continue; }
       const cx = a.sx / a.n, cy = a.sy / a.n;
       const Mxx = a.sxx / a.n - cx * cx;
       const Myy = a.syy / a.n - cy * cy;
@@ -4579,6 +4579,13 @@ function buildTintCache() {
       civ._centroid = { col: cx, row: cy, tiles: a.n };
       civ._angle = angle;
       civ._extent = { major: Math.sqrt(Math.max(0.5, lMax)), minor: Math.sqrt(Math.max(0.5, lMin)) };
+      // Pre-province-grid fallback: a single bbox-derived component so
+      // drawCivBlobLabels still has something to draw.
+      civ._components = [{
+        col: cx, row: cy, tiles: a.n, angle,
+        major: Math.sqrt(Math.max(0.5, lMax)),
+        minor: Math.sqrt(Math.max(0.5, lMin)),
+      }];
     }
     tintCacheDirty = false;
     return;
@@ -4713,40 +4720,68 @@ function buildTintCacheProvinces(tctx) {
     }
   }
 
-  // Centroid + PCA for label placement, computed from tile ownership.
-  const acc = new Map();
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      const o = state.ownership[r][c];
-      if (o < 0) continue;
-      let a = acc.get(o);
-      if (!a) { a = { sx: 0, sy: 0, sxx: 0, sxy: 0, syy: 0, n: 0 }; acc.set(o, a); }
-      a.sx += c; a.sy += r;
-      a.sxx += c * c; a.sxy += c * r; a.syy += r * r;
-      a.n++;
+  // Connected-component centroids per civ. Each landmass a country occupies
+  // gets its own label, so a colonial empire (Britain) shows its name on
+  // every continent it holds territory in, not just at the centre-of-mass
+  // somewhere in the Atlantic.
+  for (const civ of state.civs) civ._components = [];
+  const _seen = new Uint8Array(ROWS * COLS);
+  for (let r0 = 0; r0 < ROWS; r0++) {
+    for (let c0 = 0; c0 < COLS; c0++) {
+      if (_seen[r0 * COLS + c0]) continue;
+      const owner = state.ownership[r0][c0];
+      if (owner < 0) { _seen[r0 * COLS + c0] = 1; continue; }
+      // BFS over same-owner-connected tiles (4-connected, east-west wrap).
+      const stack = [c0, r0];
+      _seen[r0 * COLS + c0] = 1;
+      let sx = 0, sy = 0, sxx = 0, sxy = 0, syy = 0, n = 0;
+      while (stack.length) {
+        const r = stack.pop(), c = stack.pop();
+        sx += c; sy += r; sxx += c * c; sxy += c * r; syy += r * r; n++;
+        for (const [nc, nr] of neighbors(c, r)) {
+          const idx = nr * COLS + nc;
+          if (_seen[idx]) continue;
+          if (state.ownership[nr][nc] !== owner) continue;
+          _seen[idx] = 1;
+          stack.push(nc); stack.push(nr);
+        }
+      }
+      const cx = sx / n, cy = sy / n;
+      const Mxx = sxx / n - cx * cx;
+      const Myy = syy / n - cy * cy;
+      const Mxy = sxy / n - cx * cy;
+      let angle = 0.5 * Math.atan2(2 * Mxy, Mxx - Myy);
+      const tr = Mxx + Myy;
+      const det = Mxx * Myy - Mxy * Mxy;
+      const disc = Math.max(0, tr * tr / 4 - det);
+      const lMax = tr / 2 + Math.sqrt(disc);
+      const lMin = tr / 2 - Math.sqrt(disc);
+      const aspect = lMin > 0 ? Math.sqrt(lMax / lMin) : 1;
+      if (aspect < 1.25) angle = 0;
+      const cap = Math.PI / 3;
+      if (angle > cap) angle = cap;
+      if (angle < -cap) angle = -cap;
+      const idx = civIndexById(owner);
+      if (idx >= 0) {
+        state.civs[idx]._components.push({
+          col: cx, row: cy, tiles: n, angle,
+          major: Math.sqrt(Math.max(0.5, lMax)),
+          minor: Math.sqrt(Math.max(0.5, lMin)),
+        });
+      }
     }
   }
+  // Mirror the largest component into the legacy _centroid / _angle slots
+  // so any code path still reading those keeps working.
   for (const civ of state.civs) {
-    const a = acc.get(civ.id);
-    if (!a || a.n === 0) { civ._centroid = null; civ._angle = 0; continue; }
-    const cx = a.sx / a.n, cy = a.sy / a.n;
-    const Mxx = a.sxx / a.n - cx * cx;
-    const Myy = a.syy / a.n - cy * cy;
-    const Mxy = a.sxy / a.n - cx * cy;
-    let angle = 0.5 * Math.atan2(2 * Mxy, Mxx - Myy);
-    const tr = Mxx + Myy;
-    const det = Mxx * Myy - Mxy * Mxy;
-    const disc = Math.max(0, tr * tr / 4 - det);
-    const lMax = tr / 2 + Math.sqrt(disc);
-    const lMin = tr / 2 - Math.sqrt(disc);
-    const aspect = lMin > 0 ? Math.sqrt(lMax / lMin) : 1;
-    if (aspect < 1.25) angle = 0;
-    const cap = Math.PI / 3;
-    if (angle > cap) angle = cap;
-    if (angle < -cap) angle = -cap;
-    civ._centroid = { col: cx, row: cy, tiles: a.n };
-    civ._angle = angle;
-    civ._extent = { major: Math.sqrt(Math.max(0.5, lMax)), minor: Math.sqrt(Math.max(0.5, lMin)) };
+    if (!civ._components || civ._components.length === 0) {
+      civ._centroid = null; civ._angle = 0; civ._extent = null; continue;
+    }
+    let best = civ._components[0];
+    for (const c of civ._components) if (c.tiles > best.tiles) best = c;
+    civ._centroid = { col: best.col, row: best.row, tiles: best.tiles };
+    civ._angle = best.angle;
+    civ._extent = { major: best.major, minor: best.minor };
   }
 
   tctx.putImageData(_cachedImageData, 0, 0);
@@ -4994,61 +5029,53 @@ function inscribedExtent(px, py, dx, dy, civId) {
 }
 
 function drawCivBlobLabels() {
-  // Country names are PAINTED ON the territory - they fit inside the country's
-  // borders along its principal axis, sized to never overflow.
+  // Country names are PAINTED ON each connected landmass the civ holds.
+  // A colonial empire shows its name on every continent it occupies, not
+  // just once at the centre-of-mass between continents.
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   for (const civ of state.civs) {
-    if (!civ.alive || !civ._centroid) continue;
-    const tiles = civ._centroid.tiles;
-    if (tiles < 2) continue;
-
-    // Centroid in MAP pixel space
-    let cx = (civ._centroid.col + 0.5) * TILE;
-    let cy = (civ._centroid.row + 0.5) * TILE;
-    let angle = civ._angle || 0;
-    let dx = Math.cos(angle), dy = Math.sin(angle);
-
-    // Probe inscribed extent in both directions along the principal axis.
-    let lenFwd = inscribedExtent(cx, cy, dx, dy, civ.id);
-    let lenRev = inscribedExtent(cx, cy, -dx, -dy, civ.id);
-
-    // If centroid happens to be on water/another civ (rare for small civs),
-    // fall back to the centroid itself with no probe.
-    if (lenFwd + lenRev < TILE * 1.5) {
-      lenFwd = lenRev = TILE * 1.0;
-    }
-
-    // Recenter the label between the two extremes; also probe perpendicular
-    // for height available in MAP pixels.
-    const shift = (lenFwd - lenRev) * 0.5;
-    cx += dx * shift;
-    cy += dy * shift;
-    const lengthMap = lenFwd + lenRev;
-
-    const heightMap = inscribedExtent(cx, cy, -dy, dx, civ.id) +
-                      inscribedExtent(cx, cy, dy, -dx, civ.id);
-
+    if (!civ.alive || !civ._components || civ._components.length === 0) continue;
     const text = civ.name.toUpperCase();
-    // Estimated text-width factor for serif bold caps
-    const charW = 0.58;
-    const fitByWidth = lengthMap * 0.86 / Math.max(4, text.length * charW);
-    const fitByHeight = heightMap * 0.55;
-    const fontMap = Math.max(2, Math.min(56, Math.min(fitByWidth, fitByHeight)));
+    for (const comp of civ._components) {
+      if (comp.tiles < 2) continue;
+      let cx = (comp.col + 0.5) * TILE;
+      let cy = (comp.row + 0.5) * TILE;
+      const angle = comp.angle || 0;
+      const dx = Math.cos(angle), dy = Math.sin(angle);
 
-    if (fontMap < 2.5) continue;   // too cramped to read
+      // Probe inscribed extent along the principal axis to fit the label
+      // within the component's borders.
+      let lenFwd = inscribedExtent(cx, cy, dx, dy, civ.id);
+      let lenRev = inscribedExtent(cx, cy, -dx, -dy, civ.id);
+      if (lenFwd + lenRev < TILE * 1.5) {
+        lenFwd = lenRev = TILE * 1.0;
+      }
+      const shift = (lenFwd - lenRev) * 0.5;
+      cx += dx * shift;
+      cy += dy * shift;
+      const lengthMap = lenFwd + lenRev;
+      const heightMap = inscribedExtent(cx, cy, -dy, dx, civ.id) +
+                        inscribedExtent(cx, cy, dy, -dx, civ.id);
 
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(angle);
-    ctx.font = `bold ${fontMap}px "Trajan Pro", "Cinzel", Georgia, serif`;
-    ctx.lineWidth = Math.max(0.4, fontMap * 0.22);
-    ctx.lineJoin = "round";
-    ctx.strokeStyle = "rgba(245,235,210,0.9)";
-    ctx.strokeText(text, 0, 0);
-    ctx.fillStyle = "#15110a";
-    ctx.fillText(text, 0, 0);
-    ctx.restore();
+      const charW = 0.58;
+      const fitByWidth = lengthMap * 0.86 / Math.max(4, text.length * charW);
+      const fitByHeight = heightMap * 0.55;
+      const fontMap = Math.max(2, Math.min(56, Math.min(fitByWidth, fitByHeight)));
+      if (fontMap < 2.5) continue;   // too cramped to read
+
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(angle);
+      ctx.font = `bold ${fontMap}px "Trajan Pro", "Cinzel", Georgia, serif`;
+      ctx.lineWidth = Math.max(0.4, fontMap * 0.22);
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(245,235,210,0.9)";
+      ctx.strokeText(text, 0, 0);
+      ctx.fillStyle = "#15110a";
+      ctx.fillText(text, 0, 0);
+      ctx.restore();
+    }
   }
 }
 
