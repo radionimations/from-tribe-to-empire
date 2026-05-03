@@ -5949,6 +5949,14 @@ function showCivFamilyTree() {
   //             gone for good -> X stamp.
   const aliveNames = new Set();
   for (const c of state.civs) if (c.alive) aliveNames.add(c.name);
+  // Player's current name + every name they've ever held. Used to mark
+  // their card with a gold glow in the tree.
+  const playerNameSet = new Set();
+  const _player = state.civs[0];
+  if (_player && _player.isPlayer) {
+    playerNameSet.add(_player.name);
+    for (const n of _player.previousNames || []) playerNameSet.add(n);
+  }
   function markStatus(node, visiting) {
     if (node._statusDone) return node._status;
     if (visiting.has(node)) return "alive";   // cycle guard
@@ -6010,6 +6018,9 @@ function showCivFamilyTree() {
     // event (Republic of Latvia, Republic of Poland, etc). Gets a blue
     // glow so the player can see what's coming.
     if (node._status === "future" && node.viaIndependence) cls += " future-independence";
+    // Player's own civ (current name OR any previous name) gets a gold
+    // glow so it's easy to find in a sprawling tree.
+    if (playerNameSet.has(node.name)) cls += " player-own";
     card.className = cls;
     const url = flagUrlForName(node.name);
     if (url) {
@@ -7512,7 +7523,17 @@ function saveCustomization() {
   const tpl = nameTemplateForEra(civ.era);
   const middle = (document.getElementById("cm-name").value || "").trim();
   if (!middle) { alert("Please enter a name."); return; }
-  civ.name = tpl.prefix + middle + tpl.suffix;
+  const newName = tpl.prefix + middle + tpl.suffix;
+  // If the player renamed their civ, record the old name so the family
+  // tree shows the rename as a child node (and console kill <oldname>
+  // still finds them by their previous identity).
+  if (newName !== civ.name) {
+    if (!civ.previousNames) civ.previousNames = [];
+    civ.previousNames.push(civ.name);
+    civ.lastChangeYear = state.year;
+    log("event", civ.name + " renames itself to " + newName + ".");
+  }
+  civ.name = newName;
   civ.customLeaderName = (document.getElementById("cm-leader-name").value || "").trim() || null;
   civ.customLeaderImg  = _cmDraft.portraitSrc || null;
   const flagChanged = (civ.customFlag || null) !== (_cmDraft.flagSrc || null);

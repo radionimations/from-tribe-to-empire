@@ -743,6 +743,13 @@
     box-shadow: 0 0 12px rgba(93, 169, 232, 0.65), 0 0 22px rgba(93, 169, 232, 0.35);
   }
   #tree-modal .tree-card.future-independence .tree-name { color: #a8c8ff; }
+  /* Player's own civ (current name OR any previous identity) - gold glow
+     so it's easy to find your own lineage in a sprawling tree. */
+  #tree-modal .tree-card.player-own {
+    border-color: #ffd24a;
+    box-shadow: 0 0 14px rgba(255, 210, 74, 0.75), 0 0 26px rgba(255, 210, 74, 0.4);
+  }
+  #tree-modal .tree-card.player-own .tree-name { color: #ffe8a0; }
   /* Extinct lineage: civ + descendants will never appear (e.g. tribe was
      killed before its children could spawn). Greyed, with a red ✕ stamp. */
   #tree-modal .tree-card.extinct {
