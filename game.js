@@ -3821,33 +3821,9 @@ function splitCiv(civ, n) {
       if (d < best) { best = d; coreIdx = i; }
     }
   }
-  // Strip any directional prefix that a previous split tacked on so a
-  // re-split doesn't stack ("Northeastern Eastern Russia"). We walk back
-  // through previousNames to find the deepest non-directional ancestor.
-  const DIR_PREFIXES = [
-    "Northeastern ", "Northwestern ", "Southeastern ", "Southwestern ",
-    "Northern ", "Southern ", "Eastern ", "Western ", "Central ",
-  ];
-  function stripDir(name) {
-    let n = name;
-    for (let pass = 0; pass < 5; pass++) {
-      let stripped = false;
-      for (const p of DIR_PREFIXES) {
-        if (n.startsWith(p)) { n = n.slice(p.length); stripped = true; break; }
-      }
-      if (!stripped) break;
-    }
-    return n;
-  }
-  let originName = stripDir(civ.name);
-  // Walk previousNames for an even older un-prefixed ancestor.
-  for (const old of (civ.previousNames || []).slice().reverse()) {
-    const stripped = stripDir(old);
-    if (stripped === old) { originName = stripped; break; }
-  }
-  // After two or more rounds of splits, a name like "Western Russia"
-  // collides with another fragment's "Western Russia". A small Roman
-  // numeral disambiguates.
+  // Procedurally generate a place-name from syllable banks. Each fragment
+  // (including the surviving one) gets a fresh invented name so chains of
+  // splits don't pile up directional prefixes ("Northeastern Eastern X").
   function uniqueName(candidate) {
     if (!state.civs.some(c => c.alive && c.name === candidate)) return candidate;
     const numerals = ["", " II", " III", " IV", " V", " VI", " VII", " VIII", " IX", " X"];
@@ -3855,21 +3831,31 @@ function splitCiv(civ, n) {
       const n = candidate + numerals[i];
       if (!state.civs.some(c => c.alive && c.name === n)) return n;
     }
-    return candidate + " " + state.year;   // last resort
+    return candidate + " " + state.year;
   }
-  function dirFor(seed) {
-    const cx = (minC + maxC) / 2, cy = (minR + maxR) / 2;
-    const dx = seed.c - cx, dy = seed.r - cy;
-    if (Math.abs(dx) > Math.abs(dy) * 1.5) return dx < 0 ? "Western " : "Eastern ";
-    if (Math.abs(dy) > Math.abs(dx) * 1.5) return dy < 0 ? "Northern " : "Southern ";
-    return (dy < 0 ? "North" : "South") + (dx < 0 ? "western " : "eastern ");
+  function genProcName() {
+    const starts = ["Vor","Kor","Bal","Tor","Mer","Lor","Sav","Mar","Cal","Drak","Esh","Hir","Lir","Mok","Nor","Pra","Quil","Riv","Stol","Tav","Ulv","Vas","Wen","Xan","Yor","Zor","Ari","Ber","Den","Eri","Fal","Gal","Hel","Iv","Jor","Kal","Liv","Mil","Olv","Pesh","Rud","Sver","Tym","Verch","Yel","Zaph","Tark","Brem","Olosh"];
+    const mids = ["an","or","el","in","ar","ev","il","us","es","ich","yn","ov","im","ash"];
+    const ends = ["ia","land","stan","burg","grad","ovia","esh","ova","ek","or","ier","av","ic","ovich","heim","mark","valdt","gard","ish","aria","ovny"];
+    const useMid = Math.random() < 0.45;
+    return starts[Math.floor(Math.random() * starts.length)]
+      + (useMid ? mids[Math.floor(Math.random() * mids.length)] : "")
+      + ends[Math.floor(Math.random() * ends.length)];
+  }
+  // Try a handful of generated names and pick a unique one. Falls back
+  // to Roman-numeral suffix via uniqueName() if the bank gives a clash.
+  function genUnique() {
+    for (let tries = 0; tries < 12; tries++) {
+      const n = genProcName();
+      if (!state.civs.some(c => c.alive && c.name === n)) return n;
+    }
+    return uniqueName(genProcName());
   }
   const newCivs = [];
   for (let i = 0; i < seeds.length; i++) {
     if (i === coreIdx) continue;
-    const dir = dirFor(seeds[i]);
     const tint = shiftColor(civ.color, (i % 2 === 0 ? 0.18 : -0.18));
-    const fresh = makeCiv({ name: uniqueName(dir + originName), color: tint });
+    const fresh = makeCiv({ name: genUnique(), color: tint });
     state.civs.push(fresh);
     fresh.foundedYear = state.year;
     fresh.lastChangeYear = state.year;
@@ -3900,14 +3886,17 @@ function splitCiv(civ, n) {
     if (target) state.ownership[t.r][t.c] = target.civ.id;
   }
   reassignSettlementsByTileOwner();
-  // Rename the surviving fragment so the player sees that fragmentation
-  // happened. previousNames tracks the old name for `kill <X>` lookups.
+  // Rename the surviving fragment with a fresh procedural name too. The
+  // civ-id and previousNames stay intact so its history, relations, and
+  // family-tree position survive the split - only the display name and
+  // territory change.
+  const oldName = civ.name;
   if (!civ.previousNames) civ.previousNames = [];
   civ.previousNames.push(civ.name);
-  civ.name = uniqueName(dirFor(seeds[coreIdx]) + originName);
+  civ.name = genUnique();
   civ.lastChangeYear = state.year;
   invalidateTintCache();
-  log("event", originName + " has fragmented into " + (newCivs.length + 1) + " successor states after centuries without change.");
+  log("event", oldName + " has fragmented into " + (newCivs.length + 1) + " successor states after centuries without change.");
 }
 
 function civIndexById(id) {
