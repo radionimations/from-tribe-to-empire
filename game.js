@@ -4740,6 +4740,14 @@ function buildTintCacheProvinces(tctx) {
   const provinceCiv = _cachedProvinceCiv;
   for (let pid = 0; pid < maxPid; pid++) { provinceColor[pid] = 0; provinceCiv[pid] = -1; }
 
+  // Tribal civs (era 0 / isStartingTribe) skip the crisp province fill -
+  // they're rendered separately as blurred "meatball" blobs so they look
+  // visibly distinct from established countries on the map.
+  const _tribeCivIds = new Set();
+  for (const civ of state.civs) {
+    if (!civ.alive) continue;
+    if (civ.isStartingTribe || civ.era === 0) _tribeCivIds.add(civ.id);
+  }
   for (let pid = 1; pid < maxPid; pid++) {
     const col = provinceTile[pid * 2];
     const row = provinceTile[pid * 2 + 1];
@@ -4749,12 +4757,15 @@ function buildTintCacheProvinces(tctx) {
     const civ = state.civs[civIndexById(owner)];
     if (!civ || !civ.alive) continue;
     provinceCiv[pid] = civ.id;
+    if (_tribeCivIds.has(civ.id)) continue;   // tribes painted as blobs later
     const r = parseInt(civ.color.slice(1, 3), 16);
     const g = parseInt(civ.color.slice(3, 5), 16);
     const b = parseInt(civ.color.slice(5, 7), 16);
     provinceColor[pid] = (255 << 24) | (b << 16) | (g << 8) | r;
   }
   state._provinceCiv = provinceCiv;
+  // Stash the tribe set so the render loop can draw their meatball pass.
+  state._tribeCivIds = _tribeCivIds;
 
   // Per-pixel paint: each owned province is filled with a single flat civ color.
   // Unowned provinces stay transparent so the biome shows through.
@@ -4890,7 +4901,57 @@ function buildTintCacheProvinces(tctx) {
   }
 
   tctx.putImageData(_cachedImageData, 0, 0);
+  // Render the tribal "meatball" pass: each tribe-owned province becomes
+  // a soft circular blob that merges with adjacent same-civ provinces
+  // through a blur filter. Done into a separate canvas so render() can
+  // composite it underneath the country tint without re-running the
+  // expensive blur every frame.
+  buildTribalBlobCache();
   tintCacheDirty = false;
+}
+
+let tribalBlobCanvas = null;
+function buildTribalBlobCache() {
+  const w = MAP_W, h = MAP_H;
+  if (!tribalBlobCanvas || tribalBlobCanvas.width !== w) {
+    tribalBlobCanvas = document.createElement("canvas");
+    tribalBlobCanvas.width = w;
+    tribalBlobCanvas.height = h;
+  }
+  const bctx = tribalBlobCanvas.getContext("2d");
+  bctx.clearRect(0, 0, w, h);
+  const tribeIds = state._tribeCivIds;
+  if (!tribeIds || tribeIds.size === 0) return;
+  // Draw all blobs first WITHOUT a filter (canvas filter applies
+  // per-stroke, so we composite then we'd need a second pass for blur).
+  // Instead we draw discs at low alpha that overlap, then put the result
+  // back through a blurred drawImage.
+  bctx.save();
+  bctx.globalAlpha = 0.85;
+  for (const civ of state.civs) {
+    if (!civ.alive || !tribeIds.has(civ.id)) continue;
+    bctx.fillStyle = civ.color;
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (state.ownership[r][c] !== civ.id) continue;
+        const x = (c + 0.5) * TILE;
+        const y = (r + 0.5) * TILE;
+        const radius = TILE * 1.6;   // generous overlap so neighbours merge
+        bctx.beginPath();
+        bctx.arc(x, y, radius, 0, Math.PI * 2);
+        bctx.fill();
+      }
+    }
+  }
+  bctx.restore();
+  // Re-blur in place via a second drawImage with filter.
+  const tmp = document.createElement("canvas");
+  tmp.width = w; tmp.height = h;
+  const tctx = tmp.getContext("2d");
+  tctx.filter = "blur(" + Math.max(8, Math.round(TILE * 0.9)) + "px)";
+  tctx.drawImage(tribalBlobCanvas, 0, 0);
+  bctx.clearRect(0, 0, w, h);
+  bctx.drawImage(tmp, 0, 0);
 }
 
 function invalidateTintCache() { tintCacheDirty = true; }
@@ -4910,6 +4971,14 @@ function render() {
   // Pixel-accurate biome rendering (no bilinear blur)
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(biomeCache, 0, 0);
+  // Tribal "meatball" pass - blurred soft blobs for tribes, drawn over
+  // biome but UNDER the crisp country tint so a country bordering a
+  // tribe still has a hard edge on its own side.
+  if (tribalBlobCanvas) {
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(tribalBlobCanvas, 0, 0, MAP_W, MAP_H);
+    ctx.imageSmoothingEnabled = false;
+  }
   // Country fills (half-res cache scaled up to map size)
   ctx.drawImage(tintCacheCanvas, 0, 0, MAP_W, MAP_H);
   // Faint state borders within each civ's territory (drawn first so country
