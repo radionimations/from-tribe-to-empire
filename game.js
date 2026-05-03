@@ -4816,6 +4816,18 @@ function buildTintCacheProvinces(tctx) {
     if (!civ.alive) continue;
     if (civ.isStartingTribe || civ.era === 0) _tribeCivIds.add(civ.id);
   }
+  // Faction map mode: every faction member gets repainted in the faction's
+  // color (a single bloc), neutrals get a neutral grey. The civs' actual
+  // borders + relations + identities don't change - just the rendering.
+  const factionMode = !!state.factionMapMode;
+  const civToFactionColor = new Map();
+  if (factionMode && state.factions) {
+    for (const f of state.factions) {
+      const fc = f.color || "#888888";
+      for (const id of f.memberIds) civToFactionColor.set(id, fc);
+    }
+  }
+  const NEUTRAL_GREY = "#6a6258";
   for (let pid = 1; pid < maxPid; pid++) {
     const col = provinceTile[pid * 2];
     const row = provinceTile[pid * 2 + 1];
@@ -4825,10 +4837,13 @@ function buildTintCacheProvinces(tctx) {
     const civ = state.civs[civIndexById(owner)];
     if (!civ || !civ.alive) continue;
     provinceCiv[pid] = civ.id;
-    if (_tribeCivIds.has(civ.id)) continue;   // tribes painted as blobs later
-    const r = parseInt(civ.color.slice(1, 3), 16);
-    const g = parseInt(civ.color.slice(3, 5), 16);
-    const b = parseInt(civ.color.slice(5, 7), 16);
+    if (!factionMode && _tribeCivIds.has(civ.id)) continue;   // tribes painted as blobs later (skipped in faction mode so neutrals show grey)
+    const colorHex = factionMode
+      ? (civToFactionColor.get(civ.id) || NEUTRAL_GREY)
+      : civ.color;
+    const r = parseInt(colorHex.slice(1, 3), 16);
+    const g = parseInt(colorHex.slice(3, 5), 16);
+    const b = parseInt(colorHex.slice(5, 7), 16);
     provinceColor[pid] = (255 << 24) | (b << 16) | (g << 8) | r;
   }
   state._provinceCiv = provinceCiv;
@@ -5290,8 +5305,16 @@ function drawCivBlobLabels() {
   // just once at the centre-of-mass between continents.
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+  // In faction map mode we suppress individual member labels so the bloc
+  // reads as a single country, and let neutrals show their names.
+  const factionMode = !!state.factionMapMode;
+  const memberIdSet = new Set();
+  if (factionMode && state.factions) {
+    for (const f of state.factions) for (const id of f.memberIds) memberIdSet.add(id);
+  }
   for (const civ of state.civs) {
     if (!civ.alive || !civ._components || civ._components.length === 0) continue;
+    if (factionMode && memberIdSet.has(civ.id)) continue;   // bloc gets one label per faction below
     const text = civ.name.toUpperCase();
     for (const comp of civ._components) {
       if (comp.tiles < 2) continue;
@@ -5331,6 +5354,34 @@ function drawCivBlobLabels() {
       ctx.fillStyle = "#15110a";
       ctx.fillText(text, 0, 0);
       ctx.restore();
+    }
+  }
+  // Faction-mode bloc labels: each faction gets one big label centered
+  // on the centroid of all member territory.
+  if (factionMode && state.factions) {
+    for (const f of state.factions) {
+      if (!f.memberIds || f.memberIds.length === 0) continue;
+      let sx = 0, sy = 0, sn = 0;
+      for (const id of f.memberIds) {
+        const member = state.civs.find(c => c.id === id && c.alive);
+        if (!member) continue;
+        for (const comp of (member._components || [])) {
+          sx += comp.col * comp.tiles;
+          sy += comp.row * comp.tiles;
+          sn += comp.tiles;
+        }
+      }
+      if (sn === 0) continue;
+      const cx = (sx / sn + 0.5) * TILE;
+      const cy = (sy / sn + 0.5) * TILE;
+      const fontMap = 26;
+      ctx.font = "bold " + fontMap + 'px "Trajan Pro", "Cinzel", Georgia, serif';
+      ctx.lineWidth = fontMap * 0.22;
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(245,235,210,0.95)";
+      ctx.strokeText(f.name, cx, cy);
+      ctx.fillStyle = "#15110a";
+      ctx.fillText(f.name, cx, cy);
     }
   }
 }
@@ -6631,9 +6682,21 @@ function enterDebugMode() {
 document.querySelectorAll(".speed-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     const s = parseInt(btn.dataset.speed, 10);
+    if (isNaN(s)) return;   // skip non-speed buttons sharing the class
     setSpeed(s);
   });
 });
+
+// Faction map mode: recolours the map so factions render as one bloc.
+const _factionBtn = document.getElementById("faction-mode-btn");
+if (_factionBtn) {
+  _factionBtn.addEventListener("click", () => {
+    state.factionMapMode = !state.factionMapMode;
+    _factionBtn.classList.toggle("active", state.factionMapMode);
+    invalidateTintCache();
+    render();
+  });
+}
 
 function setSpeed(s) {
   state.speed = s;
