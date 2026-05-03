@@ -762,6 +762,19 @@ const HISTORICAL_EVENTS = [
       "Republic of Lithuania", "Republic of Latvia", "Republic of Estonia",
     ],
     message: "NATO consolidates after the Soviet collapse - members sign a mutual non-aggression pact" },
+  // 2002: CSTO (Collective Security Treaty Organization) - the Russian-led
+  // counterpart to NATO. Founding members signed the original treaty in
+  // 1992; the formal CSTO organization came in 2002.
+  { year: 2002, type: "form_faction", name: "CSTO", color: "#a02828",
+    members: [
+      "Russia",
+      "Belarus",
+      "Armenia",
+      "Kazakhstan",
+      "Kyrgyzstan",
+      "Tajikistan",
+    ],
+    message: "CSTO is formalized - Russia and its post-Soviet allies sign a mutual non-aggression pact" },
 
   // ============================================================
   // HISTORICAL WARS - drawn from Wikipedia's "List of wars" series.
@@ -2974,7 +2987,7 @@ function aiTurn(civ) {
       if (target) {
         const step = stepTowards(army.col, army.row, target.col, target.row, civ.id, true);
         if (step) {
-          army.col = step.col; army.row = step.row;
+          setArmyTile(army, step.col, step.row);
           army.moves = 0;
           // If we reached target, settle
           if (army.col === target.col && army.row === target.row && state.ownership[army.row][army.col] !== civ.id) {
@@ -3093,7 +3106,7 @@ function playerLeaderAssist(civ) {
       if (!target) continue;
       const step = stepTowards(army.col, army.row, target.col, target.row, civ.id, true);
       if (!step) continue;
-      army.col = step.col; army.row = step.row;
+      setArmyTile(army, step.col, step.row);
       army.moves = 0;
       if (army.col === target.col && army.row === target.row) {
         placeCivOnMap(civ, army.col, army.row, false);
@@ -3261,19 +3274,53 @@ function stepTowards(fromC, fromR, toC, toR, civId, preferOwn) {
   return best;
 }
 
+// Move the army to (col, row) and capture animation start data so the
+// render loop can interpolate between the previous tile and the new one.
+// All gameplay code that updates army.col/row must go through this so the
+// "smooth movement" animation never desyncs.
+function setArmyTile(army, col, row) {
+  // If the destination is far from the current tile (>2 in either axis,
+  // e.g. a fresh spawn or a long teleport), skip animation - jump cut.
+  const dc = Math.abs(col - army.col);
+  const dr = Math.abs(row - army.row);
+  if (dc <= 2 && dr <= 2) {
+    army.prevCol = army.col;
+    army.prevRow = army.row;
+    army.moveStartedAt = performance.now();
+  } else {
+    army.prevCol = col;
+    army.prevRow = row;
+    army.moveStartedAt = 0;
+  }
+  army.col = col;
+  army.row = row;
+}
+
+// True when civA and civB are members of the same faction (NATO, CSTO).
+// Used both to allow units to pass through faction territory and to
+// propagate war declarations to faction members.
+function sameFaction(civAId, civBId) {
+  if (civAId === civBId) return false;
+  if (!state.factions || state.factions.length === 0) return false;
+  for (const f of state.factions) {
+    if (f.memberIds && f.memberIds.indexOf(civAId) >= 0 && f.memberIds.indexOf(civBId) >= 0) return true;
+  }
+  return false;
+}
+
 function tryMoveOrAttack(army, toC, toR) {
   const civ = state.civs[civIndexById(army.civId)];
   if (!canMoveInto(civ, MAP[toR][toC])) return false;
   const unitDef = UNITS[army.type];
   // Naval transit: ocean tiles are never owned and never trigger combat.
   if (MAP[toR][toC] === "ocean") {
-    army.col = toC; army.row = toR;
+    setArmyTile(army, toC, toR);
     army.moves = Math.max(0, army.moves - 1);
     return true;
   }
   const owner = state.ownership[toR][toC];
   if (owner === army.civId || owner === -1) {
-    army.col = toC; army.row = toR;
+    setArmyTile(army, toC, toR);
     army.moves = Math.max(0, army.moves - 1);
     if (owner === -1) {
       state.ownership[toR][toC] = army.civId;
@@ -3283,6 +3330,15 @@ function tryMoveOrAttack(army, toC, toR) {
         claimProvinceForCiv(toC, toR, army.civId);
       }
     }
+    return true;
+  }
+  // Faction passage: if the tile's owner is in the same faction (NATO,
+  // CSTO), units can walk through without combat - they don't claim or
+  // settle on the tile, they just transit. This lets a NATO army cross
+  // ally territory to fight a common enemy.
+  if (civ && sameFaction(army.civId, owner)) {
+    setArmyTile(army, toC, toR);
+    army.moves = Math.max(0, army.moves - 1);
     return true;
   }
   // Don't accidentally invade allies. If the tile's owner is an ally
@@ -4466,12 +4522,24 @@ function render() {
   }
 
   // (Settlement markers drawn after labels via drawSettlementMarkers)
-  // Armies as small squares
+  // Armies as small squares - interpolated between prev tile and current
+  // tile so motion looks continuous instead of teleporting each tick.
+  const _now = performance.now();
+  const _tickMs = (state.phase === "playing" && state.speed > 0) ? SPEED_TURN_MS[state.speed] : 0;
   for (const civ of state.civs) {
     if (!civ.alive) continue;
     for (const a of civ.armies) {
-      const x = a.col * TILE + TILE / 2;
-      const y = a.row * TILE + TILE / 2;
+      let aCol = a.col, aRow = a.row;
+      // Interpolate from prev position if a recent move is still animating.
+      if (a.moveStartedAt && _tickMs > 0 && _tickMs !== Infinity && a.prevCol != null) {
+        const t = Math.min(1, Math.max(0, (_now - a.moveStartedAt) / _tickMs));
+        if (t < 1) {
+          aCol = a.prevCol + (a.col - a.prevCol) * t;
+          aRow = a.prevRow + (a.row - a.prevRow) * t;
+        }
+      }
+      const x = aCol * TILE + TILE / 2;
+      const y = aRow * TILE + TILE / 2;
       ctx.fillStyle = a.type === "settler" ? "#fff" : "#000";
       ctx.fillRect(x - 1.4, y - 1.4, 2.8, 2.8);
       ctx.fillStyle = civ.color;
@@ -6035,6 +6103,22 @@ function gameLoop(now) {
   const yearEl = document.getElementById("year-display");
   if (yearEl) yearEl.textContent = yearLabel(Math.floor(displayYear));
 
+  // Per-frame render while there's an in-flight army animation. Without
+  // this, armies only redraw at tick boundaries and the smooth-motion
+  // interpolation never gets a chance to update between ticks.
+  if (state.phase === "playing" && speed > 0) {
+    let animating = false;
+    const tickMs = SPEED_TURN_MS[speed];
+    for (const civ of state.civs) {
+      if (!civ.alive) continue;
+      for (const a of civ.armies) {
+        if (a.moveStartedAt && (now - a.moveStartedAt) < tickMs) { animating = true; break; }
+      }
+      if (animating) break;
+    }
+    if (animating) render();
+  }
+
   lastFrame = now;
   requestAnimationFrame(gameLoop);
 }
@@ -6852,6 +6936,21 @@ document.getElementById("cp-declare-war-btn").addEventListener("click", () => {
   state.playerWars.add(target.id);
   log("war", `${player.name} declares war on ${target.name}!`);
   showWarPopup(player, target);
+  // Faction war propagation: if the player is in a faction (NATO etc.),
+  // every other living faction member also goes to war with the target.
+  // The AI's existing aggression rules (rel <= -50) handle the actual
+  // attacks, and faction passage already lets allies cross our territory.
+  const faction = findFactionForCiv(player.id);
+  if (faction) {
+    for (const memberId of faction.memberIds) {
+      if (memberId === player.id || memberId === target.id) continue;
+      const ally = state.civs.find(c => c.id === memberId && c.alive);
+      if (!ally) continue;
+      ally.relations[target.id] = -100;
+      target.relations[ally.id] = -100;
+      log("war", `${ally.name} joins the war alongside ${player.name}.`);
+    }
+  }
   showCountryPanel(target);   // refresh panel to show "AT WAR"
 });
 
