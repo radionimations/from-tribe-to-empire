@@ -3072,10 +3072,19 @@ function tick() {
       else continue;                     // Lithuania-sized, leave alone
       // Bigger empires are harder to keep stable - their per-check fracture
       // chance scales with size so Russia-sized civs don't sit eligible
-      // for centuries before they finally split.
-      const chance = pieces === 4 ? 0.65 :
-                     pieces === 3 ? 0.40 :
-                     0.22;
+      // for centuries before they finally split. Civs that span multiple
+      // landmasses (colonial empires - France with Africa + Indochina, UK
+      // with India + Canada) get a higher chance because separated
+      // territories are historically the first to break away.
+      let chance = pieces === 4 ? 0.65 :
+                   pieces === 3 ? 0.40 :
+                   0.22;
+      const componentCount = (civ._components || []).length;
+      if (componentCount >= 2) {
+        // Multi-landmass empires fracture roughly 1.7x as often as
+        // single-block ones.
+        chance = Math.min(0.92, chance * 1.7);
+      }
       if (Math.random() < chance) splitCiv(civ, pieces);
     }
   }
@@ -3852,10 +3861,12 @@ function shiftColor(hex, pct) {
 }
 
 // Split a long-stale empire into N successor states. One fragment keeps
-// the original civ object (renamed) so its lineage, relations, family-tree
-// position, and history all stay intact. The other fragments spawn as
-// fresh civs with mildly tinted versions of the parent's color and
-// directional names ("Northern <X>", "Eastern <X>", etc).
+// the original civ object (and its original NAME) so the player can see
+// "this is still the original X". The other fragments spawn fresh with
+// procedurally-generated names. Splitting prefers the civ's separate
+// landmasses (so France's African colonies break away as their own
+// fragment instead of carving Europe in half) and falls back to a bbox
+// subdivision only when the civ is one continuous landmass.
 function splitCiv(civ, n) {
   if (n < 2) return;
   const tiles = [];
@@ -3865,44 +3876,55 @@ function splitCiv(civ, n) {
     }
   }
   if (tiles.length < 50) return;
-  let minC = Infinity, maxC = -Infinity, minR = Infinity, maxR = -Infinity;
-  for (const t of tiles) {
-    if (t.c < minC) minC = t.c; if (t.c > maxC) maxC = t.c;
-    if (t.r < minR) minR = t.r; if (t.r > maxR) maxR = t.r;
-  }
-  const bw = Math.max(1, maxC - minC), bh = Math.max(1, maxR - minR);
-  // Place N seeds. For 2-3 we strip along the major axis. For 4+ we use a
-  // 2-row grid. Each seed becomes the centroid of one successor state.
-  const seeds = [];
-  if (n === 2) {
-    if (bw >= bh) { seeds.push({ c: minC + bw * 0.25, r: (minR + maxR) / 2 }); seeds.push({ c: minC + bw * 0.75, r: (minR + maxR) / 2 }); }
-    else { seeds.push({ c: (minC + maxC) / 2, r: minR + bh * 0.25 }); seeds.push({ c: (minC + maxC) / 2, r: minR + bh * 0.75 }); }
-  } else if (n === 3) {
-    if (bw >= bh) {
-      seeds.push({ c: minC + bw / 6, r: (minR + maxR) / 2 });
-      seeds.push({ c: minC + bw / 2, r: (minR + maxR) / 2 });
-      seeds.push({ c: minC + 5 * bw / 6, r: (minR + maxR) / 2 });
-    } else {
-      seeds.push({ c: (minC + maxC) / 2, r: minR + bh / 6 });
-      seeds.push({ c: (minC + maxC) / 2, r: minR + bh / 2 });
-      seeds.push({ c: (minC + maxC) / 2, r: minR + 5 * bh / 6 });
-    }
-  } else {
-    // 4+: 2x2 grid (truncate to 4 even if n>4 to keep the split tractable).
-    seeds.push({ c: minC + bw * 0.25, r: minR + bh * 0.25 });
-    seeds.push({ c: minC + bw * 0.75, r: minR + bh * 0.25 });
-    seeds.push({ c: minC + bw * 0.25, r: minR + bh * 0.75 });
-    seeds.push({ c: minC + bw * 0.75, r: minR + bh * 0.75 });
-  }
-  // The fragment closest to the civ's capital keeps the original civ-id.
-  const cap = civ.settlements[0];
+
+  // Prefer landmass-based splitting: each connected component becomes
+  // a separate fragment. The largest component stays with the original
+  // civ. If the civ has fewer components than the requested piece count,
+  // we fall back to bbox subdivision on the largest component.
+  const components = (civ._components || []).slice().sort((a, b) => b.tiles - a.tiles);
+  let seeds = [];
   let coreIdx = 0;
-  if (cap) {
-    let best = Infinity;
-    for (let i = 0; i < seeds.length; i++) {
-      const dc = seeds[i].c - cap.col, dr = seeds[i].r - cap.row;
-      const d = dc * dc + dr * dr;
-      if (d < best) { best = d; coreIdx = i; }
+  if (components.length >= 2) {
+    const top = components.slice(0, Math.min(n, components.length));
+    seeds = top.map(c => ({ c: c.col, r: c.row }));
+    coreIdx = 0;   // largest component is the surviving fragment
+  } else {
+    // Single landmass - bbox subdivide along the dominant axis.
+    let minC = Infinity, maxC = -Infinity, minR = Infinity, maxR = -Infinity;
+    for (const t of tiles) {
+      if (t.c < minC) minC = t.c; if (t.c > maxC) maxC = t.c;
+      if (t.r < minR) minR = t.r; if (t.r > maxR) maxR = t.r;
+    }
+    const bw = Math.max(1, maxC - minC), bh = Math.max(1, maxR - minR);
+    if (n === 2) {
+      if (bw >= bh) { seeds.push({ c: minC + bw * 0.25, r: (minR + maxR) / 2 }); seeds.push({ c: minC + bw * 0.75, r: (minR + maxR) / 2 }); }
+      else { seeds.push({ c: (minC + maxC) / 2, r: minR + bh * 0.25 }); seeds.push({ c: (minC + maxC) / 2, r: minR + bh * 0.75 }); }
+    } else if (n === 3) {
+      if (bw >= bh) {
+        seeds.push({ c: minC + bw / 6, r: (minR + maxR) / 2 });
+        seeds.push({ c: minC + bw / 2, r: (minR + maxR) / 2 });
+        seeds.push({ c: minC + 5 * bw / 6, r: (minR + maxR) / 2 });
+      } else {
+        seeds.push({ c: (minC + maxC) / 2, r: minR + bh / 6 });
+        seeds.push({ c: (minC + maxC) / 2, r: minR + bh / 2 });
+        seeds.push({ c: (minC + maxC) / 2, r: minR + 5 * bh / 6 });
+      }
+    } else {
+      seeds.push({ c: minC + bw * 0.25, r: minR + bh * 0.25 });
+      seeds.push({ c: minC + bw * 0.75, r: minR + bh * 0.25 });
+      seeds.push({ c: minC + bw * 0.25, r: minR + bh * 0.75 });
+      seeds.push({ c: minC + bw * 0.75, r: minR + bh * 0.75 });
+    }
+    // For bbox splits, the seed closest to the capital stays with
+    // the original civ.
+    const cap = civ.settlements[0];
+    if (cap) {
+      let best = Infinity;
+      for (let i = 0; i < seeds.length; i++) {
+        const dc = seeds[i].c - cap.col, dr = seeds[i].r - cap.row;
+        const d = dc * dc + dr * dr;
+        if (d < best) { best = d; coreIdx = i; }
+      }
     }
   }
   // Procedurally generate a place-name from syllable banks. Each fragment
@@ -4000,21 +4022,15 @@ function splitCiv(civ, n) {
   }
   for (const nc of newCivs) plantCapitalIfEmpty(nc.civ, seeds[nc.seedIdx].c, seeds[nc.seedIdx].r);
   plantCapitalIfEmpty(civ, seeds[coreIdx].c, seeds[coreIdx].r);
-  // Rename the surviving fragment with a fresh procedural name too. The
-  // civ-id and previousNames stay intact so its history, relations, and
-  // family-tree position survive the split - only the display name and
-  // territory change. Crucially the surviving fragment KEEPS its
-  // diplomatic relations (relations dict is keyed by civ-id) AND its
-  // faction memberships (state.factions[*].memberIds reference civ.id),
-  // so a NATO Russia that splits leaves the surviving fragment in NATO
-  // while the breakaway siblings start with neutral relations.
-  const oldName = civ.name;
-  if (!civ.previousNames) civ.previousNames = [];
-  civ.previousNames.push(civ.name);
-  civ.name = genUnique();
+  // The surviving fragment KEEPS its original name, civ-id, relations
+  // dict, and faction memberships - it represents the country
+  // continuing on. We only update the stale-empire timer so it doesn't
+  // immediately re-qualify for another split. The breakaway siblings
+  // (procedural names) get the splitParentName link in the family tree
+  // so the split is still recorded historically.
   civ.lastChangeYear = state.year;
   invalidateTintCache();
-  log("event", oldName + " has fragmented into " + (newCivs.length + 1) + " successor states after centuries without change.");
+  log("event", civ.name + " has fragmented into " + (newCivs.length + 1) + " successor states; " + civ.name + " endures while the breakaways form their own nations.");
 }
 
 function civIndexById(id) {
@@ -5148,18 +5164,11 @@ function drawSettlementMarkers() {
       const x = (s.col + 0.5) * TILE;
       const y = (s.row + 0.5) * TILE;
       if (i === 0) {
-        // Capital star
+        // Capital star only - the country name is painted on the territory
+        // by drawCivBlobLabels, so a redundant white capital label would
+        // just clutter the map. Hover still reveals the city's name.
         const r = Math.min(TILE * 0.95, 1.4 + Math.sqrt(s.pop) * 0.5);
         drawStar(ctx, x, y, r, civ.color, "#000", civ.isPlayer ? "#fff" : null);
-        // Always-visible name
-        const fs = TILE * 1.4;
-        ctx.font = `bold ${fs}px Georgia, serif`;
-        ctx.lineWidth = fs * 0.22;
-        ctx.lineJoin = "round";
-        ctx.strokeStyle = "rgba(0,0,0,0.9)";
-        ctx.strokeText(s.name, x + r + 1, y);
-        ctx.fillStyle = "#fff";
-        ctx.fillText(s.name, x + r + 1, y);
       } else {
         // Minor settlement: small dot only
         const r = Math.min(TILE * 0.42, 0.7 + Math.sqrt(s.pop) * 0.35);
