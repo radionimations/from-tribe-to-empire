@@ -7174,7 +7174,29 @@ document.querySelectorAll(".speed-btn").forEach(btn => {
   });
 });
 
-// Splash PLAY button: applies modifiers and switches to placement phase.
+// Tribe-pick buttons in the splash. Click one to highlight it; click
+// PLAY to spawn directly as that tribe (skipping the click-a-tile flow).
+let _splashSelectedTribe = null;
+document.querySelectorAll(".splash-tribe-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".splash-tribe-btn").forEach(b => {
+      b.style.borderColor = "#6a5a3c";
+      b.style.background = "linear-gradient(180deg,#3a2a14,#1a0e04)";
+      b.style.color = "#cfbf95";
+    });
+    if (_splashSelectedTribe === btn.dataset.tribe) {
+      _splashSelectedTribe = null;   // re-click deselects
+    } else {
+      _splashSelectedTribe = btn.dataset.tribe;
+      btn.style.borderColor = "#ffd24a";
+      btn.style.background = "linear-gradient(180deg,#a8923a,#624a14)";
+      btn.style.color = "#fff5cc";
+    }
+  });
+});
+
+// Splash PLAY button: applies modifiers and switches to placement phase
+// (or directly into "playing" if the player picked a tribe to be).
 const _splashPlayBtn = document.getElementById("splash-play");
 if (_splashPlayBtn) {
   _splashPlayBtn.addEventListener("click", () => {
@@ -7191,15 +7213,41 @@ if (_splashPlayBtn) {
       else if (which === "kill-finns") killStartingTribe("Finns");
       else if (which === "ww2-state") applyWW2TribeTerritory();
       else if (which === "debug-start") {
-        // Will activate after the player spawns - flag it.
         state._modDebugStart = true;
       }
     }
     document.getElementById("splash").style.display = "none";
-    state.phase = "placement";
-    flashHint("Click any land tile on the map to place your tribe.");
+    if (_splashSelectedTribe) {
+      // Spawn directly as the chosen tribe.
+      const tribeCiv = state.civs.find(c => c.alive && c.name === _splashSelectedTribe);
+      if (tribeCiv) {
+        tribeCiv.isPlayer = true;
+        const idx = state.civs.indexOf(tribeCiv);
+        if (idx > 0) {
+          state.civs.splice(idx, 1);
+          state.civs.unshift(tribeCiv);
+        }
+        state.phase = "playing";
+        if (tribeCiv.settlements && tribeCiv.settlements[0]) {
+          state.selectedTile = { col: tribeCiv.settlements[0].col, row: tribeCiv.settlements[0].row };
+        }
+        if (state._modDebugStart && typeof enterDebugMode === "function") {
+          state._modDebugStart = false;
+          enterDebugMode();
+        }
+        log("event", "Playing as " + tribeCiv.name + ".");
+      } else {
+        // Tribe was killed by a modifier - fall back to placement.
+        state.phase = "placement";
+        flashHint("Chosen tribe is gone. Click any land tile to place a fresh tribe.");
+      }
+    } else {
+      state.phase = "placement";
+      flashHint("Click any land tile on the map to place your tribe.");
+    }
     invalidateTintCache();
     render();
+    updateUI();
   });
 }
 
