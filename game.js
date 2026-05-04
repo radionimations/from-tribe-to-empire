@@ -1737,10 +1737,49 @@ let nextCivId = 0;
 let nextArmyId = 0;
 let nextSettlementId = 0;
 
+// Generate a 3-letter identity tag for a civ. Tries the HOI4 CIV_TAGS
+// lookup first (canonical 1936 country tags - POL, GER, RUS, etc.),
+// otherwise builds one from the name's letters. Falls back to a
+// random tag if collisions can't be resolved. The tag is set ONCE at
+// civ creation and never changes through rename/replaces, so it serves
+// as a stable identity marker the player can use to recognize a country
+// across naming changes.
+function generateCivTag(name) {
+  let base = null;
+  if (typeof CIV_TAGS !== "undefined" && name && CIV_TAGS[name]) {
+    const t = CIV_TAGS[name].split("_")[0];
+    if (t.length === 3) base = t.toUpperCase();
+  }
+  if (!base) {
+    const stripped = (name || "X").replace(/[^A-Za-z]/g, "").toUpperCase();
+    base = (stripped + "XXX").slice(0, 3);
+  }
+  // Collision check against existing civs.
+  const used = new Set();
+  if (typeof state !== "undefined" && state && Array.isArray(state.civs)) {
+    for (const c of state.civs) if (c && c.tag) used.add(c.tag);
+  }
+  if (!used.has(base)) return base;
+  // Try alphabetic variants.
+  for (let i = 0; i < 26; i++) {
+    const t = base.slice(0, 2) + String.fromCharCode(65 + i);
+    if (!used.has(t)) return t;
+  }
+  // Last resort: random 3-letter combo.
+  while (true) {
+    const t = String.fromCharCode(65 + Math.floor(Math.random() * 26))
+            + String.fromCharCode(65 + Math.floor(Math.random() * 26))
+            + String.fromCharCode(65 + Math.floor(Math.random() * 26));
+    if (!used.has(t)) return t;
+  }
+}
+
 function makeCiv(opts) {
   return {
     id: nextCivId++,
     name: opts.name,
+    // Permanent 3-letter identity tag, unchanged across renames.
+    tag: opts.tag || generateCivTag(opts.name),
     color: opts.color,
     isPlayer: !!opts.isPlayer,
     alive: true,
@@ -2237,9 +2276,25 @@ function fireEvent(ev) {
   // "Faction: NATO" with the member list. Missing/dead members are
   // skipped silently so the event still works if some civs never spawned.
   if (ev.type === "form_faction") {
-    const memberCivs = (ev.members || [])
-      .map(name => state.civs.find(c => c.alive && c.name === name))
-      .filter(Boolean);
+    // Resolve a member name to a live civ. Tries direct name match,
+    // then previousNames, then walks the lineage graph forward from
+    // each living civ - so a NATO event listing "Republic of Lithuania"
+    // still finds the Grand Duchy of Lithuania if the GDL never renamed
+    // (because GDL -> Republic of Lithuania is in TREE_PARENT_OVERRIDES,
+    // so the lineage walk reaches Republic of Lithuania from GDL).
+    function resolveFactionMember(name) {
+      let civ = state.civs.find(c => c.alive && (c.name === name || (c.previousNames || []).includes(name)));
+      if (civ) return civ;
+      for (const c of state.civs) {
+        if (!c.alive) continue;
+        const starts = [c.name, ...(c.previousNames || [])];
+        for (const s of starts) {
+          if (walkLineageForward(s).has(name)) return c;
+        }
+      }
+      return null;
+    }
+    const memberCivs = (ev.members || []).map(resolveFactionMember).filter(Boolean);
     if (memberCivs.length < 2) {
       log("event", ev.message + " - too few members alive to form the faction.");
       return;
@@ -7464,6 +7519,11 @@ function showCountryPanel(civ) {
 
   document.getElementById("cp-name").textContent = civ.name;
   document.getElementById("cp-name").style.color = civ.color;
+  // Permanent civ tag (3-letter identity that never changes through
+  // renames) shown below the name so the player can recognize a country
+  // across name changes.
+  const tagEl = document.getElementById("cp-tag");
+  if (tagEl) tagEl.textContent = civ.tag ? civ.tag : "";
   document.getElementById("cp-era").textContent = ERAS[civ.era].name.toUpperCase();
 
   // Leader: priority is custom (player-set) → hardcoded LEADERS table entry
