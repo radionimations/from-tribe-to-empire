@@ -7413,7 +7413,33 @@ function applyWW2TribeTerritory() {
     }
   }
   reassignSettlementsByTileOwner();
-  log("event", "WWII alt-history: every starting tribe inherits its entire descendants' territory at 1000 BC.");
+  // Plant a settlement at every HOI4 state center that now lies inside
+  // a tribe's territory, so a tribe with hundreds of states ends up
+  // with hundreds of cities. Avoid duplicates by skipping any state
+  // whose centre tile already has a settlement.
+  for (const sd of HOI4_CITIES) {
+    if (typeof sd.x !== "number" || typeof sd.y !== "number") continue;
+    const col = Math.max(0, Math.min(COLS - 1, Math.floor(sd.x / TILE)));
+    const row = Math.max(0, Math.min(ROWS - 1, Math.floor(sd.y / TILE)));
+    if (!PASSABLE(MAP[row][col])) continue;
+    const ownerId = state.ownership[row][col];
+    if (ownerId < 0) continue;
+    const civ = state.civs[civIndexById(ownerId)];
+    if (!civ || !civ.alive || !civ.isStartingTribe) continue;
+    // Skip if a settlement already sits on this tile.
+    let dup = false;
+    for (const s of civ.settlements) {
+      if (s.col === col && s.row === row) { dup = true; break; }
+    }
+    if (dup) continue;
+    civ.settlements.push({
+      id: nextSettlementId++, col, row,
+      name: sd.name || settlementName(civ, civ.settlements.length),
+      pop: Math.max(2, Math.min(8, (sd.vp || 1) + 2)),
+      food: 0, prod: 0, queue: [], walls: false,
+    });
+  }
+  log("event", "WWII alt-history: every starting tribe inherits its entire descendants' territory + cities at 1000 BC.");
   invalidateTintCache();
 }
 
