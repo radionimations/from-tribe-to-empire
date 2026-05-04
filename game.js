@@ -2179,6 +2179,12 @@ function fireEvent(ev) {
     }
     const merged = makeCiv({ name: ev.to.name, color: ev.to.color });
     state.civs.push(merged);
+    // Inherit the FIRST predecessor's permanent tag so the merged civ
+    // reads as a continuation of that lineage rather than a brand-new
+    // identity. So Polans -> Duchy -> Kingdom of Poland (POL) merging
+    // with GDL into the Polish-Lithuanian Commonwealth keeps tag POL,
+    // showing the user this is still the Polish lineage.
+    if (civs[0] && civs[0].tag) merged.tag = civs[0].tag;
     for (const c of state.civs) {
       if (c.id !== merged.id) {
         merged.relations[c.id] = 0;
