@@ -1159,6 +1159,18 @@
     <div id="cp-relations"></div>
   </div>
 
+  <!-- World-War-mode prompt (1914 / 1939) -->
+  <div id="warmode-modal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:600;">
+    <div style="background:linear-gradient(180deg,#2a1a0c,#160a04);border:2px solid #c44;color:#fff5cc;padding:24px 28px;max-width:460px;font-family:Georgia,serif;box-shadow:0 0 60px rgba(180,40,40,0.6);">
+      <h2 id="warmode-title" style="margin:0 0 12px;color:#ffd24a;letter-spacing:2px;text-align:center;">⚔ WORLD WAR ⚔</h2>
+      <div id="warmode-body" style="font-size:13px;line-height:1.5;margin-bottom:16px;"></div>
+      <div style="display:flex;gap:10px;">
+        <button id="warmode-accept" style="flex:1;padding:10px;background:linear-gradient(180deg,#a8923a,#624a14);border:1px solid #ffd24a;color:#fff5cc;font-weight:bold;cursor:pointer;letter-spacing:2px;">ACCEPT</button>
+        <button id="warmode-decline" style="flex:1;padding:10px;background:linear-gradient(180deg,#444,#222);border:1px solid #888;color:#cfcfcf;cursor:pointer;letter-spacing:2px;">DECLINE</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Customization modal -->
   <div id="customize-modal" class="hidden">
     <div class="cm-card">

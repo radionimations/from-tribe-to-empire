@@ -3177,6 +3177,11 @@ function tick() {
   state.year += YEARS_PER_TURN;
   processEvents();
 
+  // 5w. World-War-mode triggers. When the calendar enters 1914 or 1939
+  // and the prompt hasn't fired yet, pause the game and show the
+  // accept/decline modal. Auto-end at the historical armistice year.
+  maybeTriggerWarMode();
+
   // 5a. Faction recruitment. NATO recruits non-member civs that have
   // non-negative relations with Germany; CSTO does the same with Russia.
   // An invitation roll happens every 50 game years (10 ticks); the
@@ -4247,6 +4252,160 @@ function splitCiv(civ, n) {
 
 function civIndexById(id) {
   return state.civs.findIndex(c => c.id === id);
+}
+
+// =================== WORLD WAR MODES (1914 + 1939) ===================
+// Historical pop-up triggers. When the calendar reaches 1914 (WWI) or
+// 1939 (WWII) we pause the game and ask the player whether they want to
+// engage WAR MODE - which forms the historical factions, slows tick
+// timing so single days take ~1s at top speed, and at the war's end
+// applies territorial penalties to the losing side. The deeper
+// front-line drawing UI and per-unit health system are still TODO.
+const WAR_MODE_CONFIG = {
+  WWI: {
+    startYear: 1914,
+    endYear: 1918,
+    factions: [
+      { name: "Allies (WWI)", color: "#1a4ba8",
+        members: ["France", "United Kingdom", "Russian Empire", "Italy", "USA", "Serbia", "Romania", "Greece", "Belgium", "Yamato", "Kingdom of Portugal"] },
+      { name: "Central Powers", color: "#7d1818",
+        members: ["Germany", "Austria-Hungary", "Ottomans", "Bulgaria"] },
+    ],
+    description: "August 1914. Europe stands on the brink. The Triple Entente (France, United Kingdom, Russia) and the Central Powers (Germany, Austria-Hungary, Ottomans) are about to plunge the world into total war. Engage WWI mode? Time will slow, factions will lock, and the losing side will cede border territory to the winners.",
+  },
+  WWII: {
+    startYear: 1939,
+    endYear: 1945,
+    factions: [
+      { name: "Allies (WWII)", color: "#1a4ba8",
+        members: ["USA", "United Kingdom", "France", "Soviet Union", "Republic of China", "Canada", "Australia", "Brazil", "Republic of Poland", "Greece", "Yugoslavia", "Mexico"] },
+      { name: "Axis", color: "#181818",
+        members: ["Nazi Germany", "Italy", "Yamato", "Hungary", "Romania", "Bulgaria", "Finland"] },
+      { name: "Comintern", color: "#a02828",
+        members: ["Soviet Union", "Mongolia"] },
+    ],
+    description: "September 1939. Nazi Germany invades Poland. The world is about to descend into the deadliest conflict in history. Engage WWII mode? The Allies, Axis, and Comintern factions will form, time will slow, and the losers will cede border territory at war's end.",
+  },
+};
+
+let _origSpeedMs = null;
+
+function maybeTriggerWarMode() {
+  if (state.warMode) {
+    // Currently in a war mode - check end condition.
+    const cfg = WAR_MODE_CONFIG[state.warMode];
+    if (cfg && state.year >= cfg.endYear) endWarMode();
+    return;
+  }
+  if (state._wwiPrompted !== true && state.year >= WAR_MODE_CONFIG.WWI.startYear && state.year < WAR_MODE_CONFIG.WWI.endYear) {
+    state._wwiPrompted = true;
+    showWarModePrompt("WWI");
+  } else if (state._wwiiPrompted !== true && state.year >= WAR_MODE_CONFIG.WWII.startYear && state.year < WAR_MODE_CONFIG.WWII.endYear) {
+    state._wwiiPrompted = true;
+    showWarModePrompt("WWII");
+  }
+}
+
+function showWarModePrompt(which) {
+  const cfg = WAR_MODE_CONFIG[which];
+  if (!cfg) return;
+  // Pause so the player can read.
+  state._preWarSpeed = state.speed;
+  state.speed = 0;
+  const modal = document.getElementById("warmode-modal");
+  const title = document.getElementById("warmode-title");
+  const body = document.getElementById("warmode-body");
+  if (!modal || !title || !body) return;
+  title.textContent = "⚔ " + which + " - " + cfg.startYear + " ⚔";
+  body.textContent = cfg.description;
+  modal.classList.remove("hidden");
+  // Wire buttons (idempotent - replaceWith clears old listeners).
+  const accept = document.getElementById("warmode-accept");
+  const decline = document.getElementById("warmode-decline");
+  const newAccept = accept.cloneNode(true);
+  const newDecline = decline.cloneNode(true);
+  accept.parentNode.replaceChild(newAccept, accept);
+  decline.parentNode.replaceChild(newDecline, decline);
+  newAccept.addEventListener("click", () => {
+    modal.classList.add("hidden");
+    enterWarMode(which);
+  });
+  newDecline.addEventListener("click", () => {
+    modal.classList.add("hidden");
+    state.speed = state._preWarSpeed || 1;
+    log("event", which + " mode declined - history continues at normal pace.");
+  });
+}
+
+function enterWarMode(which) {
+  const cfg = WAR_MODE_CONFIG[which];
+  if (!cfg) return;
+  state.warMode = which;
+  state._warModeStart = state.year;
+  // Form the historical factions via the existing event handler so the
+  // member-resolution logic (lineage walk, previousNames) all applies.
+  for (const f of cfg.factions) {
+    fireEvent({ type: "form_faction", name: f.name, color: f.color, members: f.members,
+      message: f.name + " forms in response to " + which + "." });
+  }
+  // Slow time: stretch every speed slot by 5x so 5x-mode ticks at
+  // ~1 second per game-day equivalent. Save originals so we can restore.
+  if (typeof SPEED_TURN_MS !== "undefined") {
+    _origSpeedMs = SPEED_TURN_MS.slice();
+    for (let i = 1; i < SPEED_TURN_MS.length; i++) SPEED_TURN_MS[i] = SPEED_TURN_MS[i] * 5;
+  }
+  state.speed = state._preWarSpeed || 2;
+  log("war", which + " MODE ENGAGED. Time slows; the world braces for war.");
+}
+
+function endWarMode() {
+  if (!state.warMode) return;
+  const which = state.warMode;
+  const cfg = WAR_MODE_CONFIG[which];
+  // Tally each faction's combat strength to determine winners.
+  let winners = [], losers = [];
+  if (cfg) {
+    const factionScores = cfg.factions.map(f => {
+      const live = state.factions.find(sf => sf.name === f.name);
+      if (!live) return { name: f.name, members: [], score: 0 };
+      const members = live.memberIds.map(id => state.civs.find(c => c.id === id && c.alive)).filter(Boolean);
+      const score = members.reduce((s, c) => s + civStrength(c) + countTiles(c), 0);
+      return { name: f.name, members, score, faction: live };
+    });
+    factionScores.sort((a, b) => b.score - a.score);
+    if (factionScores.length >= 2) {
+      winners = factionScores[0].members;
+      for (let i = 1; i < factionScores.length; i++) losers = losers.concat(factionScores[i].members);
+    }
+  }
+  // Each loser cedes border tiles touching a winner. Walk every tile
+  // owned by a loser; if a 4-neighbour belongs to a winner, transfer it.
+  const winnerIds = new Set(winners.map(c => c.id));
+  const loserIds = new Set(losers.map(c => c.id));
+  let transferred = 0;
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (!loserIds.has(state.ownership[r][c])) continue;
+      let bestNeighbour = -1;
+      for (const [nc, nr] of neighbors(c, r)) {
+        const o = state.ownership[nr][nc];
+        if (winnerIds.has(o)) { bestNeighbour = o; break; }
+      }
+      if (bestNeighbour >= 0) {
+        state.ownership[r][c] = bestNeighbour;
+        transferred++;
+      }
+    }
+  }
+  reassignSettlementsByTileOwner();
+  // Restore speed scaling.
+  if (_origSpeedMs && typeof SPEED_TURN_MS !== "undefined") {
+    for (let i = 0; i < SPEED_TURN_MS.length; i++) SPEED_TURN_MS[i] = _origSpeedMs[i];
+    _origSpeedMs = null;
+  }
+  state.warMode = null;
+  log("event", which + " ends. " + winners.length + " victors take " + transferred + " border tiles from the losers.");
+  invalidateTintCache();
 }
 
 // =================== INTERNAL CHAOS ===================
