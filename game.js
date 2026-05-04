@@ -3719,6 +3719,12 @@ function tryMoveOrAttack(army, toC, toR) {
     army.moves = Math.max(0, army.moves - 1);
     return true;
   }
+  // Granted military access: same passage rule as faction.
+  if (civ && state.militaryAccess && state.militaryAccess[army.civId] && state.militaryAccess[army.civId][owner]) {
+    setArmyTile(army, toC, toR);
+    army.moves = Math.max(0, army.moves - 1);
+    return true;
+  }
   // Don't accidentally invade allies. If the tile's owner is an ally
   // (rel >= 80), the unit just stops short - no combat, no relation hit.
   if (civ && (civ.relations[owner] || 0) >= 80) {
@@ -7919,7 +7925,10 @@ function showCountryPanel(civ) {
       const playerFaction = findFactionForCiv(player.id);
       const targetFaction = findFactionForCiv(civ.id);
       const inviteBtn = document.getElementById("cp-faction-invite-btn");
+      const joinBtn = document.getElementById("cp-faction-join-btn");
       const leaveBtn = document.getElementById("cp-faction-leave-btn");
+      const milAccessBtn = document.getElementById("cp-mil-access-btn");
+      const callWarBtn = document.getElementById("cp-call-war-btn");
       const cwBtn = document.getElementById("cp-commonwealth-btn");
       // Invite-to-faction: player has a faction, target isn't in any faction.
       if (inviteBtn) {
@@ -7932,6 +7941,17 @@ function showCountryPanel(civ) {
           inviteBtn.style.display = "none";
         }
       }
+      // Ask-to-join: target is in a faction, player isn't.
+      if (joinBtn) {
+        if (targetFaction && !playerFaction) {
+          joinBtn.style.display = "";
+          joinBtn.textContent = "📜 Ask to Join " + targetFaction.name;
+          joinBtn.dataset.factionName = targetFaction.name;
+          joinBtn.dataset.civId = civ.id;
+        } else {
+          joinBtn.style.display = "none";
+        }
+      }
       // Leave-faction: player is in a faction, ANY target panel shows it.
       if (leaveBtn) {
         if (playerFaction) {
@@ -7940,6 +7960,39 @@ function showCountryPanel(civ) {
           leaveBtn.dataset.factionName = playerFaction.name;
         } else {
           leaveBtn.style.display = "none";
+        }
+      }
+      // Military access: hide if same faction (already grants passage)
+      // or if access already granted.
+      if (milAccessBtn) {
+        const sameFac = playerFaction && targetFaction && playerFaction.name === targetFaction.name;
+        const alreadyGranted = state.militaryAccess && state.militaryAccess[player.id] && state.militaryAccess[player.id][civ.id];
+        if (sameFac || alreadyGranted) {
+          milAccessBtn.style.display = "none";
+        } else {
+          milAccessBtn.style.display = "";
+          milAccessBtn.dataset.civId = civ.id;
+        }
+      }
+      // Call to war: player has at least one active war that target isn't already in.
+      if (callWarBtn) {
+        const activeWarTargets = [];
+        if (state.playerWars) {
+          for (const enemyId of state.playerWars) {
+            if (enemyId === civ.id) continue;
+            const enemy = state.civs.find(c => c.id === enemyId && c.alive);
+            if (!enemy) continue;
+            const targetRel = civ.relations[enemyId] || 0;
+            if (targetRel <= -50) continue;   // already at war with that enemy
+            activeWarTargets.push(enemy);
+          }
+        }
+        if (activeWarTargets.length > 0) {
+          callWarBtn.style.display = "";
+          callWarBtn.dataset.civId = civ.id;
+          callWarBtn.textContent = "📯 Call to War (vs " + activeWarTargets.map(e => e.name).slice(0, 2).join(", ") + (activeWarTargets.length > 2 ? "…" : "") + ")";
+        } else {
+          callWarBtn.style.display = "none";
         }
       }
       // Commonwealth: only at +200 relations.
@@ -8252,6 +8305,80 @@ document.getElementById("cp-faction-leave-btn").addEventListener("click", () => 
     const t = state.civs.find(c => c.id === parseInt(openId, 10) && c.alive);
     if (t) showCountryPanel(t);
   }
+});
+
+// Acceptance probability based on relations: 0 -> 25%, 100 -> 65%,
+// 200 -> 95%. Hostile (rel < 0) always declines.
+function _diploAcceptChance(rel) {
+  if (rel < 0) return 0;
+  return Math.max(0.05, Math.min(0.95, 0.25 + rel * 0.0035));
+}
+
+document.getElementById("cp-faction-join-btn").addEventListener("click", () => {
+  const player = state.civs[0];
+  if (!player || !player.isPlayer) return;
+  const btn = document.getElementById("cp-faction-join-btn");
+  const factionName = btn.dataset.factionName;
+  const target = state.civs.find(c => c.id === parseInt(btn.dataset.civId, 10) && c.alive);
+  const faction = (state.factions || []).find(f => f.name === factionName);
+  if (!target || !faction) return;
+  // Acceptance is averaged over current member relations with the player.
+  const members = faction.memberIds.map(id => state.civs.find(c => c.id === id && c.alive)).filter(Boolean);
+  if (members.length === 0) return;
+  const avgRel = members.reduce((s, m) => s + (m.relations[player.id] || 0), 0) / members.length;
+  if (Math.random() < _diploAcceptChance(avgRel)) {
+    faction.memberIds.push(player.id);
+    for (const m of members) {
+      player.relations[m.id] = 100;
+      m.relations[player.id] = 100;
+    }
+    log("peace", player.name + " is admitted to " + factionName + ".");
+  } else {
+    log("event", factionName + " declines " + player.name + "'s membership petition.");
+  }
+  showCountryPanel(target);
+});
+
+document.getElementById("cp-mil-access-btn").addEventListener("click", () => {
+  const player = state.civs[0];
+  if (!player || !player.isPlayer) return;
+  const id = parseInt(document.getElementById("cp-mil-access-btn").dataset.civId, 10);
+  const target = state.civs.find(c => c.id === id && c.alive);
+  if (!target) return;
+  const rel = target.relations[player.id] || 0;
+  if (Math.random() < _diploAcceptChance(rel)) {
+    if (!state.militaryAccess) state.militaryAccess = {};
+    if (!state.militaryAccess[player.id]) state.militaryAccess[player.id] = {};
+    state.militaryAccess[player.id][target.id] = true;
+    log("peace", target.name + " grants " + player.name + " military access.");
+  } else {
+    log("event", target.name + " refuses " + player.name + "'s request for military access.");
+  }
+  showCountryPanel(target);
+});
+
+document.getElementById("cp-call-war-btn").addEventListener("click", () => {
+  const player = state.civs[0];
+  if (!player || !player.isPlayer) return;
+  const id = parseInt(document.getElementById("cp-call-war-btn").dataset.civId, 10);
+  const target = state.civs.find(c => c.id === id && c.alive);
+  if (!target || !state.playerWars) return;
+  const rel = target.relations[player.id] || 0;
+  if (Math.random() < _diploAcceptChance(rel)) {
+    let joined = 0;
+    for (const enemyId of state.playerWars) {
+      if (enemyId === target.id) continue;
+      const enemy = state.civs.find(c => c.id === enemyId && c.alive);
+      if (!enemy) continue;
+      target.relations[enemy.id] = -100;
+      enemy.relations[target.id] = -100;
+      joined++;
+    }
+    log("war", target.name + " answers " + player.name + "'s call and enters " + joined + " war(s) on its side.");
+  } else {
+    log("event", target.name + " refuses to join " + player.name + "'s wars.");
+  }
+  showCountryPanel(target);
 });
 
 document.getElementById("cp-commonwealth-btn").addEventListener("click", () => {
