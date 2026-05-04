@@ -3808,9 +3808,17 @@ function resolveCombat(attackerArmy, toC, toR) {
   const roll = 0.7 + Math.random() * 0.6;
   const attackerWins = attStr * roll > defStr;
 
-  // Apply casualties
+  // Apply casualties + health damage. Health is just a visual ramp for
+  // each unit's HP - on a count loss, the surviving units inherit the
+  // depleted health (so the bar shows lingering battle damage).
   const attLoss = Math.max(1, Math.floor(attackerArmy.count * (attackerWins ? 0.25 : 0.55)));
   attackerArmy.count = Math.max(0, attackerArmy.count - attLoss);
+  if (attackerArmy.health == null) attackerArmy.health = 100;
+  attackerArmy.health = Math.max(10, attackerArmy.health - (attackerWins ? 25 : 55));
+  for (const d of defArmies) {
+    if (d.health == null) d.health = 100;
+    d.health = Math.max(10, d.health - (attackerWins ? 60 : 30));
+  }
 
   if (attackerWins) {
     // Defender loses tile + settlement (if any) + all defending armies on tile
@@ -5473,6 +5481,18 @@ function render() {
       ctx.fillRect(x - 1.4, y - 1.4, 2.8, 2.8);
       ctx.fillStyle = civ.color;
       ctx.fillRect(x - 0.7, y - 0.7, 1.4, 1.4);
+      // Health bar: drawn above the unit marker. Shows when health is
+      // below the 100 default, so a fully-healthy army stays clean.
+      const health = a.health == null ? 100 : a.health;
+      if (health < 100 && a.type !== "settler" && a.type !== "colonizer" && a.type !== "leader") {
+        const barW = 3.2, barH = 0.6;
+        const bx = x - barW / 2, by = y - 2.4;
+        ctx.fillStyle = "rgba(0,0,0,0.85)";
+        ctx.fillRect(bx - 0.2, by - 0.2, barW + 0.4, barH + 0.4);
+        const frac = Math.max(0, Math.min(1, health / 100));
+        ctx.fillStyle = frac > 0.6 ? "#3aa84a" : (frac > 0.3 ? "#e8c020" : "#c84030");
+        ctx.fillRect(bx, by, barW * frac, barH);
+      }
     }
   }
 
@@ -7216,10 +7236,15 @@ function gameLoop(now) {
   const yearEl = document.getElementById("year-display");
   if (yearEl) {
     if (state.warMode) {
-      // Show year + day-of-year so the player can see real-time progress.
+      // Year + day-of-year + hour. Each tick advances 1 day, and we
+      // sub-tick interpolate 0..23 hours within that second so the
+      // "1914 AD · day 5 · 14h" readout ticks visibly during war mode.
       const yi = Math.floor(displayYear);
-      const dayOfYear = Math.max(1, Math.min(365, Math.floor((displayYear - yi) * 365) + 1));
-      yearEl.textContent = yearLabel(yi) + " · day " + dayOfYear;
+      const dayFrac = (displayYear - yi) * 365;
+      const dayOfYear = Math.max(1, Math.min(365, Math.floor(dayFrac) + 1));
+      const hour = Math.floor((dayFrac - Math.floor(dayFrac)) * 24);
+      const hourStr = hour < 10 ? "0" + hour : "" + hour;
+      yearEl.textContent = yearLabel(yi) + " · day " + dayOfYear + " · " + hourStr + "h";
     } else {
       yearEl.textContent = yearLabel(Math.floor(displayYear));
     }
