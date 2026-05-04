@@ -7909,7 +7909,57 @@ function showCountryPanel(civ) {
   const warBanner = document.getElementById("cp-war-state");
   const allyBtn = document.getElementById("cp-ally-btn");
   const allyBanner = document.getElementById("cp-ally-state");
+  const diploEl = document.getElementById("cp-diplo");
   const player = state.civs[0];
+  // Diplomacy panel visibility + per-button gating.
+  if (diploEl) {
+    if (!civ.isPlayer && civ.alive && player && player.isPlayer) {
+      diploEl.style.display = "";
+      const rel = player.relations[civ.id] || 0;
+      const playerFaction = findFactionForCiv(player.id);
+      const targetFaction = findFactionForCiv(civ.id);
+      const inviteBtn = document.getElementById("cp-faction-invite-btn");
+      const leaveBtn = document.getElementById("cp-faction-leave-btn");
+      const cwBtn = document.getElementById("cp-commonwealth-btn");
+      // Invite-to-faction: player has a faction, target isn't in any faction.
+      if (inviteBtn) {
+        if (playerFaction && !targetFaction) {
+          inviteBtn.style.display = "";
+          inviteBtn.textContent = "🤝 Invite to " + playerFaction.name;
+          inviteBtn.dataset.civId = civ.id;
+          inviteBtn.dataset.factionName = playerFaction.name;
+        } else {
+          inviteBtn.style.display = "none";
+        }
+      }
+      // Leave-faction: player is in a faction, ANY target panel shows it.
+      if (leaveBtn) {
+        if (playerFaction) {
+          leaveBtn.style.display = "";
+          leaveBtn.textContent = "↩ Leave " + playerFaction.name;
+          leaveBtn.dataset.factionName = playerFaction.name;
+        } else {
+          leaveBtn.style.display = "none";
+        }
+      }
+      // Commonwealth: only at +200 relations.
+      if (cwBtn) {
+        if (rel >= 200) {
+          cwBtn.style.display = "";
+          cwBtn.dataset.civId = civ.id;
+        } else {
+          cwBtn.style.display = "none";
+        }
+      }
+      // Stash the target id on the gift / donate buttons too.
+      const giftBtn = document.getElementById("cp-gift-btn");
+      const donateBtn = document.getElementById("cp-donate-btn");
+      if (giftBtn) giftBtn.dataset.civId = civ.id;
+      if (donateBtn) donateBtn.dataset.civId = civ.id;
+    } else {
+      diploEl.style.display = "none";
+    }
+  }
   if (warBtn && warBanner && allyBtn && allyBanner && player && player.isPlayer) {
     if (civ.isPlayer || !civ.alive) {
       warBtn.style.display = "none";
@@ -8117,6 +8167,123 @@ document.getElementById("cp-ally-btn").addEventListener("click", () => {
   if (state.playerWars) state.playerWars.delete(target.id);
   log("peace", `${player.name} and ${target.name} forge an alliance!`);
   showCountryPanel(target);   // refresh panel
+});
+
+// ---- Diplomacy buttons ----
+function _diploBumpRel(player, target, amount) {
+  const cur = player.relations[target.id] || 0;
+  const newRel = Math.min(200, Math.max(-100, cur + amount));
+  player.relations[target.id] = newRel;
+  target.relations[player.id] = newRel;
+}
+
+document.getElementById("cp-gift-btn").addEventListener("click", () => {
+  const player = state.civs[0];
+  if (!player || !player.isPlayer) return;
+  const id = parseInt(document.getElementById("cp-gift-btn").dataset.civId, 10);
+  const target = state.civs.find(c => c.id === id && c.alive);
+  if (!target) return;
+  _diploBumpRel(player, target, 10);
+  log("peace", player.name + " sends a gift to " + target.name + " (+10 rel).");
+  showCountryPanel(target);
+});
+
+document.getElementById("cp-donate-btn").addEventListener("click", () => {
+  const player = state.civs[0];
+  if (!player || !player.isPlayer) return;
+  const id = parseInt(document.getElementById("cp-donate-btn").dataset.civId, 10);
+  const target = state.civs.find(c => c.id === id && c.alive);
+  if (!target) return;
+  // Find a combat army the player can spare. Pull 1 unit out, transfer
+  // to the target's capital tile.
+  const donor = player.armies.find(a => a.type !== "settler" && a.type !== "colonizer" && a.type !== "leader" && a.count > 1);
+  if (!donor) {
+    log("event", "Not enough spare combat units to donate (need an army with 2+ count).");
+    return;
+  }
+  donor.count -= 1;
+  const cap = target.settlements[0];
+  const sCol = cap ? cap.col : donor.col;
+  const sRow = cap ? cap.row : donor.row;
+  target.armies.push({
+    id: nextArmyId++, col: sCol, row: sRow,
+    type: donor.type, count: 1, civId: target.id, moves: 0,
+  });
+  _diploBumpRel(player, target, 20);
+  log("peace", player.name + " donates 1 " + (UNITS[donor.type] && UNITS[donor.type].name || donor.type) + " to " + target.name + " (+20 rel).");
+  showCountryPanel(target);
+});
+
+document.getElementById("cp-faction-invite-btn").addEventListener("click", () => {
+  const player = state.civs[0];
+  if (!player || !player.isPlayer) return;
+  const btn = document.getElementById("cp-faction-invite-btn");
+  const id = parseInt(btn.dataset.civId, 10);
+  const factionName = btn.dataset.factionName;
+  const target = state.civs.find(c => c.id === id && c.alive);
+  const faction = (state.factions || []).find(f => f.name === factionName);
+  if (!target || !faction) return;
+  if (faction.memberIds.includes(target.id)) return;
+  faction.memberIds.push(target.id);
+  // Lock target's relations to +100 with every faction member.
+  for (const mid of faction.memberIds) {
+    if (mid === target.id) continue;
+    const m = state.civs.find(c => c.id === mid && c.alive);
+    if (!m) continue;
+    target.relations[m.id] = 100;
+    m.relations[target.id] = 100;
+  }
+  log("peace", target.name + " accepts the invitation and joins " + factionName + ".");
+  showCountryPanel(target);
+});
+
+document.getElementById("cp-faction-leave-btn").addEventListener("click", () => {
+  const player = state.civs[0];
+  if (!player || !player.isPlayer) return;
+  const factionName = document.getElementById("cp-faction-leave-btn").dataset.factionName;
+  const faction = (state.factions || []).find(f => f.name === factionName);
+  if (!faction) return;
+  faction.memberIds = faction.memberIds.filter(id => id !== player.id);
+  log("event", player.name + " withdraws from " + factionName + ".");
+  // No relations reset - leaving doesn't make former allies into enemies.
+  // Refresh the panel that was open (whichever it was).
+  const openId = document.getElementById("cp-ally-btn").dataset.civId;
+  if (openId) {
+    const t = state.civs.find(c => c.id === parseInt(openId, 10) && c.alive);
+    if (t) showCountryPanel(t);
+  }
+});
+
+document.getElementById("cp-commonwealth-btn").addEventListener("click", () => {
+  const player = state.civs[0];
+  if (!player || !player.isPlayer) return;
+  const id = parseInt(document.getElementById("cp-commonwealth-btn").dataset.civId, 10);
+  const target = state.civs.find(c => c.id === id && c.alive);
+  if (!target) return;
+  if ((player.relations[target.id] || 0) < 200) return;
+  // Form the commonwealth: name combines the two civs, player keeps its
+  // identity (id, faction membership, tag) but absorbs the target's
+  // territory + settlements + armies. Target becomes "capitulated to"
+  // the new commonwealth.
+  const newName = player.name + "-" + target.name + " Commonwealth";
+  if (!player.previousNames) player.previousNames = [];
+  player.previousNames.push(player.name);
+  player.name = newName;
+  player.lastChangeYear = state.year;
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (state.ownership[r][c] === target.id) state.ownership[r][c] = player.id;
+    }
+  }
+  for (const s of target.settlements) player.settlements.push(s);
+  for (const a of target.armies) player.armies.push({ ...a, civId: player.id });
+  target.settlements = [];
+  target.armies = [];
+  target.alive = false;
+  target.capitulatedTo = player.id;
+  log("peace", newName + " is proclaimed - " + target.name + " merges into the union.");
+  invalidateTintCache();
+  showCountryPanel(player);
 });
 
 // =================== PLAYER MINI-FLAG (top-left) ===================
