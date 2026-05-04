@@ -2555,6 +2555,20 @@ function fireEvent(ev) {
         }
       }
       target.settlements = remaining;
+      // Transfer armies stationed on the seceding territory too. The
+      // newly independent state inherits the garrisons that were there,
+      // and the parent loses that combat strength - so when Latvia
+      // secedes from the Russian Empire, RE actually weakens on the
+      // ledger instead of keeping all its troops.
+      const remainingArmies = [];
+      for (const a of target.armies) {
+        if (state.ownership[a.row] && state.ownership[a.row][a.col] === newCiv.id) {
+          newCiv.armies.push({ ...a, id: nextArmyId++, civId: newCiv.id });
+        } else {
+          remainingArmies.push(a);
+        }
+      }
+      target.armies = remainingArmies;
       target.relations[newCiv.id] = -80;
       newCiv.relations[target.id] = -80;
       target.lastChangeYear = state.year;
