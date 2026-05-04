@@ -4318,7 +4318,7 @@ function showWarModePrompt(which) {
   if (!modal || !title || !body) return;
   title.textContent = "⚔ " + which + " - " + cfg.startYear + " ⚔";
   body.textContent = cfg.description;
-  modal.classList.remove("hidden");
+  modal.style.display = "flex";
   // Wire buttons (idempotent - replaceWith clears old listeners).
   const accept = document.getElementById("warmode-accept");
   const decline = document.getElementById("warmode-decline");
@@ -4327,11 +4327,11 @@ function showWarModePrompt(which) {
   accept.parentNode.replaceChild(newAccept, accept);
   decline.parentNode.replaceChild(newDecline, decline);
   newAccept.addEventListener("click", () => {
-    modal.classList.add("hidden");
+    modal.style.display = "none";
     enterWarMode(which);
   });
   newDecline.addEventListener("click", () => {
-    modal.classList.add("hidden");
+    modal.style.display = "none";
     state.speed = state._preWarSpeed || 1;
     log("event", which + " mode declined - history continues at normal pace.");
   });
