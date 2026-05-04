@@ -1516,7 +1516,7 @@ const state = {
   selectedTile: null,  // {col, row}
   moveMode: null,      // {armyId} when selecting destination
   log: [],             // chronicle
-  phase: "placement",  // "placement" | "playing" | "gameover"
+  phase: "menu",       // "menu" | "placement" | "playing" | "gameover"
   ownership: null,     // 2D array, civ id or -1
   hoverTile: null,
   speed: 0,            // 0 = paused, 1-5 = active
@@ -1971,6 +1971,11 @@ function spawnPlayer(col, row) {
   }
   state.phase = "playing";
   log("event", `${player.name} settle the land. Their chieftain dreams of empire.`);
+  // Debug-start modifier: flip into observer mode + unlock 20x speed.
+  if (state._modDebugStart && typeof enterDebugMode === "function") {
+    state._modDebugStart = false;
+    enterDebugMode();
+  }
 }
 
 // =================== HISTORICAL EVENTS ===================
@@ -6086,6 +6091,10 @@ canvas.addEventListener("click", (e) => {
     return;
   }
 
+  if (state.phase === "menu") {
+    flashHint("Click PLAY to begin, then pick a tile.");
+    return;
+  }
   if (state.phase === "placement") {
     if (PASSABLE(MAP[row][col]) && state.ownership[row][col] === -1) {
       spawnPlayer(col, row);
@@ -7164,6 +7173,69 @@ document.querySelectorAll(".speed-btn").forEach(btn => {
     setSpeed(s);
   });
 });
+
+// Splash PLAY button: applies modifiers and switches to placement phase.
+const _splashPlayBtn = document.getElementById("splash-play");
+if (_splashPlayBtn) {
+  _splashPlayBtn.addEventListener("click", () => {
+    // Apply each checked modifier before transitioning to placement.
+    const mods = document.querySelectorAll('#splash-modifiers input[type="checkbox"]');
+    for (const m of mods) {
+      if (!m.checked) continue;
+      const which = m.dataset.mod;
+      if (which === "kill-latins") killStartingTribe("Latins");
+      else if (which === "kill-eastslavs") killStartingTribe("East Slavs");
+      else if (which === "kill-polans") killStartingTribe("Polans");
+      else if (which === "kill-balts") killStartingTribe("Balts");
+      else if (which === "kill-germans") killStartingTribe("Germans");
+      else if (which === "kill-finns") killStartingTribe("Finns");
+      else if (which === "ww2-state") fastForwardToYear(1936);
+      else if (which === "debug-start") {
+        // Will activate after the player spawns - flag it.
+        state._modDebugStart = true;
+      }
+    }
+    document.getElementById("splash").style.display = "none";
+    state.phase = "placement";
+    flashHint("Click any land tile on the map to place your tribe.");
+    invalidateTintCache();
+    render();
+  });
+}
+
+// Helper used by splash modifiers: find the live tribe (or any civ
+// matching its lineage) and wipe it, plus mark the entire forward
+// lineage as console-killed so descendants never spawn.
+function killStartingTribe(name) {
+  markLineageKilled(name);
+  const target = state.civs.find(c => c.alive && (c.name === name || (c.previousNames || []).includes(name)));
+  if (!target) return;
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (state.ownership[r][c] === target.id) state.ownership[r][c] = -1;
+    }
+  }
+  target.settlements = [];
+  target.armies = [];
+  target.alive = false;
+  log("event", name + " is wiped from history before the game even begins.");
+}
+
+// Helper for the WWII-state modifier: tick the year forward and let all
+// events up to that year fire normally (so the historical chain plays
+// out into 1936). Player hasn't spawned yet, so player-driven gates
+// don't interfere.
+function fastForwardToYear(targetYear) {
+  // Process events repeatedly without YEAR + tick logic; only year
+  // advancement + processEvents matters here.
+  while (state.year < targetYear) {
+    state.year += YEARS_PER_TURN;
+    if (state.year > targetYear) state.year = targetYear;
+    processEvents();
+  }
+  log("event", "World fast-forwarded to " + yearLabel(targetYear) + ".");
+  invalidateTintCache();
+}
 
 // Faction map mode: recolours the map so factions render as one bloc.
 const _factionBtn = document.getElementById("faction-mode-btn");

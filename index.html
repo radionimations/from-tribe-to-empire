@@ -1247,13 +1247,28 @@
       <canvas id="player-flag-canvas" width="120" height="80"></canvas>
     </button>
     <div id="splash">
-      <h2>FROM TRIBE TO EMPIRE</h2>
-      <p>The year is 1000 BC. Mighty empires rise from humble beginnings.</p>
-      <p>You are a small tribe. Your destiny is to become a superpower - or vanish into the dust of history.</p>
-      <p style="margin-top:20px;color:#8a7a5c;font-size:13px;">Egypt, Assyria, Babylon, Phoenicia, the Mycenaean Greeks, the Zhou, the Olmec, and a dozen other peoples are already on the map.</p>
-      <p style="color:#8a7a5c;font-size:13px;">Rome will not be founded until 753 BC. The game runs in real time - pause to plan, speed up to watch history unfold.</p>
-      <p class="hint">Click any land tile on the map to place your tribe</p>
-      <p style="color:#5a4a32;font-size:11px;margin-top:18px;">Scroll to zoom · Right-click drag to pan · Type <b>DEBUG</b> to auto-run</p>
+      <div id="splash-top" style="flex:0 0 50%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 20px;text-align:center;">
+        <h2>FROM TRIBE TO EMPIRE</h2>
+        <p>The year is 1000 BC. Mighty empires rise from humble beginnings.</p>
+        <p>You are a small tribe. Your destiny is to become a superpower - or vanish into the dust of history.</p>
+        <p style="color:#8a7a5c;font-size:13px;">Egypt, Assyria, Babylon, Phoenicia, the Mycenaean Greeks, the Zhou, the Olmec, and a dozen other peoples are already on the map.</p>
+        <p style="color:#5a4a32;font-size:11px;margin-top:14px;">Scroll to zoom · Right-click drag to pan · Type <b>DEBUG</b> to auto-run</p>
+      </div>
+      <div id="splash-bottom" style="flex:0 0 50%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 20px;border-top:1px solid #3a2a14;background:rgba(0,0,0,0.35);pointer-events:auto;">
+        <div style="font-size:12px;letter-spacing:3px;color:#d4a657;margin-bottom:14px;">— MODIFIERS —</div>
+        <div id="splash-modifiers" style="display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;max-width:560px;font-size:13px;color:#cfbf95;margin-bottom:18px;">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" data-mod="kill-latins"> Latins extinct (no Rome)</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" data-mod="kill-eastslavs"> East Slavs extinct (no Russia)</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" data-mod="kill-polans"> Polans extinct (no Poland)</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" data-mod="kill-balts"> Balts extinct (no Lithuania/Latvia)</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" data-mod="kill-germans"> Germans extinct (no Germany)</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" data-mod="kill-finns"> Finns extinct (no Finland/Estonia)</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" data-mod="ww2-state"> WWII state (skip to 1936, tribes inherit)</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" data-mod="debug-start"> Debug mode (observer + 20× speed)</label>
+        </div>
+        <button id="splash-play" style="padding:12px 36px;font-size:16px;letter-spacing:6px;background:linear-gradient(180deg,#a8923a,#624a14);border:1px solid #ffd24a;color:#fff5cc;font-weight:bold;cursor:pointer;font-family:Georgia,serif;">PLAY ▶</button>
+        <div class="hint" style="margin-top:14px;color:#d4a657;font-size:13px;animation:pulse 2s infinite;">Then click any land tile on the map to place your tribe</div>
+      </div>
     </div>
   </div>
   <div id="sidebar">
