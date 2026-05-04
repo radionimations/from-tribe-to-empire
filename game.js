@@ -6431,6 +6431,16 @@ function showCivFamilyTree() {
     playerNameSet.add(_player.name);
     for (const n of _player.previousNames || []) playerNameSet.add(n);
   }
+  // Map every name (current + previousNames) -> its civ's permanent
+  // 3-letter tag, so tree nodes (which are name-keyed) can show the tag.
+  const nameToTag = new Map();
+  for (const c of state.civs) {
+    if (!c || !c.tag) continue;
+    if (!nameToTag.has(c.name)) nameToTag.set(c.name, c.tag);
+    for (const n of c.previousNames || []) {
+      if (!nameToTag.has(n)) nameToTag.set(n, c.tag);
+    }
+  }
   function markStatus(node, visiting) {
     if (node._statusDone) return node._status;
     if (visiting.has(node)) return "alive";   // cycle guard
@@ -6518,6 +6528,16 @@ function showCivFamilyTree() {
     nm.className = "tree-name";
     nm.textContent = node.name;
     card.appendChild(nm);
+    // Permanent civ tag, debug-only (matches the country panel rule).
+    if (state.debug) {
+      const tag = nameToTag.get(node.name);
+      if (tag) {
+        const tg = document.createElement("div");
+        tg.className = "tree-tag";
+        tg.textContent = tag;
+        card.appendChild(tg);
+      }
+    }
     if (node.year != null) {
       const yr = document.createElement("div");
       yr.className = "tree-year";
