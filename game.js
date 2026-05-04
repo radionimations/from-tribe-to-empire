@@ -5535,6 +5535,14 @@ function render() {
       }
       const x = aCol * TILE + TILE / 2;
       const y = aRow * TILE + TILE / 2;
+      // Active-unit highlight (gold ring) so the player can see which
+      // unit is currently controlled by arrow keys / right-click. Set
+      // by enterMoveMode() and by clicking a tile with a single unit.
+      if (a.id === state._activeArmyId && civ.isPlayer) {
+        ctx.strokeStyle = "#ffd24a";
+        ctx.lineWidth = Math.max(0.4, 0.7 / view.zoom);
+        ctx.beginPath(); ctx.arc(x, y, 2.6, 0, Math.PI * 2); ctx.stroke();
+      }
       ctx.fillStyle = a.type === "settler" ? "#fff" : "#000";
       ctx.fillRect(x - 1.4, y - 1.4, 2.8, 2.8);
       ctx.fillStyle = civ.color;
@@ -6249,14 +6257,26 @@ window.cancelBuyHold = function () {
   if (_buyHoldTimer) { clearTimeout(_buyHoldTimer); _buyHoldTimer = null; }
 };
 window.enterMoveMode = function (armyId) {
-  state.moveMode = { armyId };
+  // Force the id to a number - inline onclick passes it as a number, but
+  // some paths might stringify it.
+  const id = typeof armyId === "string" ? parseInt(armyId, 10) : armyId;
+  state.moveMode = { armyId: id };
   // Track this as the active player unit too, so arrow keys + right-click
   // commands target THIS unit (not just whichever army happens to be
   // first in the list at the selected tile).
-  state._activeArmyId = armyId;
-  const banner = document.getElementById("move-mode-banner");
-  banner.textContent = "Click an adjacent tile to move there. Click elsewhere to cancel.";
-  banner.style.display = "block";
+  state._activeArmyId = id;
+  // Snap the selected tile to the unit so "click adjacent" works
+  // visually from where the unit actually is.
+  const army = findArmyById(id);
+  if (army) {
+    state.selectedTile = { col: army.col, row: army.row };
+    const tname = (UNITS[army.type] && UNITS[army.type].name) || army.type;
+    const banner = document.getElementById("move-mode-banner");
+    if (banner) {
+      banner.textContent = "Moving " + tname + " · click an adjacent tile, or use arrow keys / right-click.";
+      banner.style.display = "block";
+    }
+  }
   render();
 };
 window.foundCity = function (armyId) {
