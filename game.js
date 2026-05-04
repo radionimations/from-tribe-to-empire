@@ -5048,10 +5048,16 @@ function buildTintCacheProvinces(tctx) {
         const rightPid = provinceGrid[i + STEP];
         const rightCiv = provinceCiv[rightPid];
         if (meCiv !== rightCiv && (meCiv >= 0 || rightCiv >= 0)) {
-          const isTribal = _isTribeCiv(meCiv) || _isTribeCiv(rightCiv);
-          const path = isTribal ? tribalBorderPath : borderPath;
-          path.moveTo(x + STEP, y);
-          path.lineTo(x + STEP, y + STEP);
+          // Tribes have no borders at all - their meatball blob already
+          // visually delimits them. Skip every edge that touches a
+          // tribal civ so neither the tribe nor its country neighbour
+          // draws a hard line against the blob.
+          if (_isTribeCiv(meCiv) || _isTribeCiv(rightCiv)) {
+            // no-op
+          } else {
+            borderPath.moveTo(x + STEP, y);
+            borderPath.lineTo(x + STEP, y + STEP);
+          }
         } else if (haveStates && meCiv >= 0 && meCiv === rightCiv) {
           const rightState = rightPid > 0 ? provinceToState[rightPid] : 0;
           if (meState !== rightState && meState !== 0 && rightState !== 0) {
@@ -5064,10 +5070,12 @@ function buildTintCacheProvinces(tctx) {
         const botPid = provinceGrid[i + w * STEP];
         const botCiv = provinceCiv[botPid];
         if (meCiv !== botCiv && (meCiv >= 0 || botCiv >= 0)) {
-          const isTribal = _isTribeCiv(meCiv) || _isTribeCiv(botCiv);
-          const path = isTribal ? tribalBorderPath : borderPath;
-          path.moveTo(x, y + STEP);
-          path.lineTo(x + STEP, y + STEP);
+          if (_isTribeCiv(meCiv) || _isTribeCiv(botCiv)) {
+            // no-op
+          } else {
+            borderPath.moveTo(x, y + STEP);
+            borderPath.lineTo(x + STEP, y + STEP);
+          }
         } else if (haveStates && meCiv >= 0 && meCiv === botCiv) {
           const botState = botPid > 0 ? provinceToState[botPid] : 0;
           if (meState !== botState && meState !== 0 && botState !== 0) {
