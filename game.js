@@ -7221,62 +7221,46 @@ function killStartingTribe(name) {
   log("event", name + " is wiped from history before the game even begins.");
 }
 
-// WWII-state modifier: world stays in 1000 BC, but each starting tribe
-// inherits the territory their WWII-era descendant would hold (HOI4
-// 1936 country-tag footprint). So Latins start owning all of Italy,
-// Polans owning Poland, Germans owning Germany, East Slavs owning the
-// USSR's 1936 expanse, etc. Lets the chronicle still play out from
-// 1000 BC but with a "what if the tribes never split into successors"
-// alt-history twist.
-const WW2_TRIBE_TAGS = {
-  "Latins":      ["ITA"],
-  "Etruscans":   [],          // overlaps with Latins
-  "Greeks":      ["GRE"],
-  "Egypt":       ["EGY"],
-  "Iberians":    ["SPR", "POR"],
-  "Gauls":       ["FRA", "BEL", "LUX"],
-  "Celts":       ["ENG", "IRE"],
-  "Germans":     ["GER", "AUS", "SWI"],
-  "Polans":      ["POL"],
-  "Balts":       ["LIT", "LAT"],
-  "Finns":       ["FIN", "EST"],
-  "Norse":       ["NOR", "SWE", "DEN", "ICE"],
-  "East Slavs":  ["SOV"],
-  "Phoenicia":   ["LBN", "SYR", "ISR", "PAL"],
-  "Assyria":     ["IRQ"],
-  "Babylon":     [],          // overlaps with Assyria
-  "Medes":       ["PER"],
-  "Vedic India": ["RAJ"],
-  "Dravidians":  [],
-  "Zhou China":  ["CHI"],
-  "Gojoseon":    ["KOR"],
-  "Yamato":      ["JAP"],
-  "Olmec":       ["MEX"],
-  "Maya":        ["GUA"],
-  "Chavin":      ["PRU"],
-  "Kush":        ["ETH", "SUD"],
-  "Berbers":     ["MOR", "ALG", "TUN"],
-  "Scythians":   [],
-  "Thracians":   ["BUL", "ROM"],
-};
-
+// WWII-territory modifier: the world starts at 1000 BC as normal, but
+// every starting tribe absorbs the territory of EVERY descendant in
+// its family tree. So Latins start with the full Roman lineage's
+// 1936 footprint (Italy + Western Rome + Byzantium descendants ...),
+// Polans with the entire Polish chain, East Slavs with the full USSR.
+// We compute this dynamically by walking the family tree from each
+// tribe-root forward, collecting CIV_TAGS for every descendant, and
+// transferring all matching 1936 provinces to that root.
 function applyWW2TribeTerritory() {
   if (typeof HOI4_CITIES === "undefined" || !provinceTile || !provinceGrid) return;
-  // Build pid -> tag once.
+  if (typeof CIV_TAGS === "undefined") return;
+  const { roots } = buildCivFamilyTree();
+  // tag (3-letter HOI4 1936 owner) -> root tribe civ-id.
+  const tagToCivId = {};
+  for (const root of roots) {
+    // Pair tree-root with its still-alive starting-tribe civ.
+    const rootCiv = state.civs.find(c => c.alive && c.isStartingTribe && c.name === root.name);
+    if (!rootCiv) continue;
+    // BFS the entire forward subtree, collect every CIV_TAGS entry we hit.
+    const queue = [root];
+    const visited = new Set();
+    while (queue.length) {
+      const node = queue.shift();
+      if (visited.has(node)) continue;
+      visited.add(node);
+      const ct = CIV_TAGS[node.name];
+      if (ct) {
+        const base = ct.split("_")[0];
+        if (base && base.length === 3 && !tagToCivId[base]) tagToCivId[base] = rootCiv.id;
+      }
+      for (const ch of node.children || []) queue.push(ch);
+    }
+  }
+  // Build pid -> 1936 owner tag.
   const pidToTag = {};
   for (const sd of HOI4_CITIES) {
     if (!sd.owner) continue;
     for (const pid of sd.provinces || []) pidToTag[pid] = sd.owner;
   }
-  // Build tag -> civ-id.
-  const tagToCivId = {};
-  for (const civ of state.civs) {
-    if (!civ.alive || !civ.isStartingTribe) continue;
-    const tags = WW2_TRIBE_TAGS[civ.name];
-    if (!tags) continue;
-    for (const t of tags) tagToCivId[t] = civ.id;
-  }
-  // Walk every tile, look up its 1936 owner tag, assign to the matching tribe.
+  // Walk every tile, transfer to matching root.
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       if (!PASSABLE(MAP[r][c])) continue;
@@ -7291,7 +7275,7 @@ function applyWW2TribeTerritory() {
     }
   }
   reassignSettlementsByTileOwner();
-  log("event", "WWII alt-history: starting tribes inherit their modern descendants' territory.");
+  log("event", "WWII alt-history: every starting tribe inherits its entire descendants' territory at 1000 BC.");
   invalidateTintCache();
 }
 
