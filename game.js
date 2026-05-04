@@ -2590,6 +2590,22 @@ function fireEvent(ev) {
       log("event", ev.message + " - " + ev.absorber + " doesn't exist; nothing happens.");
       return;
     }
+    // Strength gate: a much weaker aggressor can't paper-stamp an
+    // historical annexation. If the target outclasses the absorber by
+    // more than 1.5x in combat strength, the absorption fails and the
+    // target survives (set ev.force=true to bypass for inevitable
+    // events). Skipped if target has zero armies (already collapsed).
+    if (absorber && !ev.force) {
+      const tStr = civStrength(target);
+      const aStr = civStrength(absorber);
+      if (tStr > aStr * 1.5 + 6) {
+        log("war", ev.message + " - but " + target.name + " (str " + tStr + ") repels " + absorber.name + " (str " + aStr + "); the annexation fails.");
+        // Hostile relations as a result of the failed attempt.
+        absorber.relations[target.id] = -100;
+        target.relations[absorber.id] = -100;
+        return;
+      }
+    }
     if (absorber) {
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
@@ -3940,6 +3956,22 @@ function countTiles(civ) {
     }
   }
   return n;
+}
+
+// Combat strength: sum of (army count * unit strength) across every
+// attack-capable army (settlers / colonizers / leaders are excluded).
+// Used by the country panel display and to gate scripted absorb events
+// so a wildly outmatched aggressor can't paper-stamp an annexation.
+function civStrength(civ) {
+  if (!civ || !civ.armies) return 0;
+  let s = 0;
+  for (const a of civ.armies) {
+    if (a.type === "settler" || a.type === "colonizer" || a.type === "leader") continue;
+    const def = (typeof UNITS !== "undefined") ? UNITS[a.type] : null;
+    const power = (def && def.str) ? def.str : 1;
+    s += (a.count || 0) * power;
+  }
+  return s;
 }
 
 // Adjust a hex color toward black (negative pct) or white (positive pct).
@@ -7610,11 +7642,13 @@ function showCountryPanel(civ) {
   const tiles = countTiles(civ);
   const totalPop = civ.settlements.reduce((s, x) => s + x.pop, 0);
   const totalArmy = civ.armies.reduce((s, a) => s + a.count, 0);
+  const strength = civStrength(civ);
   document.getElementById("cp-stats").innerHTML = `
     <div class="stat-row"><span class="stat-label">Settlements</span><span class="stat-val">${civ.settlements.length}</span></div>
     <div class="stat-row"><span class="stat-label">Population</span><span class="stat-val">${totalPop}</span></div>
     <div class="stat-row"><span class="stat-label">Territory</span><span class="stat-val">${tiles} tiles</span></div>
     <div class="stat-row"><span class="stat-label">Army</span><span class="stat-val">${totalArmy} units</span></div>
+    <div class="stat-row"><span class="stat-label">Strength</span><span class="stat-val">${strength}</span></div>
     <div class="stat-row"><span class="stat-label">Stability</span><span class="stat-val">${Math.round(civ.stability)}%</span></div>
   `;
 
