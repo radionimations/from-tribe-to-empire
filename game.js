@@ -6131,6 +6131,14 @@ canvas.addEventListener("click", (e) => {
   }
 
   state.selectedTile = { col, row };
+  // If the clicked tile contains a player army, lock arrow/right-click
+  // commands to it. Otherwise clear the lock so the next "Move" click
+  // sets a fresh active unit.
+  const _player = state.civs[0];
+  if (_player && _player.isPlayer) {
+    const onTile = _player.armies.find(a => a.col === col && a.row === row);
+    state._activeArmyId = onTile ? onTile.id : null;
+  }
   // Province-based selection: look up the province ID at the clicked map pixel.
   let pid = 0;
   if (provinceGrid && mapX >= 0 && mapX < MAP_W && mapY >= 0 && mapY < MAP_H) {
@@ -6211,6 +6219,10 @@ window.cancelBuyHold = function () {
 };
 window.enterMoveMode = function (armyId) {
   state.moveMode = { armyId };
+  // Track this as the active player unit too, so arrow keys + right-click
+  // commands target THIS unit (not just whichever army happens to be
+  // first in the list at the selected tile).
+  state._activeArmyId = armyId;
   const banner = document.getElementById("move-mode-banner");
   banner.textContent = "Click an adjacent tile to move there. Click elsewhere to cancel.";
   banner.style.display = "block";
@@ -6301,13 +6313,20 @@ window.addEventListener("mouseup", (e) => {
 function setPlayerUnitDestination(col, row) {
   const player = state.civs[0];
   if (!player || !player.isPlayer || !player.alive) return;
-  if (!state.selectedTile) return;
-  const { col: sc, row: sr } = state.selectedTile;
-  const army = player.armies.find(a => a.col === sc && a.row === sr);
+  // Prefer the unit explicitly commanded via "Move", fall back to the
+  // first army on the selected tile.
+  let army = null;
+  if (state._activeArmyId != null) {
+    army = player.armies.find(a => a.id === state._activeArmyId);
+  }
+  if (!army && state.selectedTile) {
+    const { col: sc, row: sr } = state.selectedTile;
+    army = player.armies.find(a => a.col === sc && a.row === sr);
+  }
   if (!army) return;
   if (army.col === col && army.row === row) { army.dest = null; return; }
   army.dest = { col, row };
-  flashHint("Auto-moving to (" + col + "," + row + ") - one tile per turn");
+  flashHint("Auto-moving " + (UNITS[army.type] && UNITS[army.type].name || army.type) + " to (" + col + "," + row + ")");
 }
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
@@ -7466,18 +7485,26 @@ document.addEventListener("keydown", (e) => {
     e.key === "ArrowDown"  ? [ 0, 1] : null
   );
   if (arrowDir) {
-    if (state.phase === "playing" && state.selectedTile) {
+    if (state.phase === "playing") {
       const player = state.civs[0];
       if (player && player.isPlayer) {
-        const { col, row } = state.selectedTile;
-        const army = player.armies.find(a => a.col === col && a.row === row && a.moves > 0);
+        // Prefer the unit explicitly commanded via "Move" (state._activeArmyId).
+        // Falls back to the first ready army on the selected tile.
+        let army = null;
+        if (state._activeArmyId != null) {
+          army = player.armies.find(a => a.id === state._activeArmyId && a.moves > 0);
+        }
+        if (!army && state.selectedTile) {
+          const { col, row } = state.selectedTile;
+          army = player.armies.find(a => a.col === col && a.row === row && a.moves > 0);
+        }
         if (army) {
           const [dc, dr] = arrowDir;
-          const newCol = ((col + dc) % COLS + COLS) % COLS;
-          const newRow = row + dr;
+          const newCol = ((army.col + dc) % COLS + COLS) % COLS;
+          const newRow = army.row + dr;
           if (newRow >= 0 && newRow < ROWS) {
             tryMoveOrAttack(army, newCol, newRow);
-            state.selectedTile = { col: newCol, row: newRow };
+            state.selectedTile = { col: army.col, row: army.row };
             invalidateTintCache();
             render();
             updateUI();
