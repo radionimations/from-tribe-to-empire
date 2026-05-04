@@ -4355,11 +4355,20 @@ function enterWarMode(which) {
     fireEvent({ type: "form_faction", name: f.name, color: f.color, members: f.members,
       message: f.name + " forms in response to " + which + "." });
   }
-  // Slow time: stretch every speed slot by 5x so 5x-mode ticks at
-  // ~1 second per game-day equivalent. Save originals so we can restore.
+  // Replace each speed slot with explicit war-mode tick durations so
+  // the player gets predictable real-time pacing during the war:
+  //   1x → 1 day per 5 sec
+  //   2x → 1 day per 3 sec
+  //   3x → 1 day per 2 sec
+  //   4x → 1 day per 1.5 sec
+  //   5x → 1 day per 1 sec  (the user-requested cap)
+  //   6x → 1 day per 0.5 sec (debug only)
+  const WAR_SPEEDS = [Infinity, 5000, 3000, 2000, 1500, 1000, 500];
   if (typeof SPEED_TURN_MS !== "undefined") {
     _origSpeedMs = SPEED_TURN_MS.slice();
-    for (let i = 1; i < SPEED_TURN_MS.length; i++) SPEED_TURN_MS[i] = SPEED_TURN_MS[i] * 5;
+    for (let i = 0; i < SPEED_TURN_MS.length && i < WAR_SPEEDS.length; i++) {
+      SPEED_TURN_MS[i] = WAR_SPEEDS[i];
+    }
   }
   state.speed = state._preWarSpeed || 2;
   log("war", which + " MODE ENGAGED. Time slows; the world braces for war.");
