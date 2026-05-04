@@ -2392,23 +2392,38 @@ function fireEvent(ev) {
       return;
     }
     const civName = typeof ev.civ === "string" ? ev.civ : (ev.civ && ev.civ.name);
-    // Lineage block: if the player console-killed any name in the cultural
-    // ancestry of this civ (Polans, Balts, Kingdom of Poland, etc.), the
-    // descendant cannot re-form. This catches both direct kills (kill
-    // Polans -> no Republic of Poland) and forward-walked ones (kill
-    // Polans also marks Duchy/Kingdom/Commonwealth, blocking Republic of
-    // Poland which descends from Kingdom of Poland in TREE_PARENT_OVERRIDES).
+    // Lineage block: if the cultural ancestor (Polans, Balts, Kingdom of
+    // Poland, etc.) of this civ has been wiped out - either by player
+    // console-kill OR by natural extinction with no surviving descendant
+    // anywhere in the lineage - the new state cannot form. So killing
+    // the Polans tribe before any Polish state forms blocks Republic of
+    // Poland from later re-emerging, and a Balts lineage that left no
+    // living descendants by 1991 prevents Republic of Latvia from
+    // spawning out of nothing.
     const overrideParent = TREE_PARENT_OVERRIDES[civName];
-    if (overrideParent && state.consoleKilledLineages && state.consoleKilledLineages.size > 0) {
+    if (overrideParent) {
       const lineage = walkLineageForward(overrideParent);
-      // Also check overrideParent itself, in case the user killed only
-      // the override-parent and walkLineageForward starts past it.
       lineage.add(overrideParent);
-      for (const n of lineage) {
-        if (state.consoleKilledLineages.has(n.toLowerCase())) {
-          log("event", ev.message + " - the " + civName + " lineage was wiped from history; the state cannot reform.");
-          return;
+      // Console-killed?
+      if (state.consoleKilledLineages && state.consoleKilledLineages.size > 0) {
+        for (const n of lineage) {
+          if (state.consoleKilledLineages.has(n.toLowerCase())) {
+            log("event", ev.message + " - the " + civName + " lineage was wiped from history; the state cannot reform.");
+            return;
+          }
         }
+      }
+      // Naturally extinct? (no alive civ holds any name in the lineage,
+      // either as current name or in previousNames)
+      let anyAlive = false;
+      for (const c of state.civs) {
+        if (!c.alive) continue;
+        if (lineage.has(c.name)) { anyAlive = true; break; }
+        if ((c.previousNames || []).some(n => lineage.has(n))) { anyAlive = true; break; }
+      }
+      if (!anyAlive) {
+        log("event", ev.message + " - " + civName + "'s father lineage left no surviving descendants; the state cannot reform.");
+        return;
       }
     }
     let newCiv = state.civs.find(c => c.alive && c.name === ev.civ);
