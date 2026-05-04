@@ -1530,11 +1530,14 @@ const state = {
   // { name, color, memberIds: [civId, ...] }. Dead members are filtered
   // at display time (we don't mutate the array on civ death).
   factions: [],
-  // Player's drawn front line: ordered list of {col,row} waypoints.
-  // Combat units assigned to it walk toward their nearest waypoint each
-  // tick. Set with the "DRAW FRONT LINE" button in the sidebar.
-  playerFrontline: [],
-  frontlineDrawing: false,
+  // Player's front-line targets: a set of enemy civ-ids. The shared
+  // border tiles between the player and each target render gold and
+  // serve as the front line - the player's combat units gravitate to
+  // them, holding the line. PUSH ATTACK temporarily flips them to the
+  // offensive (units walk into enemy tiles).
+  frontlineEnemies: new Set(),
+  frontlineSelecting: false,
+  frontlinePush: false,
   // Lineage names (lowercase) that the player has wiped via console `kill`.
   // Forward-walks the rename/replaces/merge chain so killing Polans also
   // marks Duchy of Poland, Kingdom of Poland, and the Polish-Lithuanian
@@ -3133,33 +3136,48 @@ function tick() {
   // the dest also clears.
   const player = state.civs[0];
   if (player && player.isPlayer && player.alive) {
-    // Front-line garrisoning: every combat unit without a manual dest is
-    // assigned to its closest unoccupied waypoint and walks toward it.
-    if (state.playerFrontline && state.playerFrontline.length > 0) {
-      const occupied = new Set();
-      for (const army of player.armies) {
-        if (army.type === "settler" || army.type === "colonizer" || army.type === "leader") continue;
-        // If the army is already on (or moving toward) a waypoint, mark it.
-        if (army.frontlineWp != null) occupied.add(army.frontlineWp);
-      }
-      for (const army of player.armies) {
-        if (army.type === "settler" || army.type === "colonizer" || army.type === "leader") continue;
-        if (army.dest) continue;   // user has it on a manual order
-        // Pick nearest unoccupied waypoint.
-        let bestI = -1, bestD = Infinity;
-        for (let i = 0; i < state.playerFrontline.length; i++) {
-          if (occupied.has(i) && army.frontlineWp !== i) continue;
-          const wp = state.playerFrontline[i];
-          const dc = wp.col - army.col, dr = wp.row - army.row;
-          const d = dc * dc + dr * dr;
-          if (d < bestD) { bestD = d; bestI = i; }
+    // Front-line garrisoning. Every combat unit without a manual dest
+    // is auto-assigned to a tile on the front line (player-owned tile
+    // adjacent to a frontline-enemy). With PUSH ATTACK on, units are
+    // instead sent to the FIRST adjacent enemy tile beyond the line.
+    if (state.frontlineEnemies && state.frontlineEnemies.size > 0) {
+      const enemies = state.frontlineEnemies;
+      // Collect frontline tiles + (for push) immediate enemy tiles past them.
+      const lineTiles = [];
+      const pushTargets = [];
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (state.ownership[r][c] !== player.id) continue;
+          let touched = false;
+          for (const [nc, nr] of neighbors(c, r)) {
+            if (enemies.has(state.ownership[nr][nc])) {
+              touched = true;
+              if (state.frontlinePush) pushTargets.push({ col: nc, row: nr });
+            }
+          }
+          if (touched) lineTiles.push({ col: c, row: r });
         }
-        if (bestI < 0) continue;
-        army.frontlineWp = bestI;
-        occupied.add(bestI);
-        const wp = state.playerFrontline[bestI];
-        if (army.col !== wp.col || army.row !== wp.row) {
-          army.dest = { col: wp.col, row: wp.row };
+      }
+      const targets = state.frontlinePush ? (pushTargets.length ? pushTargets : lineTiles) : lineTiles;
+      if (targets.length > 0) {
+        const occupied = new Set();
+        for (const army of player.armies) {
+          if (army.type === "settler" || army.type === "colonizer" || army.type === "leader") continue;
+          if (army.dest) continue;
+          let bestI = -1, bestD = Infinity;
+          for (let i = 0; i < targets.length; i++) {
+            const key = targets[i].col + "," + targets[i].row;
+            if (occupied.has(key)) continue;
+            const dc = targets[i].col - army.col, dr = targets[i].row - army.row;
+            const d = dc * dc + dr * dr;
+            if (d < bestD) { bestD = d; bestI = i; }
+          }
+          if (bestI < 0) continue;
+          const t = targets[bestI];
+          occupied.add(t.col + "," + t.row);
+          if (army.col !== t.col || army.row !== t.row) {
+            army.dest = { col: t.col, row: t.row };
+          }
         }
       }
     }
@@ -5573,41 +5591,43 @@ function render() {
       }
     }
   }
-  // Player front line: render the polyline drawn via DRAW FRONT LINE.
-  // Bold gold polyline + numbered waypoint dots. Visible always when set.
-  if (state.playerFrontline && state.playerFrontline.length > 0) {
-    const fl = state.playerFrontline;
-    ctx.save();
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    // Outer glow stroke.
-    ctx.strokeStyle = "rgba(255, 210, 74, 0.35)";
-    ctx.lineWidth = Math.max(2.5, 5 / view.zoom);
-    ctx.beginPath();
-    for (let i = 0; i < fl.length; i++) {
-      const wx = fl[i].col * TILE + TILE / 2;
-      const wy = fl[i].row * TILE + TILE / 2;
-      if (i === 0) ctx.moveTo(wx, wy); else ctx.lineTo(wx, wy);
+  // Player front line: tint every player-owned tile that 4-neighbours a
+  // tile owned by a frontline-enemy in gold. The set of tiles
+  // recomputes every render so the line tracks border changes.
+  if (state.frontlineEnemies && state.frontlineEnemies.size > 0) {
+    const me = state.civs[0];
+    if (me && me.isPlayer) {
+      const enemies = state.frontlineEnemies;
+      ctx.save();
+      ctx.fillStyle = state.frontlinePush ? "rgba(255, 100, 60, 0.45)" : "rgba(255, 210, 74, 0.45)";
+      const strokeColor = state.frontlinePush ? "#ff6440" : "#ffd24a";
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (state.ownership[r][c] !== me.id) continue;
+          let touchEnemy = false;
+          for (const [nc, nr] of neighbors(c, r)) {
+            if (enemies.has(state.ownership[nr][nc])) { touchEnemy = true; break; }
+          }
+          if (!touchEnemy) continue;
+          ctx.fillRect(c * TILE, r * TILE, TILE, TILE);
+        }
+      }
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = Math.max(0.5, 1.4 / view.zoom);
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (state.ownership[r][c] !== me.id) continue;
+          let touchEnemy = false;
+          for (const [nc, nr] of neighbors(c, r)) {
+            if (enemies.has(state.ownership[nr][nc])) { touchEnemy = true; break; }
+          }
+          if (!touchEnemy) continue;
+          ctx.strokeRect(c * TILE + 0.5 / view.zoom, r * TILE + 0.5 / view.zoom,
+                         TILE - 1 / view.zoom, TILE - 1 / view.zoom);
+        }
+      }
+      ctx.restore();
     }
-    ctx.stroke();
-    // Crisp center stroke.
-    ctx.strokeStyle = "#ffd24a";
-    ctx.lineWidth = Math.max(1, 2 / view.zoom);
-    ctx.beginPath();
-    for (let i = 0; i < fl.length; i++) {
-      const wx = fl[i].col * TILE + TILE / 2;
-      const wy = fl[i].row * TILE + TILE / 2;
-      if (i === 0) ctx.moveTo(wx, wy); else ctx.lineTo(wx, wy);
-    }
-    ctx.stroke();
-    // Waypoint dots.
-    ctx.fillStyle = "#ffd24a";
-    for (const wp of fl) {
-      const wx = wp.col * TILE + TILE / 2;
-      const wy = wp.row * TILE + TILE / 2;
-      ctx.beginPath(); ctx.arc(wx, wy, Math.max(1.2, 1.8 / view.zoom), 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.restore();
   }
   // Auto-path destination markers for player units. A small gold X over
   // the target tile + a faint line from the unit so the player can see
@@ -6073,19 +6093,30 @@ canvas.addEventListener("click", (e) => {
   const { col, row, mapX, mapY } = hit;
   if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return;
 
-  // Front-line drawing mode: every click adds a waypoint instead of
-  // selecting a tile / opening a panel.
-  if (state.frontlineDrawing && state.phase === "playing") {
-    if (!PASSABLE(MAP[row][col])) {
-      flashHint("Front line waypoints must be on land.");
+  // Front-line selecting mode: click any tile owned by another country
+  // to add that civ to your front-line enemies set. Their shared border
+  // with you renders gold.
+  if (state.frontlineSelecting && state.phase === "playing") {
+    const owner = state.ownership[row][col];
+    const me = state.civs[0];
+    if (!me || !me.isPlayer) return;
+    if (owner < 0) {
+      flashHint("Pick a tile owned by another country.");
       return;
     }
-    if (!state.playerFrontline) state.playerFrontline = [];
-    // De-dup successive identical clicks.
-    const last = state.playerFrontline[state.playerFrontline.length - 1];
-    if (!last || last.col !== col || last.row !== row) {
-      state.playerFrontline.push({ col, row });
-      log("event", "Front line waypoint #" + state.playerFrontline.length + " added.");
+    if (owner === me.id) {
+      flashHint("That's your own territory. Click a neighbouring country.");
+      return;
+    }
+    if (!state.frontlineEnemies) state.frontlineEnemies = new Set();
+    if (state.frontlineEnemies.has(owner)) {
+      state.frontlineEnemies.delete(owner);
+      const civ = state.civs.find(c => c.id === owner);
+      log("event", "Front line removed against " + (civ ? civ.name : "civ " + owner) + ".");
+    } else {
+      state.frontlineEnemies.add(owner);
+      const civ = state.civs.find(c => c.id === owner);
+      log("event", "Front line drawn along the " + (civ ? civ.name : "civ " + owner) + " border.");
     }
     render();
     return;
@@ -7377,29 +7408,44 @@ if (_factionBtn) {
   });
 }
 
-// Front-line drawing UI. While drawing-mode is on, every map click adds
-// a waypoint to state.playerFrontline. The polyline is rendered and the
-// player's combat units gravitate toward their nearest waypoint each tick.
+// Front-line UI. The "ADD FRONT LINE" button enters target-selection
+// mode; clicking another country's tile adds that civ to the player's
+// frontline-enemies set and the shared border tiles render gold. CLEAR
+// wipes the set. PUSH ATTACK flips the line offensive (units walk into
+// enemy territory instead of holding the line).
 const _frontlineDrawBtn = document.getElementById("frontline-draw-btn");
 const _frontlineClearBtn = document.getElementById("frontline-clear-btn");
+const _frontlinePushBtn = document.getElementById("frontline-push-btn");
 const _frontlineHint = document.getElementById("frontline-hint");
-function setFrontlineDrawing(on) {
-  state.frontlineDrawing = !!on;
-  if (_frontlineDrawBtn) _frontlineDrawBtn.classList.toggle("active", state.frontlineDrawing);
-  if (_frontlineHint) _frontlineHint.style.display = state.frontlineDrawing ? "" : "none";
-  if (canvas) canvas.style.cursor = state.frontlineDrawing ? "crosshair" : "";
+function setFrontlineSelecting(on) {
+  state.frontlineSelecting = !!on;
+  if (_frontlineDrawBtn) _frontlineDrawBtn.classList.toggle("active", state.frontlineSelecting);
+  if (_frontlineHint) _frontlineHint.style.display = state.frontlineSelecting ? "" : "none";
+  if (canvas) canvas.style.cursor = state.frontlineSelecting ? "crosshair" : "";
 }
 if (_frontlineDrawBtn) {
   _frontlineDrawBtn.addEventListener("click", () => {
-    setFrontlineDrawing(!state.frontlineDrawing);
+    setFrontlineSelecting(!state.frontlineSelecting);
     render();
   });
 }
 if (_frontlineClearBtn) {
   _frontlineClearBtn.addEventListener("click", () => {
-    state.playerFrontline = [];
-    setFrontlineDrawing(false);
+    if (!state.frontlineEnemies) state.frontlineEnemies = new Set();
+    state.frontlineEnemies.clear();
+    state.frontlinePush = false;
+    if (_frontlinePushBtn) _frontlinePushBtn.classList.remove("active");
+    setFrontlineSelecting(false);
     log("event", "Front line cleared.");
+    render();
+  });
+}
+if (_frontlinePushBtn) {
+  _frontlinePushBtn.addEventListener("click", () => {
+    state.frontlinePush = !state.frontlinePush;
+    _frontlinePushBtn.classList.toggle("active", state.frontlinePush);
+    log(state.frontlinePush ? "war" : "event",
+      state.frontlinePush ? "PUSH ATTACK ordered - front-line units advance into enemy territory." : "Front-line units hold the line.");
     render();
   });
 }
@@ -7460,7 +7506,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     state.moveMode = null;
     document.getElementById("move-mode-banner").style.display = "none";
-    if (state.frontlineDrawing) setFrontlineDrawing(false);
+    if (state.frontlineSelecting) setFrontlineSelecting(false);
     render();
   }
   // Keyboard zoom: + / -

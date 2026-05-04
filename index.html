@@ -1326,10 +1326,13 @@
       <button id="faction-mode-btn" class="speed-btn" style="flex:1;font-size:11px;letter-spacing:1px;">FACTION MAP</button>
     </div>
     <div style="display:flex;gap:6px;margin-top:6px;">
-      <button id="frontline-draw-btn" class="speed-btn" style="flex:1;font-size:11px;letter-spacing:1px;" title="Click to start drawing your defensive front line; click tiles in order to add waypoints; click this button again to finish.">DRAW FRONT LINE</button>
+      <button id="frontline-draw-btn" class="speed-btn" style="flex:1;font-size:11px;letter-spacing:1px;" title="Click to enter frontline-target mode; then click a neighbouring country's tile to mark its border as your front line.">ADD FRONT LINE</button>
       <button id="frontline-clear-btn" class="speed-btn" style="flex:0 0 60px;font-size:11px;letter-spacing:1px;background:linear-gradient(180deg,#5a3a3a,#2a1a1a);border-color:#a44;">CLEAR</button>
     </div>
-    <div id="frontline-hint" style="display:none;font-size:10px;color:#ffd24a;text-align:center;margin-top:4px;">Click tiles to add waypoints · ESC or button to finish</div>
+    <div style="display:flex;gap:6px;margin-top:6px;">
+      <button id="frontline-push-btn" class="speed-btn" style="flex:1;font-size:11px;letter-spacing:1px;background:linear-gradient(180deg,#7a3a3a,#3a1a1a);border-color:#c44;color:#ffd0a0;" title="Push your front-line units forward into enemy territory.">PUSH ATTACK</button>
+    </div>
+    <div id="frontline-hint" style="display:none;font-size:10px;color:#ffd24a;text-align:center;margin-top:4px;">Click a tile owned by another country to mark it as a front-line target · ESC or button to exit</div>
     <details style="margin-top:10px;">
       <summary style="cursor:pointer;color:#8a7a5c;font-size:11px;">Map Legend</summary>
       <div class="legend" style="margin-top:6px;">
