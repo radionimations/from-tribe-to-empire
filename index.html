@@ -1267,12 +1267,27 @@
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" data-mod="debug-start"> Debug mode (observer + 20× speed)</label>
         </div>
         <div style="font-size:11px;letter-spacing:3px;color:#d4a657;margin-bottom:8px;">— PLAY AS A MAJOR TRIBE (optional) —</div>
-        <div id="splash-play-as" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:560px;margin-bottom:16px;">
-          <button class="splash-tribe-btn" data-tribe="Latins" style="padding:6px 12px;font-size:11px;letter-spacing:1px;background:linear-gradient(180deg,#3a2a14,#1a0e04);border:1px solid #6a5a3c;color:#cfbf95;cursor:pointer;font-family:Georgia,serif;">LATINS</button>
-          <button class="splash-tribe-btn" data-tribe="Germans" style="padding:6px 12px;font-size:11px;letter-spacing:1px;background:linear-gradient(180deg,#3a2a14,#1a0e04);border:1px solid #6a5a3c;color:#cfbf95;cursor:pointer;font-family:Georgia,serif;">GERMANS</button>
-          <button class="splash-tribe-btn" data-tribe="East Slavs" style="padding:6px 12px;font-size:11px;letter-spacing:1px;background:linear-gradient(180deg,#3a2a14,#1a0e04);border:1px solid #6a5a3c;color:#cfbf95;cursor:pointer;font-family:Georgia,serif;">EAST SLAVS</button>
-          <button class="splash-tribe-btn" data-tribe="Polans" style="padding:6px 12px;font-size:11px;letter-spacing:1px;background:linear-gradient(180deg,#3a2a14,#1a0e04);border:1px solid #6a5a3c;color:#cfbf95;cursor:pointer;font-family:Georgia,serif;">POLANS</button>
-          <button class="splash-tribe-btn" data-tribe="Yamato" style="padding:6px 12px;font-size:11px;letter-spacing:1px;background:linear-gradient(180deg,#3a2a14,#1a0e04);border:1px solid #6a5a3c;color:#cfbf95;cursor:pointer;font-family:Georgia,serif;">YAMATO</button>
+        <div id="splash-play-as" style="display:flex;flex-direction:column;gap:6px;width:240px;margin-bottom:16px;">
+          <button class="splash-tribe-btn" data-tribe="Latins" style="display:flex;align-items:center;gap:10px;padding:6px 10px;font-size:12px;letter-spacing:2px;background:linear-gradient(180deg,#3a2a14,#1a0e04);border:1px solid #6a5a3c;color:#cfbf95;cursor:pointer;font-family:Georgia,serif;">
+            <canvas class="splash-tribe-flag" width="40" height="26"></canvas>
+            <span>LATINS</span>
+          </button>
+          <button class="splash-tribe-btn" data-tribe="Germans" style="display:flex;align-items:center;gap:10px;padding:6px 10px;font-size:12px;letter-spacing:2px;background:linear-gradient(180deg,#3a2a14,#1a0e04);border:1px solid #6a5a3c;color:#cfbf95;cursor:pointer;font-family:Georgia,serif;">
+            <canvas class="splash-tribe-flag" width="40" height="26"></canvas>
+            <span>GERMANS</span>
+          </button>
+          <button class="splash-tribe-btn" data-tribe="East Slavs" style="display:flex;align-items:center;gap:10px;padding:6px 10px;font-size:12px;letter-spacing:2px;background:linear-gradient(180deg,#3a2a14,#1a0e04);border:1px solid #6a5a3c;color:#cfbf95;cursor:pointer;font-family:Georgia,serif;">
+            <canvas class="splash-tribe-flag" width="40" height="26"></canvas>
+            <span>EAST SLAVS</span>
+          </button>
+          <button class="splash-tribe-btn" data-tribe="Polans" style="display:flex;align-items:center;gap:10px;padding:6px 10px;font-size:12px;letter-spacing:2px;background:linear-gradient(180deg,#3a2a14,#1a0e04);border:1px solid #6a5a3c;color:#cfbf95;cursor:pointer;font-family:Georgia,serif;">
+            <canvas class="splash-tribe-flag" width="40" height="26"></canvas>
+            <span>POLANS</span>
+          </button>
+          <button class="splash-tribe-btn" data-tribe="Yamato" style="display:flex;align-items:center;gap:10px;padding:6px 10px;font-size:12px;letter-spacing:2px;background:linear-gradient(180deg,#3a2a14,#1a0e04);border:1px solid #6a5a3c;color:#cfbf95;cursor:pointer;font-family:Georgia,serif;">
+            <canvas class="splash-tribe-flag" width="40" height="26"></canvas>
+            <span>YAMATO</span>
+          </button>
         </div>
         <button id="splash-play" style="padding:12px 36px;font-size:16px;letter-spacing:6px;background:linear-gradient(180deg,#a8923a,#624a14);border:1px solid #ffd24a;color:#fff5cc;font-weight:bold;cursor:pointer;font-family:Georgia,serif;">PLAY ▶</button>
         <div class="hint" style="margin-top:14px;color:#d4a657;font-size:13px;animation:pulse 2s infinite;">Pick a tribe to play as, or click PLAY to start as a fresh tribe (then click a tile)</div>

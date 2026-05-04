@@ -7174,6 +7174,26 @@ document.querySelectorAll(".speed-btn").forEach(btn => {
   });
 });
 
+// Paint each tribe-button's small flag canvas with the tribe's
+// procedural flag (starting tribes don't have HOI4 flags, so we use
+// the same procedural drawing the country panel falls back to).
+function paintSplashTribeFlags() {
+  document.querySelectorAll(".splash-tribe-btn").forEach(btn => {
+    const tribeName = btn.dataset.tribe;
+    const cv = btn.querySelector(".splash-tribe-flag");
+    if (!cv) return;
+    const civ = state.civs.find(c => c.name === tribeName);
+    if (!civ) return;
+    try { drawProceduralFlag(cv, civ); } catch (e) {}
+  });
+}
+// Repaint whenever the splash is up + state.civs is ready. The province
+// grid loader calls render() once the tribes spawn; piggyback on a
+// render hook by polling once after a short delay.
+setTimeout(paintSplashTribeFlags, 500);
+setTimeout(paintSplashTribeFlags, 1500);
+setTimeout(paintSplashTribeFlags, 3000);
+
 // Tribe-pick buttons in the splash. Click one to highlight it; click
 // PLAY to spawn directly as that tribe (skipping the click-a-tile flow).
 let _splashSelectedTribe = null;
