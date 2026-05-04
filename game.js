@@ -7552,10 +7552,16 @@ function showCountryPanel(civ) {
   document.getElementById("cp-name").textContent = civ.name;
   document.getElementById("cp-name").style.color = civ.color;
   // Permanent civ tag (3-letter identity that never changes through
-  // renames) shown below the name so the player can recognize a country
-  // across name changes.
+  // renames). Debug-only so it doesn't clutter the regular UI.
   const tagEl = document.getElementById("cp-tag");
-  if (tagEl) tagEl.textContent = civ.tag ? civ.tag : "";
+  if (tagEl) {
+    if (state.debug && civ.tag) {
+      tagEl.textContent = civ.tag;
+      tagEl.style.display = "";
+    } else {
+      tagEl.style.display = "none";
+    }
+  }
   document.getElementById("cp-era").textContent = ERAS[civ.era].name.toUpperCase();
 
   // Leader: priority is custom (player-set) → hardcoded LEADERS table entry
@@ -7642,13 +7648,17 @@ function showCountryPanel(civ) {
   const tiles = countTiles(civ);
   const totalPop = civ.settlements.reduce((s, x) => s + x.pop, 0);
   const totalArmy = civ.armies.reduce((s, a) => s + a.count, 0);
-  const strength = civStrength(civ);
+  // Strength shown only in debug mode (it's the raw absorb-gate number,
+  // useful for tuning but noisy in normal play).
+  const strengthRow = state.debug
+    ? `<div class="stat-row"><span class="stat-label">Strength</span><span class="stat-val">${civStrength(civ)}</span></div>`
+    : "";
   document.getElementById("cp-stats").innerHTML = `
     <div class="stat-row"><span class="stat-label">Settlements</span><span class="stat-val">${civ.settlements.length}</span></div>
     <div class="stat-row"><span class="stat-label">Population</span><span class="stat-val">${totalPop}</span></div>
     <div class="stat-row"><span class="stat-label">Territory</span><span class="stat-val">${tiles} tiles</span></div>
     <div class="stat-row"><span class="stat-label">Army</span><span class="stat-val">${totalArmy} units</span></div>
-    <div class="stat-row"><span class="stat-label">Strength</span><span class="stat-val">${strength}</span></div>
+    ${strengthRow}
     <div class="stat-row"><span class="stat-label">Stability</span><span class="stat-val">${Math.round(civ.stability)}%</span></div>
   `;
 
