@@ -1530,6 +1530,11 @@ const state = {
   // { name, color, memberIds: [civId, ...] }. Dead members are filtered
   // at display time (we don't mutate the array on civ death).
   factions: [],
+  // Player's drawn front line: ordered list of {col,row} waypoints.
+  // Combat units assigned to it walk toward their nearest waypoint each
+  // tick. Set with the "DRAW FRONT LINE" button in the sidebar.
+  playerFrontline: [],
+  frontlineDrawing: false,
   // Lineage names (lowercase) that the player has wiped via console `kill`.
   // Forward-walks the rename/replaces/merge chain so killing Polans also
   // marks Duchy of Poland, Kingdom of Poland, and the Polish-Lithuanian
@@ -3123,6 +3128,36 @@ function tick() {
   // the dest also clears.
   const player = state.civs[0];
   if (player && player.isPlayer && player.alive) {
+    // Front-line garrisoning: every combat unit without a manual dest is
+    // assigned to its closest unoccupied waypoint and walks toward it.
+    if (state.playerFrontline && state.playerFrontline.length > 0) {
+      const occupied = new Set();
+      for (const army of player.armies) {
+        if (army.type === "settler" || army.type === "colonizer" || army.type === "leader") continue;
+        // If the army is already on (or moving toward) a waypoint, mark it.
+        if (army.frontlineWp != null) occupied.add(army.frontlineWp);
+      }
+      for (const army of player.armies) {
+        if (army.type === "settler" || army.type === "colonizer" || army.type === "leader") continue;
+        if (army.dest) continue;   // user has it on a manual order
+        // Pick nearest unoccupied waypoint.
+        let bestI = -1, bestD = Infinity;
+        for (let i = 0; i < state.playerFrontline.length; i++) {
+          if (occupied.has(i) && army.frontlineWp !== i) continue;
+          const wp = state.playerFrontline[i];
+          const dc = wp.col - army.col, dr = wp.row - army.row;
+          const d = dc * dc + dr * dr;
+          if (d < bestD) { bestD = d; bestI = i; }
+        }
+        if (bestI < 0) continue;
+        army.frontlineWp = bestI;
+        occupied.add(bestI);
+        const wp = state.playerFrontline[bestI];
+        if (army.col !== wp.col || army.row !== wp.row) {
+          army.dest = { col: wp.col, row: wp.row };
+        }
+      }
+    }
     for (const army of player.armies.slice()) {
       if (!army.dest) continue;
       while (army.moves > 0) {
@@ -5533,6 +5568,42 @@ function render() {
       }
     }
   }
+  // Player front line: render the polyline drawn via DRAW FRONT LINE.
+  // Bold gold polyline + numbered waypoint dots. Visible always when set.
+  if (state.playerFrontline && state.playerFrontline.length > 0) {
+    const fl = state.playerFrontline;
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    // Outer glow stroke.
+    ctx.strokeStyle = "rgba(255, 210, 74, 0.35)";
+    ctx.lineWidth = Math.max(2.5, 5 / view.zoom);
+    ctx.beginPath();
+    for (let i = 0; i < fl.length; i++) {
+      const wx = fl[i].col * TILE + TILE / 2;
+      const wy = fl[i].row * TILE + TILE / 2;
+      if (i === 0) ctx.moveTo(wx, wy); else ctx.lineTo(wx, wy);
+    }
+    ctx.stroke();
+    // Crisp center stroke.
+    ctx.strokeStyle = "#ffd24a";
+    ctx.lineWidth = Math.max(1, 2 / view.zoom);
+    ctx.beginPath();
+    for (let i = 0; i < fl.length; i++) {
+      const wx = fl[i].col * TILE + TILE / 2;
+      const wy = fl[i].row * TILE + TILE / 2;
+      if (i === 0) ctx.moveTo(wx, wy); else ctx.lineTo(wx, wy);
+    }
+    ctx.stroke();
+    // Waypoint dots.
+    ctx.fillStyle = "#ffd24a";
+    for (const wp of fl) {
+      const wx = wp.col * TILE + TILE / 2;
+      const wy = wp.row * TILE + TILE / 2;
+      ctx.beginPath(); ctx.arc(wx, wy, Math.max(1.2, 1.8 / view.zoom), 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
   // Auto-path destination markers for player units. A small gold X over
   // the target tile + a faint line from the unit so the player can see
   // where each unit is heading.
@@ -5996,6 +6067,24 @@ canvas.addEventListener("click", (e) => {
   const hit = pixelToTile(e.clientX, e.clientY);
   const { col, row, mapX, mapY } = hit;
   if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return;
+
+  // Front-line drawing mode: every click adds a waypoint instead of
+  // selecting a tile / opening a panel.
+  if (state.frontlineDrawing && state.phase === "playing") {
+    if (!PASSABLE(MAP[row][col])) {
+      flashHint("Front line waypoints must be on land.");
+      return;
+    }
+    if (!state.playerFrontline) state.playerFrontline = [];
+    // De-dup successive identical clicks.
+    const last = state.playerFrontline[state.playerFrontline.length - 1];
+    if (!last || last.col !== col || last.row !== row) {
+      state.playerFrontline.push({ col, row });
+      log("event", "Front line waypoint #" + state.playerFrontline.length + " added.");
+    }
+    render();
+    return;
+  }
 
   if (state.phase === "placement") {
     if (PASSABLE(MAP[row][col]) && state.ownership[row][col] === -1) {
@@ -7087,6 +7176,33 @@ if (_factionBtn) {
   });
 }
 
+// Front-line drawing UI. While drawing-mode is on, every map click adds
+// a waypoint to state.playerFrontline. The polyline is rendered and the
+// player's combat units gravitate toward their nearest waypoint each tick.
+const _frontlineDrawBtn = document.getElementById("frontline-draw-btn");
+const _frontlineClearBtn = document.getElementById("frontline-clear-btn");
+const _frontlineHint = document.getElementById("frontline-hint");
+function setFrontlineDrawing(on) {
+  state.frontlineDrawing = !!on;
+  if (_frontlineDrawBtn) _frontlineDrawBtn.classList.toggle("active", state.frontlineDrawing);
+  if (_frontlineHint) _frontlineHint.style.display = state.frontlineDrawing ? "" : "none";
+  if (canvas) canvas.style.cursor = state.frontlineDrawing ? "crosshair" : "";
+}
+if (_frontlineDrawBtn) {
+  _frontlineDrawBtn.addEventListener("click", () => {
+    setFrontlineDrawing(!state.frontlineDrawing);
+    render();
+  });
+}
+if (_frontlineClearBtn) {
+  _frontlineClearBtn.addEventListener("click", () => {
+    state.playerFrontline = [];
+    setFrontlineDrawing(false);
+    log("event", "Front line cleared.");
+    render();
+  });
+}
+
 // True when the WWI/WWII pop-up is on screen and the game must stay paused.
 function isWarModeModalOpen() {
   const m = document.getElementById("warmode-modal");
@@ -7143,6 +7259,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     state.moveMode = null;
     document.getElementById("move-mode-banner").style.display = "none";
+    if (state.frontlineDrawing) setFrontlineDrawing(false);
     render();
   }
   // Keyboard zoom: + / -
