@@ -7189,7 +7189,7 @@ if (_splashPlayBtn) {
       else if (which === "kill-balts") killStartingTribe("Balts");
       else if (which === "kill-germans") killStartingTribe("Germans");
       else if (which === "kill-finns") killStartingTribe("Finns");
-      else if (which === "ww2-state") fastForwardToYear(1936);
+      else if (which === "ww2-state") applyWW2TribeTerritory();
       else if (which === "debug-start") {
         // Will activate after the player spawns - flag it.
         state._modDebugStart = true;
@@ -7221,19 +7221,77 @@ function killStartingTribe(name) {
   log("event", name + " is wiped from history before the game even begins.");
 }
 
-// Helper for the WWII-state modifier: tick the year forward and let all
-// events up to that year fire normally (so the historical chain plays
-// out into 1936). Player hasn't spawned yet, so player-driven gates
-// don't interfere.
-function fastForwardToYear(targetYear) {
-  // Process events repeatedly without YEAR + tick logic; only year
-  // advancement + processEvents matters here.
-  while (state.year < targetYear) {
-    state.year += YEARS_PER_TURN;
-    if (state.year > targetYear) state.year = targetYear;
-    processEvents();
+// WWII-state modifier: world stays in 1000 BC, but each starting tribe
+// inherits the territory their WWII-era descendant would hold (HOI4
+// 1936 country-tag footprint). So Latins start owning all of Italy,
+// Polans owning Poland, Germans owning Germany, East Slavs owning the
+// USSR's 1936 expanse, etc. Lets the chronicle still play out from
+// 1000 BC but with a "what if the tribes never split into successors"
+// alt-history twist.
+const WW2_TRIBE_TAGS = {
+  "Latins":      ["ITA"],
+  "Etruscans":   [],          // overlaps with Latins
+  "Greeks":      ["GRE"],
+  "Egypt":       ["EGY"],
+  "Iberians":    ["SPR", "POR"],
+  "Gauls":       ["FRA", "BEL", "LUX"],
+  "Celts":       ["ENG", "IRE"],
+  "Germans":     ["GER", "AUS", "SWI"],
+  "Polans":      ["POL"],
+  "Balts":       ["LIT", "LAT"],
+  "Finns":       ["FIN", "EST"],
+  "Norse":       ["NOR", "SWE", "DEN", "ICE"],
+  "East Slavs":  ["SOV"],
+  "Phoenicia":   ["LBN", "SYR", "ISR", "PAL"],
+  "Assyria":     ["IRQ"],
+  "Babylon":     [],          // overlaps with Assyria
+  "Medes":       ["PER"],
+  "Vedic India": ["RAJ"],
+  "Dravidians":  [],
+  "Zhou China":  ["CHI"],
+  "Gojoseon":    ["KOR"],
+  "Yamato":      ["JAP"],
+  "Olmec":       ["MEX"],
+  "Maya":        ["GUA"],
+  "Chavin":      ["PRU"],
+  "Kush":        ["ETH", "SUD"],
+  "Berbers":     ["MOR", "ALG", "TUN"],
+  "Scythians":   [],
+  "Thracians":   ["BUL", "ROM"],
+};
+
+function applyWW2TribeTerritory() {
+  if (typeof HOI4_CITIES === "undefined" || !provinceTile || !provinceGrid) return;
+  // Build pid -> tag once.
+  const pidToTag = {};
+  for (const sd of HOI4_CITIES) {
+    if (!sd.owner) continue;
+    for (const pid of sd.provinces || []) pidToTag[pid] = sd.owner;
   }
-  log("event", "World fast-forwarded to " + yearLabel(targetYear) + ".");
+  // Build tag -> civ-id.
+  const tagToCivId = {};
+  for (const civ of state.civs) {
+    if (!civ.alive || !civ.isStartingTribe) continue;
+    const tags = WW2_TRIBE_TAGS[civ.name];
+    if (!tags) continue;
+    for (const t of tags) tagToCivId[t] = civ.id;
+  }
+  // Walk every tile, look up its 1936 owner tag, assign to the matching tribe.
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (!PASSABLE(MAP[r][c])) continue;
+      const px = c * TILE + (TILE >> 1);
+      const py = r * TILE + (TILE >> 1);
+      const pid = provinceGrid[py * MAP_W + px];
+      if (pid === 0) continue;
+      const tag = pidToTag[pid];
+      if (!tag) continue;
+      const cid = tagToCivId[tag];
+      if (cid != null) state.ownership[r][c] = cid;
+    }
+  }
+  reassignSettlementsByTileOwner();
+  log("event", "WWII alt-history: starting tribes inherit their modern descendants' territory.");
   invalidateTintCache();
 }
 
