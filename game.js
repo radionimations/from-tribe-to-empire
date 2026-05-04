@@ -540,9 +540,9 @@ const HISTORICAL_EVENTS = [
     byOwner: "POL",
     message: "Poland reborn after WWI - reclaims its 1918–39 ethnic territory" },
   { year: 1918, type: "secede", target: "Russian Empire", civ: "Republic of Lithuania",
-    spawn: { name: "Republic of Lithuania", lat: 55, lon: 24, color: "#1a8a4a" },
-    byOwner: "LIT",
-    message: "Lithuania declares independence - reclaims Žemaitija, Aukštaitija, Memel, Kaunas" },
+    spawn: { name: "Republic of Lithuania", lat: 54.69, lon: 25.28, color: "#1a8a4a" },
+    byOwner: "LIT", byStateName: ["Ermland-Masuren"],
+    message: "Lithuania declares independence - capital at Vilnius, reclaims Žemaitija, Aukštaitija, Memel, Kaunas" },
   { year: 1918, type: "secede", target: "Russian Empire", civ: "Republic of Latvia",
     spawn: { name: "Republic of Latvia", lat: 56.95, lon: 24.1, color: "#9e2a2a" },
     byOwner: "LAT",
@@ -2544,6 +2544,31 @@ function fireEvent(ev) {
         }
       }
     }
+    // Pre-absorption restoration: if the target absorbed some ancestor
+    // of the seceding civ and we've snapshotted those tiles, give them
+    // back. Lets a post-Soviet Republic of Lithuania reclaim the GDL/PLC
+    // chunk that fell to the USSR centuries earlier, beyond just the
+    // modern HOI4 1936 Lithuanian footprint.
+    if (target && target._absorbedTerritory && newCiv && civName) {
+      const lineage = new Set([civName, newCiv.name]);
+      for (const n of newCiv.previousNames || []) lineage.add(n);
+      const overrideParent = TREE_PARENT_OVERRIDES[civName];
+      if (overrideParent) {
+        lineage.add(overrideParent);
+        for (const n of walkLineageForward(overrideParent)) lineage.add(n);
+      }
+      for (const ancestorName of Object.keys(target._absorbedTerritory)) {
+        if (!lineage.has(ancestorName)) continue;
+        const restored = target._absorbedTerritory[ancestorName];
+        for (const [c, r] of restored) {
+          if (state.ownership[r][c] === target.id) {
+            state.ownership[r][c] = newCiv.id;
+          }
+        }
+        // One match is enough; clear so a sibling secede doesn't re-claim.
+        delete target._absorbedTerritory[ancestorName];
+      }
+    }
     // Transfer settlements located in newly-owned tiles + set hostile relations.
     if (target) {
       const remaining = [];
@@ -2621,10 +2646,23 @@ function fireEvent(ev) {
       }
     }
     if (absorber) {
+      // Snapshot the target's tiles BEFORE the transfer so a future
+      // independence event (Soviet collapse -> post-Soviet republic
+      // secede) can restore pre-absorption territory. Indexed by every
+      // name in the target's lineage so a later civ in the seceding
+      // chain can match it back.
+      const snapshot = [];
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
-          if (state.ownership[r][c] === target.id) state.ownership[r][c] = absorber.id;
+          if (state.ownership[r][c] === target.id) {
+            snapshot.push([c, r]);
+            state.ownership[r][c] = absorber.id;
+          }
         }
+      }
+      if (!absorber._absorbedTerritory) absorber._absorbedTerritory = {};
+      for (const name of [target.name, ...(target.previousNames || [])]) {
+        absorber._absorbedTerritory[name] = snapshot;
       }
       for (const s of target.settlements) absorber.settlements.push(s);
       for (const a of target.armies) absorber.armies.push({ ...a, civId: absorber.id });
