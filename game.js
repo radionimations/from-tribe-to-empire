@@ -13,6 +13,13 @@ const LAT_BOTTOM = -56;
 const LAT_SPAN = LAT_TOP - LAT_BOTTOM;
 const START_YEAR = -1000;
 const YEARS_PER_TURN = 5;
+// During war mode (WWI / WWII) we advance by a fraction of a year per
+// tick instead - so a 4-6 year war doesn't end after a single turn and
+// the player can actually watch days tick by.
+const WAR_MODE_YEARS_PER_TURN = 1 / 365;
+function currentYearsPerTurn() {
+  return state && state.warMode ? WAR_MODE_YEARS_PER_TURN : YEARS_PER_TURN;
+}
 
 // Real-time speed: ms of real time per simulation turn (5 game years)
 // Speed 0 = paused. 1 = slowest, 5 = fastest.
@@ -3174,7 +3181,7 @@ function tick() {
 
   // 5. Year + events
   state.turn++;
-  state.year += YEARS_PER_TURN;
+  state.year += currentYearsPerTurn();
   processEvents();
 
   // 5w. World-War-mode triggers. When the calendar enters 1914 or 1939
@@ -7045,7 +7052,14 @@ if (_factionBtn) {
   });
 }
 
+// True when the WWI/WWII pop-up is on screen and the game must stay paused.
+function isWarModeModalOpen() {
+  const m = document.getElementById("warmode-modal");
+  return !!(m && m.style.display === "flex");
+}
+
 function setSpeed(s) {
+  if (isWarModeModalOpen()) return;   // forced pause while prompt is up
   state.speed = s;
   state.lastTickAt = performance.now();
   document.querySelectorAll(".speed-btn").forEach(btn => {
@@ -7056,6 +7070,9 @@ function setSpeed(s) {
 document.addEventListener("keydown", (e) => {
   // Avoid hijacking when typing in an input
   if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  // While the war-mode prompt is up, block all gameplay shortcuts so
+  // the player must answer the modal before time resumes.
+  if (isWarModeModalOpen()) { e.preventDefault(); return; }
   if (e.key === " ") {
     e.preventDefault();
     // 1. Active click-to-move mode → cancel it.
@@ -7180,9 +7197,18 @@ function gameLoop(now) {
   const fraction = (state.phase === "playing" && speed > 0)
     ? Math.min(1, (now - state.lastTickAt) / SPEED_TURN_MS[speed])
     : 0;
-  const displayYear = state.year + fraction * YEARS_PER_TURN;
+  const displayYear = state.year + fraction * currentYearsPerTurn();
   const yearEl = document.getElementById("year-display");
-  if (yearEl) yearEl.textContent = yearLabel(Math.floor(displayYear));
+  if (yearEl) {
+    if (state.warMode) {
+      // Show year + day-of-year so the player can see real-time progress.
+      const yi = Math.floor(displayYear);
+      const dayOfYear = Math.max(1, Math.min(365, Math.floor((displayYear - yi) * 365) + 1));
+      yearEl.textContent = yearLabel(yi) + " · day " + dayOfYear;
+    } else {
+      yearEl.textContent = yearLabel(Math.floor(displayYear));
+    }
+  }
 
   // Per-frame render while there's an in-flight army animation. Without
   // this, armies only redraw at tick boundaries and the smooth-motion
