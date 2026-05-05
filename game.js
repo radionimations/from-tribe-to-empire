@@ -6736,8 +6736,10 @@ if (_splashPlayBtn) {
       }
     }
     document.getElementById("splash").style.display = "none";
-    if (_splashSelectedTribe) {
-      
+    if (state._modDebugStart && !_splashSelectedTribe) {
+      state._modDebugStart = false;
+      enterDebugMode();
+    } else if (_splashSelectedTribe) {
       const tribeCiv = state.civs.find(c => c.alive && c.name === _splashSelectedTribe);
       if (tribeCiv) {
         tribeCiv.isPlayer = true;
@@ -6756,7 +6758,6 @@ if (_splashPlayBtn) {
         }
         log("event", "Playing as " + tribeCiv.name + ".");
       } else {
-        
         state.phase = "placement";
         flashHint("Chosen tribe is gone. Click any land tile to place a fresh tribe.");
       }
