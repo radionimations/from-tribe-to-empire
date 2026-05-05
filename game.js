@@ -5782,10 +5782,43 @@ function buildTintCacheProvinces(tctx) {
 
   
   const total = w * h;
-  for (let i = 0; i < total; i++) {
-    const pid = provinceGrid[i];
-    if (pid === 0) continue;
-    dataView[i] = provinceColor[pid];   
+  const offEarth = state.currentPlanet && state.currentPlanet !== "Earth";
+  if (!offEarth) {
+    for (let i = 0; i < total; i++) {
+      const pid = provinceGrid[i];
+      if (pid === 0) continue;
+      dataView[i] = provinceColor[pid];
+    }
+  } else {
+    const civColor = new Uint32Array(state.civs.length + 1);
+    const civColorMap = new Map();
+    for (const civ of state.civs) {
+      if (!civ.alive) continue;
+      const colorHex = factionMode
+        ? (civToFactionColor.get(civ.id) || NEUTRAL_GREY)
+        : civ.color;
+      const r = parseInt(colorHex.slice(1, 3), 16);
+      const g = parseInt(colorHex.slice(3, 5), 16);
+      const b = parseInt(colorHex.slice(5, 7), 16);
+      civColorMap.set(civ.id, (255 << 24) | (b << 16) | (g << 8) | r);
+    }
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const owner = state.ownership[r][c];
+        if (owner < 0) continue;
+        if (!factionMode && _tribeCivIds.has(owner)) continue;
+        const colorPacked = civColorMap.get(owner);
+        if (!colorPacked) continue;
+        const x0 = c * TILE, y0 = r * TILE;
+        const x1 = Math.min(w, x0 + TILE), y1 = Math.min(h, y0 + TILE);
+        for (let yy = y0; yy < y1; yy++) {
+          const rowOff = yy * w;
+          for (let xx = x0; xx < x1; xx++) {
+            dataView[rowOff + xx] = colorPacked;
+          }
+        }
+      }
+    }
   }
 
   
