@@ -7628,6 +7628,56 @@ function zoomIntoPlanet(bodyName) {
 // every tile as land (PASSABLE override) and skips state borders. Each
 // planet has its own ownership grid so claims don't bleed between
 // worlds. The dominator civ from SOLAR_BODIES gets all tiles by default.
+// Which civs live on each planet. Each entry is a list of civ names
+// (current OR any previousName). Resolved at descend-time so the
+// players see whichever civs are alive THEN. If multiple civs share
+// the same planet, the surface is split into vertical bands between
+// them (so e.g. Mars Republic + Mars Colony Authority each get a
+// chunk of Mars).
+const PLANET_RESIDENTS = {
+  "Mercury": [],
+  "Venus":   ["Republic of Venus", "Venus Sky-Cities"],
+  "Moon":    ["Lunar Republic"],
+  "Mars":    ["Mars Republic", "Mars Colony Authority"],
+  "Phobos":  ["Mars Republic"],
+  "Deimos":  ["Mars Republic"],
+  "Asteroid Belt": ["Belt Hollow Republic", "Asteroid Belt Coalition"],
+  "Jupiter": [],
+  "Europa":  ["Saturn Moons Confederation"],
+  "Saturn":  ["Saturn Moons Confederation"],
+  "Titan":   ["Saturn Moons Confederation"],
+  "Uranus":  [],
+  "Neptune": [],
+  "Pluto":   [],
+  "Proxima Centauri b": ["Centauri Authority"],
+};
+
+function rebuildPlanetOwnership(bodyName) {
+  const grid = Array.from({ length: ROWS }, () => new Array(COLS).fill(-1));
+  const residentNames = PLANET_RESIDENTS[bodyName] || [];
+  const seen = new Set();
+  const residents = [];
+  for (const nm of residentNames) {
+    const c = state.civs.find(c => c.alive && (c.name === nm || (c.previousNames || []).includes(nm)));
+    if (c && !seen.has(c.id)) { residents.push(c); seen.add(c.id); }
+  }
+  if (residents.length === 0) {
+    // Fall back to the SOLAR_ORBITS dominator if no resident is alive.
+    const obody = SOLAR_ORBITS.find(b => b.name === bodyName);
+    const dom = obody ? resolveDominator(obody) : null;
+    if (dom && !seen.has(dom.id)) residents.push(dom);
+  }
+  if (residents.length === 0) return grid;
+  // Vertical-band split across the grid.
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const idx = Math.min(residents.length - 1, Math.floor((c / COLS) * residents.length));
+      grid[r][c] = residents[idx].id;
+    }
+  }
+  return grid;
+}
+
 const _planetTextureCache = {};
 function _loadPlanetTexture(body) {
   if (!body || !body.texture) return;
@@ -7659,17 +7709,12 @@ function enterPlanetSurface(bodyName) {
   state._earthSpeed = state.speed;
   state.speed = 0;
   state._earthOwnership = state.ownership;
-  // Lazy-init this planet's ownership.
+  // Rebuild this planet's ownership EVERY entry so the civs you see
+  // are whichever resident civs are currently alive (Mars Republic
+  // doesn't appear before 2350; Republic of Venus doesn't appear
+  // before 3080; etc).
   if (!state.planetOwnership) state.planetOwnership = {};
-  if (!state.planetOwnership[bodyName]) {
-    const grid = Array.from({ length: ROWS }, () => new Array(COLS).fill(-1));
-    const body = SOLAR_BODIES.find(b => b.name === bodyName);
-    const dom = body ? resolveDominator(body) : null;
-    if (dom) {
-      for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) grid[r][c] = dom.id;
-    }
-    state.planetOwnership[bodyName] = grid;
-  }
+  state.planetOwnership[bodyName] = rebuildPlanetOwnership(bodyName);
   state.ownership = state.planetOwnership[bodyName];
   state.currentPlanet = bodyName;
   // Hide solar-system modal, show return banner.
