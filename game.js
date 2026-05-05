@@ -3550,7 +3550,9 @@ function tick() {
     }
 
     
-    while (civ.era < ERAS.length - 1 && civ.techPoints >= ERAS[civ.era + 1].threshold) {
+    while (civ.era < ERAS.length - 1
+        && civ.techPoints >= ERAS[civ.era + 1].threshold
+        && state.year >= ERAS[civ.era + 1].yearGuide) {
       civ.era++;
       const newEra = civ.era;
       if (!state.eraFirsts) state.eraFirsts = {};
