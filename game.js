@@ -2814,31 +2814,41 @@ function fireEvent(ev) {
   if (ev.type === "nuke_unify") {
     const wasteland = makeCiv({ name: "Nuclear Wasteland", color: ev.color || "#3a2a14" });
     state.civs.push(wasteland);
-    // Wipe EVERY non-player civ on Earth and absorb their territory
-    // into the Wasteland. Off-world civs (Mars Republic etc.) keep
-    // their alive flag but lose their Earth-side seats, so they don't
-    // re-conquer the planet from a stray tile.
+    // Off-world civs stay alive (with no Earth-side tiles) so the
+    // solar system view + planet-resident lookup still finds them.
+    // Earth-only civs are wiped completely.
+    const OFFWORLD_NAMES = new Set([
+      "Mars Republic", "Mars Colony Authority", "Lunar Republic",
+      "Asteroid Belt Coalition", "Belt Hollow Republic",
+      "Saturn Moons Confederation", "Pan-Solar Diaspora",
+      "Centauri Authority", "Many-Worlds Federation", "Solar Republic",
+      "Republic of Venus", "Venus Sky-Cities",
+    ]);
+    function isOffworld(c) {
+      if (OFFWORLD_NAMES.has(c.name)) return true;
+      for (const n of c.previousNames || []) if (OFFWORLD_NAMES.has(n)) return true;
+      return false;
+    }
     for (const c of state.civs) {
       if (c.id === wasteland.id) continue;
       if (!c.alive || c.isPlayer) continue;
-      let hadTiles = false;
+      // Strip Earth tiles regardless. Earth-only civs go to alive=false
+      // (so checkCapitulation doesn't later fragment them into modern
+      // countries); off-world civs keep alive and just lose their seat.
       for (let r = 0; r < ROWS; r++) {
         for (let cc = 0; cc < COLS; cc++) {
-          if (state.ownership[r][cc] === c.id) {
-            state.ownership[r][cc] = wasteland.id;
-            hadTiles = true;
-          }
+          if (state.ownership[r][cc] === c.id) state.ownership[r][cc] = wasteland.id;
         }
       }
-      c.settlements = [];
-      c.armies = [];
-      // Earth-side civs (with tiles) die. Off-world civs get marked
-      // tile-less but keep alive so the solar-system view still finds
-      // their dominator entries.
-      if (hadTiles) c.alive = false;
+      // Drop Earth-side settlements + armies regardless.
+      c.settlements = (c.settlements || []).filter(s => (s.planet || "Earth") !== "Earth");
+      c.armies = (c.armies || []).filter(a => (a.planet || "Earth") !== "Earth");
+      if (!isOffworld(c)) c.alive = false;
     }
-    // Stock the Wasteland with garrisons in every major HOI4 state
-    // centre so a neighbour army can't just walk in and re-claim.
+    // Stock the Wasteland with garrisons + capital cities at HOI4 state
+    // centers. Settlements are critical: without any, checkCapitulation
+    // would trigger fragmentCivByOwnerTag the moment a neighbour
+    // skirmishes with the Wasteland - resurrecting USA, Russia, etc.
     if (typeof HOI4_CITIES !== "undefined") {
       let placed = 0;
       for (const sd of HOI4_CITIES) {
@@ -2847,7 +2857,12 @@ function fireEvent(ev) {
         const col = Math.max(0, Math.min(COLS - 1, Math.floor(sd.x / TILE)));
         const row = Math.max(0, Math.min(ROWS - 1, Math.floor(sd.y / TILE)));
         if (state.ownership[row][col] !== wasteland.id) continue;
-        wasteland.armies.push({ id: nextArmyId++, col, row, type: "modern", count: 4, civId: wasteland.id, moves: 0 });
+        wasteland.armies.push({ id: nextArmyId++, col, row, type: "modern", count: 4, civId: wasteland.id, moves: 0, planet: "Earth" });
+        wasteland.settlements.push({
+          id: nextSettlementId++, col, row,
+          name: "Wasteland Outpost",
+          pop: 4, food: 0, prod: 0, queue: [], walls: false, planet: "Earth",
+        });
         placed++;
       }
     }
@@ -4086,9 +4101,24 @@ function fragmentCivByOwnerTag(loser, tilesByTag, winner) {
 function checkCapitulation(loser, winner) {
   if (!loser.alive) return;
   if (loser.settlements.length === 0) {
-
-    
-    
+    // Some civs should never auto-fragment into HOI4 modern successors
+    // when defeated - the post-apocalypse civs (Wasteland, Cockroach,
+    // Squid) would otherwise resurrect USA / Russia / etc the moment
+    // they lose a single skirmish.
+    const NO_FRAGMENT = new Set(["Nuclear Wasteland", "Cockroach Empire", "Squid Empire"]);
+    if (NO_FRAGMENT.has(loser.name)) {
+      if (winner && winner.alive) {
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            if (state.ownership[r][c] === loser.id) state.ownership[r][c] = winner.id;
+          }
+        }
+        loser.capitulatedTo = winner.id;
+      }
+      loser.alive = false;
+      loser.armies = [];
+      return;
+    }
     const tilesByTag = countTilesByOwnerTag(loser);
     const tagCount = Object.keys(tilesByTag).length;
     if (tagCount >= 2 && winner && winner.alive) {
