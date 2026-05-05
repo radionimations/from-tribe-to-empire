@@ -70,6 +70,10 @@ const UNITS = {
   rifleman:  { era: 4, cost: 50, str: 32,  name: "Riflemen" },
   tank:      { era: 5, cost: 80, str: 60,  name: "Armor" },
   modern:    { era: 6, cost: 120, str: 100, name: "Mech Inf." },
+  // Rocket Scraps: era-6 only, immovable, no combat. Stockpile 10+ to
+  // launch a rocket to another planet (Launch button in the tile-action
+  // panel). More scraps unlock farther destinations.
+  rocket_scraps: { era: 6, cost: 200, str: 0, name: "Rocket Scraps", immovable: true },
 };
 const SETTLER_COST = 25;
 
@@ -3797,6 +3801,9 @@ function sameFaction(civAId, civBId) {
 }
 
 function tryMoveOrAttack(army, toC, toR) {
+  // Rocket Scraps are immovable - they sit at their build city until
+  // launched. Block any move attempt.
+  if (army.type === "rocket_scraps") return false;
   const civ = state.civs[civIndexById(army.civId)];
   if (!canMoveInto(civ, MAP[toR][toC])) return false;
   const unitDef = UNITS[army.type];
@@ -5968,7 +5975,10 @@ function renderTileInfo() {
       const tname = army.type === "settler" ? "Settler" : UNITS[army.type].name;
       actions += `<div style="display:flex;gap:4px;align-items:center;margin:3px 0;">
         <span style="flex:1;font-size:12px;">${army.count} ${tname}</span>`;
-      if (army.moves > 0) {
+      if (army.type === "rocket_scraps") {
+        const totalScraps = countPlayerScraps();
+        actions += `<button style="width:auto;flex:0 0 auto;${totalScraps >= 10 ? '' : 'opacity:0.5;cursor:not-allowed;'}" onclick="${totalScraps >= 10 ? 'openLaunchPicker()' : ''}">🚀 Launch (${totalScraps}/10)</button>`;
+      } else if (army.moves > 0) {
         actions += `<button style="width:auto;flex:0 0 auto;" onclick="enterMoveMode(${army.id})">Move</button>`;
       }
       if (army.type === "settler" && playerOwns && !settlement) {
@@ -6173,6 +6183,122 @@ window.endBuyHold = function (settlementId, type) {
 window.cancelBuyHold = function () {
   if (_buyHoldTimer) { clearTimeout(_buyHoldTimer); _buyHoldTimer = null; }
 };
+// Rocket-launch system. Player accumulates rocket_scraps (era 6 only,
+// immovable). Launch button on the unit row opens a planet picker;
+// each planet has a min-scrap cost. On launch, scraps are deducted
+// across the player's stacks, and the player gets a starting tile +
+// army at a random no-man's-land tile on the chosen planet.
+const PLANET_LAUNCH_COSTS = {
+  "Moon": 10,
+  "Phobos": 25,
+  "Deimos": 25,
+  "Venus": 30,
+  "Mars": 30,
+  "Mercury": 60,
+  "Jupiter": 100,
+  "Io": 100,
+  "Europa": 100,
+  "Ganymede": 100,
+  "Callisto": 100,
+  "Saturn": 150,
+  "Mimas": 160,
+  "Titan": 150,
+  "Uranus": 200,
+  "Neptune": 250,
+  "Triton": 260,
+  "Pluto": 300,
+  "Asteroid Belt": 70,
+  "Proxima Centauri b": 1000,
+};
+
+function countPlayerScraps() {
+  const player = state.civs[0];
+  if (!player || !player.isPlayer || !player.alive) return 0;
+  let n = 0;
+  for (const a of player.armies) if (a.type === "rocket_scraps") n += a.count || 0;
+  return n;
+}
+
+function consumePlayerScraps(n) {
+  const player = state.civs[0];
+  if (!player) return false;
+  let remaining = n;
+  // Drain from rocket_scraps armies (oldest first), removing empty stacks.
+  const newArmies = [];
+  for (const a of player.armies) {
+    if (a.type !== "rocket_scraps" || remaining <= 0) { newArmies.push(a); continue; }
+    if (a.count > remaining) { a.count -= remaining; remaining = 0; newArmies.push(a); }
+    else { remaining -= a.count; }
+  }
+  player.armies = newArmies;
+  return remaining === 0;
+}
+
+window.openLaunchPicker = function () {
+  const scraps = countPlayerScraps();
+  const modal = document.getElementById("launch-modal");
+  if (!modal) return;
+  const list = document.getElementById("launch-list");
+  list.innerHTML = "";
+  document.getElementById("launch-scrap-count").textContent = String(scraps);
+  // Sorted ascending by cost.
+  const entries = Object.entries(PLANET_LAUNCH_COSTS).sort((a, b) => a[1] - b[1]);
+  for (const [name, cost] of entries) {
+    const row = document.createElement("button");
+    const enabled = scraps >= cost;
+    row.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:14px;width:100%;padding:8px 14px;margin:3px 0;background:" + (enabled ? "linear-gradient(180deg,#3a2a14,#1a0e04)" : "#1a0e04") + ";border:1px solid " + (enabled ? "#6a5a3c" : "#3a2a14") + ";color:" + (enabled ? "#fff5cc" : "#5a4a32") + ";font-family:Georgia,serif;cursor:" + (enabled ? "pointer" : "not-allowed") + ";letter-spacing:2px;";
+    row.innerHTML = '<span>' + name + '</span><span style="color:' + (enabled ? "#ffd24a" : "#5a4a32") + ';">' + cost + ' scraps</span>';
+    if (enabled) {
+      row.addEventListener("click", () => {
+        modal.style.display = "none";
+        launchToPlanet(name, cost);
+      });
+    }
+    list.appendChild(row);
+  }
+  modal.style.display = "flex";
+};
+
+function launchToPlanet(planetName, cost) {
+  const player = state.civs[0];
+  if (!player || !player.isPlayer || !player.alive) return;
+  if (!consumePlayerScraps(cost)) return;
+  // Lazy-init the planet's ownership grid using the same logic as
+  // descend-to-surface, so the resident civs are present too.
+  if (!state.planetOwnership) state.planetOwnership = {};
+  if (!state.planetOwnership[planetName]) {
+    state.planetOwnership[planetName] = rebuildPlanetOwnership(planetName);
+  }
+  const grid = state.planetOwnership[planetName];
+  // Find every no-man's-land passable tile.
+  const candidates = [];
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (grid[r][c] !== -1) continue;
+      // For aquatic-only planets we don't have - any planet allows land.
+      // Skip ocean tiles (since planets reuse Earth's biome grid; actual
+      // ocean tiles would be the same regardless).
+      if (MAP[r][c] === "ocean") continue;
+      candidates.push([c, r]);
+    }
+  }
+  if (candidates.length === 0) {
+    log("event", "Rocket reaches " + planetName + " but finds no unclaimed land.");
+    return;
+  }
+  const [col, row] = candidates[Math.floor(Math.random() * candidates.length)];
+  grid[row][col] = player.id;
+  log("event", "🚀 " + player.name + " launches a rocket to " + planetName + " (-" + cost + " scraps) and lands at an uncharted tile!");
+  // If the player is currently on Earth, immediately descend to the
+  // landed planet so they can see where they are.
+  if (state.currentPlanet === "Earth" || !state.currentPlanet) {
+    enterPlanetSurface(planetName);
+  } else {
+    invalidateTintCache();
+    render();
+  }
+}
+
 window.enterMoveMode = function (armyId) {
 
   const id = typeof armyId === "string" ? parseInt(armyId, 10) : armyId;

@@ -1193,6 +1193,16 @@
     <div style="position:absolute;bottom:18px;left:0;right:0;text-align:center;font-size:11px;color:#5a4a32;">Scroll to zoom · drag to pan · click a body to zoom to it.</div>
   </div>
 
+  <!-- Rocket-launch planet picker -->
+  <div id="launch-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:610;align-items:center;justify-content:center;font-family:Georgia,serif;">
+    <div style="background:linear-gradient(180deg,#1a0e04,#0a0604);border:1px solid #ffd24a;color:#fff5cc;padding:20px 26px;width:340px;max-height:80vh;overflow:auto;">
+      <h2 style="margin:0 0 6px;color:#ffd24a;letter-spacing:6px;text-align:center;">🚀 LAUNCH</h2>
+      <div style="text-align:center;color:#a89678;font-size:12px;margin-bottom:10px;">Available scraps: <span id="launch-scrap-count" style="color:#ffd24a;">0</span></div>
+      <div id="launch-list"></div>
+      <button onclick="document.getElementById('launch-modal').style.display='none'" style="margin-top:14px;width:100%;padding:8px;background:#3a2a14;border:1px solid #6a5a3c;color:#cfbf95;cursor:pointer;letter-spacing:3px;font-family:Georgia,serif;">CANCEL</button>
+    </div>
+  </div>
+
   <!-- Customization modal -->
   <div id="customize-modal" class="hidden">
     <div class="cm-card">
