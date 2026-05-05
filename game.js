@@ -3373,6 +3373,16 @@ function tick() {
 
   for (const civ of state.civs) {
     if (!civ.alive) continue;
+    if (civ.cantMakeUnits || civ.name === "Nuclear Wasteland") {
+      civ.armies = [];
+      for (const s of (civ.settlements || [])) {
+        s.queue = (s.queue || []).filter(q => q.type === "wall");
+      }
+    }
+  }
+
+  for (const civ of state.civs) {
+    if (!civ.alive) continue;
     civ.age++;
     for (const s of civ.settlements) {
       
