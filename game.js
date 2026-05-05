@@ -3393,7 +3393,7 @@ function tick() {
 
     
     
-    const SPLIT_BLOCKLIST = new Set(["Rome", "Western Rome", "Romano-Goths"]);
+    const SPLIT_BLOCKLIST = new Set(["Rome", "Western Rome", "Romano-Goths", "Nuclear Wasteland", "Cockroach Empire", "Squid Empire"]);
     for (const civ of state.civs.slice()) {
       if (!civ.alive || civ.isPlayer) continue;
       if (civ.isStartingTribe) continue;
@@ -7757,17 +7757,39 @@ function rebuildPlanetOwnership(bodyName) {
     if (c && !seen.has(c.id)) { residents.push(c); seen.add(c.id); }
   }
   if (residents.length === 0) {
-    // Fall back to the SOLAR_ORBITS dominator if no resident is alive.
     const obody = SOLAR_ORBITS.find(b => b.name === bodyName);
     const dom = obody ? resolveDominator(obody) : null;
     if (dom && !seen.has(dom.id)) residents.push(dom);
   }
   if (residents.length === 0) return grid;
-  // Vertical-band split across the grid.
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      const idx = Math.min(residents.length - 1, Math.floor((c / COLS) * residents.length));
-      grid[r][c] = residents[idx].id;
+  // Each resident starts from a single seed tile and flood-fills outward
+  // up to a budget that scales with how many years they've existed
+  // (~1 tile per 5 years). So a freshly-founded colony has 1-2 tiles
+  // and a 1000-year-old civ has ~200 tiles - they "expand from 1 tile"
+  // rather than auto-claiming the entire surface.
+  const seeds = [];
+  for (let i = 0; i < residents.length; i++) {
+    const seedCol = Math.floor((i + 0.5) / residents.length * COLS);
+    const seedRow = Math.floor(ROWS * 0.55);
+    seeds.push({ col: seedCol, row: seedRow, civ: residents[i] });
+  }
+  for (const seed of seeds) {
+    const lifespan = Math.max(0, state.year - (seed.civ.foundedYear || state.year));
+    const want = Math.max(1, Math.min(8000, Math.floor(lifespan / 5)));
+    const queue = [[seed.col, seed.row]];
+    const visited = new Set();
+    visited.add(seed.row * COLS + seed.col);
+    let claimed = 0;
+    while (queue.length && claimed < want) {
+      const [c, r] = queue.shift();
+      if (r < 0 || r >= ROWS || c < 0 || c >= COLS) continue;
+      if (grid[r][c] !== -1) continue;
+      grid[r][c] = seed.civ.id;
+      claimed++;
+      for (const [nc, nr] of neighbors(c, r)) {
+        const k = nr * COLS + nc;
+        if (!visited.has(k)) { visited.add(k); queue.push([nc, nr]); }
+      }
     }
   }
   return grid;
