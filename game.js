@@ -7263,20 +7263,20 @@ function makeBodyCard(body, options) {
 // enough out to see Proxima Centauri at 268,000 AU.
 const SOLAR_ORBITS = [
   { name: "Sun",                color: "#ffd24a", au: 0,        size: 28, angle: 0,    parent: null,     dominator: null,                              texture: null },
-  { name: "Mercury",            color: "#a89678", au: 0.39,     size: 6,  angle: 0.6,  parent: "Sun",    dominator: null,                              texture: "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3e/Solarsystemscope_texture_8k_mercury.jpg/1280px-Solarsystemscope_texture_8k_mercury.jpg" },
-  { name: "Venus",              color: "#e8c020", au: 0.72,     size: 8,  angle: 1.4,  parent: "Sun",    dominator: "Republic of Venus",               texture: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/85/Solarsystemscope_texture_8k_venus_surface.jpg/1280px-Solarsystemscope_texture_8k_venus_surface.jpg" },
+  { name: "Mercury",            color: "#a89678", au: 0.39,     size: 6,  angle: 0.6,  parent: "Sun",    dominator: null,                              texture: "https://www.solarsystemscope.com/images/textures/full/2k_mercury.jpg" },
+  { name: "Venus",              color: "#e8c020", au: 0.72,     size: 8,  angle: 1.4,  parent: "Sun",    dominator: "Republic of Venus",               texture: "https://www.solarsystemscope.com/images/textures/full/2k_venus_surface.jpg" },
   { name: "Earth",              color: "#3a8a4a", au: 1.0,      size: 9,  angle: 2.3,  parent: "Sun",    dominator: "<largest>",                       texture: null },
-  { name: "Moon",               color: "#cfcfcf", au: 0.0026,   size: 3,  angle: 0.5,  parent: "Earth",  dominator: "Lunar Republic",                  texture: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Solarsystemscope_texture_8k_moon.jpg/1280px-Solarsystemscope_texture_8k_moon.jpg" },
-  { name: "Mars",               color: "#c84a3a", au: 1.52,     size: 7,  angle: 3.1,  parent: "Sun",    dominator: "Mars Republic",                   texture: "https://upload.wikimedia.org/wikipedia/commons/thumb/0/05/Solarsystemscope_texture_8k_mars.jpg/1280px-Solarsystemscope_texture_8k_mars.jpg" },
+  { name: "Moon",               color: "#cfcfcf", au: 0.0026,   size: 3,  angle: 0.5,  parent: "Earth",  dominator: "Lunar Republic",                  texture: "https://www.solarsystemscope.com/images/textures/full/2k_moon.jpg" },
+  { name: "Mars",               color: "#c84a3a", au: 1.52,     size: 7,  angle: 3.1,  parent: "Sun",    dominator: "Mars Republic",                   texture: "https://www.solarsystemscope.com/images/textures/full/2k_mars.jpg" },
   { name: "Phobos",             color: "#7a5a3a", au: 0.00006,  size: 2,  angle: 1.0,  parent: "Mars",   dominator: "Mars Republic",                   texture: null },
   { name: "Deimos",             color: "#7a5a3a", au: 0.00016,  size: 2,  angle: 4.0,  parent: "Mars",   dominator: "Mars Republic",                   texture: null },
   { name: "Asteroid Belt",      color: "#a8a8a8", au: 2.7,      size: 4,  angle: 4.0,  parent: "Sun",    dominator: "Asteroid Belt Coalition",         texture: null },
-  { name: "Jupiter",            color: "#d4b85a", au: 5.2,      size: 16, angle: 4.7,  parent: "Sun",    dominator: null,                              texture: "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0a/Solarsystemscope_texture_8k_jupiter.jpg/1280px-Solarsystemscope_texture_8k_jupiter.jpg" },
+  { name: "Jupiter",            color: "#d4b85a", au: 5.2,      size: 16, angle: 4.7,  parent: "Sun",    dominator: null,                              texture: "https://www.solarsystemscope.com/images/textures/full/2k_jupiter.jpg" },
   { name: "Europa",             color: "#cfe4ff", au: 0.00448,  size: 3,  angle: 1.2,  parent: "Jupiter", dominator: null,                             texture: null },
-  { name: "Saturn",             color: "#e8c075", au: 9.58,     size: 14, angle: 5.4,  parent: "Sun",    dominator: "Saturn Moons Confederation",      texture: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c7/Solarsystemscope_texture_8k_saturn.jpg/1280px-Solarsystemscope_texture_8k_saturn.jpg" },
+  { name: "Saturn",             color: "#e8c075", au: 9.58,     size: 14, angle: 5.4,  parent: "Sun",    dominator: "Saturn Moons Confederation",      texture: "https://www.solarsystemscope.com/images/textures/full/2k_saturn.jpg" },
   { name: "Titan",              color: "#d4a657", au: 0.00817,  size: 3,  angle: 2.5,  parent: "Saturn", dominator: "Saturn Moons Confederation",      texture: null },
-  { name: "Uranus",             color: "#5dc4e8", au: 19.2,     size: 11, angle: 0.3,  parent: "Sun",    dominator: null,                              texture: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/95/Solarsystemscope_texture_2k_uranus.jpg/1024px-Solarsystemscope_texture_2k_uranus.jpg" },
-  { name: "Neptune",            color: "#3a6ad8", au: 30.05,    size: 11, angle: 1.0,  parent: "Sun",    dominator: null,                              texture: "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5e/Solarsystemscope_texture_2k_neptune.jpg/1024px-Solarsystemscope_texture_2k_neptune.jpg" },
+  { name: "Uranus",             color: "#5dc4e8", au: 19.2,     size: 11, angle: 0.3,  parent: "Sun",    dominator: null,                              texture: "https://www.solarsystemscope.com/images/textures/full/2k_uranus.jpg" },
+  { name: "Neptune",            color: "#3a6ad8", au: 30.05,    size: 11, angle: 1.0,  parent: "Sun",    dominator: null,                              texture: "https://www.solarsystemscope.com/images/textures/full/2k_neptune.jpg" },
   { name: "Pluto",              color: "#a89678", au: 39.48,    size: 4,  angle: 2.1,  parent: "Sun",    dominator: null,                              texture: null },
   { name: "Proxima Centauri b", color: "#7d3ad8", au: 268000,   size: 7,  angle: 5.6,  parent: null,     dominator: "Centauri Authority",              texture: null },
 ];
@@ -7632,8 +7632,10 @@ const _planetTextureCache = {};
 function _loadPlanetTexture(body) {
   if (!body || !body.texture) return;
   if (_planetTextureCache[body.name]) return;
+  // No crossOrigin - solarsystemscope.com doesn't serve CORS headers,
+  // and we don't need to read pixel data from the texture (we just
+  // drawImage it onto the main canvas), so a tainted texture is fine.
   const img = new Image();
-  img.crossOrigin = "anonymous";
   img.onload = () => { invalidateTintCache(); render(); };
   img.onerror = () => { delete _planetTextureCache[body.name]; };
   img.src = body.texture;
