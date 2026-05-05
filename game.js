@@ -41,7 +41,9 @@ const PASSABLE = (b) => {
 };
 
 function canMoveInto(civ, biome) {
-  if (civ && civ.aquaticOnly) return biome === "ocean";   // squid tribe etc.
+  const offEarth = typeof state !== "undefined" && state && state.currentPlanet && state.currentPlanet !== "Earth";
+  if (offEarth) return true;
+  if (civ && civ.aquaticOnly) return biome === "ocean";
   if (biome === "ocean") return !!(civ && civ.era >= 1);
   return PASSABLE(biome);
 }
@@ -3647,16 +3649,18 @@ function tick() {
   }
 
   
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      const o = state.ownership[r][c];
-      if (o === -1) continue;
-      const ownerCiv = state.civs[civIndexById(o)];
-      if (!ownerCiv) { state.ownership[r][c] = -1; continue; }
-      if (MAP[r][c] === "ocean" && !ownerCiv.aquaticOnly) {
-        state.ownership[r][c] = -1;
-      } else if (MAP[r][c] !== "ocean" && ownerCiv.aquaticOnly) {
-        state.ownership[r][c] = -1;
+  if (!state.currentPlanet || state.currentPlanet === "Earth") {
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const o = state.ownership[r][c];
+        if (o === -1) continue;
+        const ownerCiv = state.civs[civIndexById(o)];
+        if (!ownerCiv) { state.ownership[r][c] = -1; continue; }
+        if (MAP[r][c] === "ocean" && !ownerCiv.aquaticOnly) {
+          state.ownership[r][c] = -1;
+        } else if (MAP[r][c] !== "ocean" && ownerCiv.aquaticOnly) {
+          state.ownership[r][c] = -1;
+        }
       }
     }
   }
@@ -4352,8 +4356,9 @@ function tryMoveOrAttack(army, toC, toR) {
   if (civ && (civ.cantMoveUnits || civ.name === "Nuclear Wasteland")) return false;
   if (!canMoveInto(civ, MAP[toR][toC])) return false;
   const unitDef = UNITS[army.type];
-  
-  if (MAP[toR][toC] === "ocean") {
+  const _offEarthMove = state.currentPlanet && state.currentPlanet !== "Earth";
+
+  if (!_offEarthMove && MAP[toR][toC] === "ocean") {
     // Aquatic-only civs (Squid Empire) claim unowned ocean tiles and
     // fight rival ocean-owners. Other civs just transit.
     if (civ && civ.aquaticOnly) {
