@@ -9747,6 +9747,18 @@ function showCountryPanel(civ) {
   const strengthRow = state.debug
     ? `<div class="stat-row"><span class="stat-label">Strength</span><span class="stat-val">${civStrength(civ)}</span></div>`
     : "";
+  const offWorldPlanets = new Set();
+  for (const s of (civ.settlements || [])) {
+    const p = s.planet || "Earth";
+    if (p !== "Earth") offWorldPlanets.add(p);
+  }
+  for (const a of (civ.armies || [])) {
+    const p = a.planet || "Earth";
+    if (p !== "Earth") offWorldPlanets.add(p);
+  }
+  const coloniesRow = offWorldPlanets.size > 0
+    ? `<div class="stat-row"><span class="stat-label">Has colonies in</span><span class="stat-val">${[...offWorldPlanets].sort().join(", ")}</span></div>`
+    : "";
   document.getElementById("cp-stats").innerHTML = `
     <div class="stat-row"><span class="stat-label">Settlements</span><span class="stat-val">${civ.settlements.length}</span></div>
     <div class="stat-row"><span class="stat-label">Population</span><span class="stat-val">${totalPop}</span></div>
@@ -9754,6 +9766,7 @@ function showCountryPanel(civ) {
     <div class="stat-row"><span class="stat-label">Army</span><span class="stat-val">${totalArmy} units</span></div>
     ${strengthRow}
     <div class="stat-row"><span class="stat-label">Stability</span><span class="stat-val">${Math.round(civ.stability)}%</span></div>
+    ${coloniesRow}
   `;
 
   // Relations with other living civs
