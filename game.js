@@ -1299,6 +1299,47 @@ const HISTORICAL_EVENTS = [
   { year: 9999, civ: { name: "Tenth-Millennium Compact", lat: 0.0, lon: 0.0, color: "#fff5cc" },
     message: "Tenth-Millennium Compact - on the eve of year 10000, all surviving civilizations sign a single accord" },
 
+  { year: 2260, civ: { name: "Orbital Exploration Agency", lat: 0.0, lon: 0.0, color: "#5dc4e8", planet: "Mercury" },
+    message: "Orbital Exploration Agency [OEA] chartered - an inner-system survey body opens its first base in Mercury's polar craters" },
+  { year: 2340, civ: { name: "Chillax Space Administration", lat: 0.0, lon: 0.0, color: "#7ec3ed", planet: "Asteroid Belt" },
+    message: "Chillax Space Administration [CSA] founded - low-gravity prospectors charter the first Belt-wide leisure cooperatives" },
+  { year: 2480, civ: { name: "Antarctic Temperian Empire", lat: 0.0, lon: 0.0, color: "#cfe4ff", planet: "Triton" },
+    message: "Antarctic Temperian Empire [ATE] proclaimed - cold-climate colonists from Earth's poles unite Triton's nitrogen plains" },
+  { year: 2620, civ: { name: "Greater Republic of Violets", lat: 0.0, lon: 0.0, color: "#9054e8", planet: "Europa" },
+    message: "Greater Republic of Violets [GRoV] formed - sub-ice gardens of bioluminescent flora declare sovereignty under Europa's shell" },
+  { year: 2810, civ: { name: "Honkers Space Republic", lat: 0.0, lon: 0.0, color: "#ffd24a", planet: "Mimas" },
+    message: "Honkers Space Republic [HSR] chartered - a low-gravity broadcaster collective takes control of Mimas's Herschel basin" },
+  { year: 2960, civ: { name: "Terial AeroSpace", lat: 0.0, lon: 0.0, color: "#e8c075", planet: "Titan" },
+    message: "Terial AeroSpace [TA] privatised - Titan's aerostat fleet operators consolidate into a single sovereign company-state" },
+  { year: 3140, civ: { name: "NeBehnœ Commonwealth", lat: 0.0, lon: 0.0, color: "#5d8acf", planet: "Neptune" },
+    message: "NeBehnœ Commonwealth [NBC] proclaimed - Neptune's storm-edge cities federate under a single oath" },
+  { year: 3380, civ: { name: "Dasher RubEntity Republic", lat: 0.0, lon: 0.0, color: "#a06bff", planet: "Pluto" },
+    message: "Dasher RubEntity Republic [DRR] founded - the dust-runner clans of Sputnik Planitia declare a sovereign Plutonian state" },
+  { year: 3550, civ: { name: "The New Space Imperium of Flar'", lat: 0.0, lon: 0.0, color: "#e84a3a", planet: "Proxima Centauri b" },
+    message: "New Space Imperium of Flar' [NSIoF] proclaimed - the largest extrasolar polity unifies under an imperial charter on Proxima b" },
+
+  { year: 3620, type: "alliance", a: "The New Space Imperium of Flar'", b: "Centauri Authority",
+    message: "Flar' Concord - the New Imperium and the Centauri Authority federate the inner Proxima system" },
+  { year: 3700, type: "war", a: "Antarctic Temperian Empire", b: "NeBehnœ Commonwealth", region: { lat: [33, 38], lon: [137, 143] }, reinforce: 12,
+    message: "Outer-Cold War - the Temperians and the NeBehnœ Commonwealth contest the trans-Neptunian shipping lanes" },
+  { year: 3760, type: "peace_treaty", a: "Antarctic Temperian Empire", b: "NeBehnœ Commonwealth",
+    message: "Triton-Neptune Concord ends the Outer-Cold War" },
+  { year: 3840, type: "form_faction", name: "Outer Sphere Compact", color: "#5d8acf",
+    members: ["Antarctic Temperian Empire", "NeBehnœ Commonwealth", "Dasher RubEntity Republic", "Triton Cooperative", "Pluto-Charon Republic"],
+    message: "Outer Sphere Compact - all trans-Neptunian polities sign a common defence charter" },
+  { year: 3950, type: "war", a: "Honkers Space Republic", b: "Terial AeroSpace", region: { lat: [25, 35], lon: [135, 145] }, reinforce: 10,
+    message: "Saturn-Side War - the Honkers and Terial AeroSpace contest the inner Saturn moons" },
+  { year: 4020, type: "peace_treaty", a: "Honkers Space Republic", b: "Terial AeroSpace",
+    message: "Mimas-Titan Treaty ends the Saturn-Side War" },
+  { year: 4180, type: "alliance", a: "Greater Republic of Violets", b: "Europan Order",
+    message: "Subglacial Pact - the Violets and the Europan Order federate the Europan ice shell" },
+  { year: 4400, type: "rename", from: "Orbital Exploration Agency", to: "Mercury Solar Imperium", color: "#fff5cc", spawnIfMissing: { lat: 0.0, lon: 0.0 },
+    message: "Mercury Solar Imperium - the Exploration Agency formalises into an imperial polity at the closest approach to the Sun" },
+  { year: 4500, type: "war", a: "The New Space Imperium of Flar'", b: "Many-Worlds Federation", region: { lat: [-30, 60], lon: [-30, 60] }, reinforce: 18,
+    message: "Imperium War - Flar' marches against the Federation for control of the Centauri trade routes" },
+  { year: 4580, type: "peace_treaty", a: "The New Space Imperium of Flar'", b: "Many-Worlds Federation",
+    message: "Proxima Treaty ends the Imperium War" },
+
   
 
   
@@ -8685,26 +8726,26 @@ function zoomIntoPlanet(bodyName) {
 // them (so e.g. Mars Republic + Mars Colony Authority each get a
 // chunk of Mars).
 const PLANET_RESIDENTS = {
-  "Mercury": ["Mercury Solar Authority"],
+  "Mercury": ["Mercury Solar Authority", "Orbital Exploration Agency", "Mercury Solar Imperium"],
   "Venus":   ["Republic of Venus", "Venus Sky-Cities"],
   "Moon":    ["Lunar Republic", "L5 Habitat League"],
   "Mars":    ["Mars Republic", "Mars Colony Authority"],
   "Phobos":  ["Mars Republic", "Phobos Mining Guild"],
   "Deimos":  ["Mars Republic", "Deimos Watchtower"],
-  "Asteroid Belt": ["Belt Hollow Republic", "Asteroid Belt Coalition", "Ceres Free Port", "Jovian Trojans Authority"],
+  "Asteroid Belt": ["Belt Hollow Republic", "Asteroid Belt Coalition", "Ceres Free Port", "Jovian Trojans Authority", "Chillax Space Administration"],
   "Jupiter": [],
   "Io":      ["Io Volcanic League"],
-  "Europa":  ["Saturn Moons Confederation", "Europan Order"],
+  "Europa":  ["Saturn Moons Confederation", "Europan Order", "Greater Republic of Violets"],
   "Ganymede":["Ganymede Free State"],
   "Callisto":["Callisto Settlement"],
   "Saturn":  ["Saturn Moons Confederation"],
-  "Mimas":   ["Mimas Cold Republic"],
-  "Titan":   ["Saturn Moons Confederation", "Titan Methanate Republic"],
+  "Mimas":   ["Mimas Cold Republic", "Honkers Space Republic"],
+  "Titan":   ["Saturn Moons Confederation", "Titan Methanate Republic", "Terial AeroSpace"],
   "Uranus":  ["Uranus Tilt League"],
-  "Neptune": ["Neptune Storm Council"],
-  "Triton":  ["Triton Cooperative"],
-  "Pluto":   ["Pluto-Charon Republic", "Oort Survey Charter"],
-  "Proxima Centauri b": ["Centauri Authority", "Alpha Centauri Settlement Bureau"],
+  "Neptune": ["Neptune Storm Council", "NeBehnœ Commonwealth"],
+  "Triton":  ["Triton Cooperative", "Antarctic Temperian Empire"],
+  "Pluto":   ["Pluto-Charon Republic", "Oort Survey Charter", "Dasher RubEntity Republic"],
+  "Proxima Centauri b": ["Centauri Authority", "Alpha Centauri Settlement Bureau", "The New Space Imperium of Flar'"],
 };
 
 function rebuildPlanetOwnership(bodyName) {
@@ -9214,6 +9255,17 @@ const LEADERS = {
 const CIV_TAGS = {
   "Egypt": "EGY",
   "Kush": "EGY",
+
+  "Antarctic Temperian Empire": "ATE",
+  "Chillax Space Administration": "CSA",
+  "Dasher RubEntity Republic": "DRR",
+  "The New Space Imperium of Flar'": "NSIoF",
+  "Honkers Space Republic": "HSR",
+  "Terial AeroSpace": "TA",
+  "NeBehnœ Commonwealth": "NBC",
+  "Orbital Exploration Agency": "OEA",
+  "Greater Republic of Violets": "GRoV",
+
 
   
   
