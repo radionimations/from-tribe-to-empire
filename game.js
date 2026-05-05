@@ -5412,7 +5412,10 @@ function render() {
     ctx.imageSmoothingEnabled = false;
   }
   
+  // 25% transparent country tints so the biome / terrain shows through.
+  ctx.globalAlpha = 0.75;
   ctx.drawImage(tintCacheCanvas, 0, 0, MAP_W, MAP_H);
+  ctx.globalAlpha = 1;
 
   if (stateBorderPath && (!state.currentPlanet || state.currentPlanet === "Earth")) {
     ctx.strokeStyle = "rgba(0, 0, 0, 0.30)";
