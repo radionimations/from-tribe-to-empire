@@ -1040,13 +1040,214 @@ const HISTORICAL_EVENTS = [
   { year: 4945, type: "nuke_unify", color: "#3a2a14",
     message: "All Earth-side civilizations have been annihilated. Nuclear Wasteland inherits the planet." },
   { year: 5400, type: "spawn_after_nuke",
-    civ: { name: "Cockroach Empire", lat: 24.0, lon: 90.0, color: "#3a2014" },
-    tileCount: 80,
-    message: "From the radioactive ruins, the Cockroach Empire emerges in the Bengal delta - the only land-creatures that survived the nuclear winter." },
+    civ: { name: "Cockroach Tribe", lat: 24.0, lon: 90.0, color: "#3a2014" },
+    tileCount: 25,
+    message: "From the radioactive ruins, the Cockroach Tribe emerges in the Bengal delta - the only land-creatures that survived the nuclear winter." },
+  { year: 5550, type: "rename", from: "Cockroach Tribe", to: "Cockroach Empire", color: "#3a2014", spawnIfMissing: { lat: 24.0, lon: 90.0 },
+    message: "The Cockroach Tribe consolidates the wastelands and proclaims the Cockroach Empire" },
   { year: 5700, type: "spawn_aquatic",
-    civ: { name: "Squid Empire", lat: -10.0, lon: 160.0, color: "#7d3ad8" },
-    tileCount: 200,
-    message: "The Squid Empire rises from the irradiated Pacific - a fully aquatic civilization that can only colonize the oceans, lakes, and seas." },
+    civ: { name: "Squid Tribe", lat: -10.0, lon: 160.0, color: "#7d3ad8" },
+    tileCount: 60,
+    message: "The Squid Tribe rises from the irradiated Pacific - a fully aquatic civilization that can only colonize the oceans, lakes, and seas." },
+  { year: 5850, type: "rename", from: "Squid Tribe", to: "Squid Empire", color: "#7d3ad8", spawnIfMissing: { lat: -10.0, lon: 160.0 },
+    message: "The Squid Tribe unifies the world's oceans and proclaims the Squid Empire" },
+
+  { year: 2102, type: "alliance", a: "Lunar Republic", b: "USA",
+    message: "Lunar Compact ratified - Helium-3 fusion fuel begins flowing to Earth" },
+  { year: 2115, type: "war", a: "Lunar Republic", b: "People's Republic of China", region: { lat: [30, 40], lon: [105, 120] }, reinforce: 8,
+    message: "First Cislunar War - Chinese orbital strikes contest the lunar Helium-3 monopoly" },
+  { year: 2138, type: "peace_treaty", a: "Lunar Republic", b: "People's Republic of China",
+    message: "Tycho Treaty ends the First Cislunar War - lunar mining quotas established" },
+  { year: 2170, civ: { name: "L5 Habitat League", lat: 28.4, lon: -80.6, color: "#9bb8d4" },
+    message: "L5 Habitat League founded - the first permanent O'Neill cylinders open at the Earth-Moon Lagrange point" },
+  { year: 2200, type: "alliance", a: "Mars Colony Authority", b: "Lunar Republic",
+    message: "Inner Worlds Pact - Mars and the Moon coordinate orbital infrastructure" },
+  { year: 2230, civ: { name: "Phobos Mining Guild", lat: 28.4, lon: -80.6, color: "#7a5a3a" },
+    message: "Phobos Mining Guild incorporated - the Martian moons become humanity's first deep-space industrial hub" },
+  { year: 2260, type: "war", a: "Phobos Mining Guild", b: "Mars Colony Authority", region: { lat: [25, 32], lon: [-82, -77] }, reinforce: 6,
+    message: "Phobos Strike - the moon-miners revolt against Mars Authority taxation" },
+  { year: 2275, type: "peace_treaty", a: "Phobos Mining Guild", b: "Mars Colony Authority",
+    message: "Olympus Accord recognizes Phobos autonomy" },
+  { year: 2310, civ: { name: "Ceres Free Port", lat: 47.6, lon: -122.3, color: "#c4c4a8" },
+    message: "Ceres Free Port chartered - the largest asteroid becomes a tax-free trade hub" },
+  { year: 2340, type: "war", a: "Mars Republic", b: "Lunar Republic", region: { lat: [27, 33], lon: [-82, -77] }, reinforce: 10,
+    message: "Independence War - Mars secedes by force from joint Lunar-Earth oversight" },
+  { year: 2355, type: "peace_treaty", a: "Mars Republic", b: "Lunar Republic",
+    message: "Hellas Accord recognizes Mars as a sovereign state" },
+  { year: 2390, civ: { name: "Jovian Trojans Authority", lat: 35.7, lon: 139.7, color: "#c4a880" },
+    message: "Jovian Trojans Authority chartered - the L4/L5 asteroid clusters of Jupiter become a sovereign zone" },
+  { year: 2425, type: "war", a: "Jovian Trojans Authority", b: "Asteroid Belt Coalition", region: { lat: [40, 50], lon: [-125, -110] }, reinforce: 8,
+    message: "Trojan-Belt War - rival prospectors clash over the icy Jovian asteroids" },
+  { year: 2450, type: "peace_treaty", a: "Jovian Trojans Authority", b: "Asteroid Belt Coalition",
+    message: "Galilean Concord ends the Trojan-Belt War" },
+  { year: 2480, civ: { name: "Callisto Settlement", lat: 35.7, lon: 139.7, color: "#a89070" },
+    message: "Callisto Settlement opened - Jupiter's outer moon becomes humanity's deepest planetary outpost" },
+  { year: 2510, type: "alliance", a: "Mars Republic", b: "Phobos Mining Guild",
+    message: "Mars-Phobos Reunification Pact - the Martian moons rejoin the Mars sphere" },
+  { year: 2555, civ: { name: "Europan Order", lat: 35.7, lon: 139.7, color: "#3a8acf" },
+    message: "Europan Order founded - the first sub-ice colonies harvest Europa's hidden ocean" },
+  { year: 2590, type: "war", a: "Europan Order", b: "Saturn Moons Confederation", region: { lat: [35, 40], lon: [135, 145] }, reinforce: 10,
+    message: "Outer Moons War - the Europans contest Saturn's claim to the gas-giant moons" },
+  { year: 2615, type: "peace_treaty", a: "Europan Order", b: "Saturn Moons Confederation",
+    message: "Cassini Accord ends the Outer Moons War" },
+  { year: 2660, type: "alliance", a: "L5 Habitat League", b: "Lunar Republic",
+    message: "Cislunar Concord - the orbital habitats federate with the lunar government" },
+  { year: 2690, civ: { name: "Triton Cooperative", lat: 35.7, lon: 139.7, color: "#5d8acf" },
+    message: "Triton Cooperative chartered - Neptune's moon becomes humanity's first colony beyond the gas giants" },
+  { year: 2720, type: "war", a: "Saturn Moons Confederation", b: "Mars Republic", region: { lat: [25, 35], lon: [-82, -75] }, reinforce: 12,
+    message: "Saturnian-Martian War - the gas-giant powers reach inward against the Red Planet" },
+  { year: 2745, type: "peace_treaty", a: "Saturn Moons Confederation", b: "Mars Republic",
+    message: "Encke Treaty ends the Saturnian-Martian War" },
+  { year: 2790, type: "alliance", a: "Venus Sky-Cities", b: "Mars Republic",
+    message: "Inner-Worlds Triumvirate - Venus, Mars, and Earth coordinate inner-system terraforming" },
+  { year: 2810, civ: { name: "Pluto-Charon Republic", lat: 35.7, lon: 139.7, color: "#9a6acf" },
+    message: "Pluto-Charon Republic declared - the Kuiper-belt twins claim the outer reaches" },
+  { year: 2840, type: "war", a: "Pluto-Charon Republic", b: "Triton Cooperative", region: { lat: [33, 38], lon: [137, 143] }, reinforce: 8,
+    message: "Outer-Dark War - the Kuiper polities clash for trans-Neptunian dominance" },
+  { year: 2870, type: "peace_treaty", a: "Pluto-Charon Republic", b: "Triton Cooperative",
+    message: "Kuiper Concord ends the Outer-Dark War" },
+  { year: 2900, civ: { name: "Oort Survey Charter", lat: 35.7, lon: 139.7, color: "#5a5acf" },
+    message: "Oort Survey Charter - the first probe missions to humanity's last solar frontier" },
+  { year: 2940, type: "alliance", a: "Europan Order", b: "Pan-Solar Diaspora",
+    message: "Subglacial Pact - all sub-ice colonies federate under the Diaspora charter" },
+  { year: 2980, type: "rename", from: "Mars Colony Authority", to: "Mars Greater Republic", color: "#c84a3a", spawnIfMissing: { lat: 28.4, lon: -80.6 },
+    message: "Mars Greater Republic - the Authority and Republic merge into a single greater Martian polity" },
+  { year: 3020, civ: { name: "Alpha Centauri Settlement Bureau", lat: 1.3, lon: 103.8, color: "#b8e84a" },
+    message: "Alpha Centauri Settlement Bureau - the first sleeper-ship missions reach Proxima b" },
+  { year: 3070, type: "war", a: "Solar Republic", b: "Pluto-Charon Republic", region: { lat: [33, 38], lon: [137, 143] }, reinforce: 12,
+    message: "Outer-Sphere War - the Solar Republic forces Kuiper compliance" },
+  { year: 3110, type: "peace_treaty", a: "Solar Republic", b: "Pluto-Charon Republic",
+    message: "Charon Treaty ends the Outer-Sphere War" },
+  { year: 3150, civ: { name: "Tau Ceti Mission", lat: 1.3, lon: 103.8, color: "#80e8b8" },
+    message: "Tau Ceti Mission - generation ships depart for humanity's second extrasolar world" },
+  { year: 3220, civ: { name: "Barnard's Star Colony", lat: 1.3, lon: 103.8, color: "#e89a4a" },
+    message: "Barnard's Star Colony established - red-dwarf habitable zone settled" },
+  { year: 3260, type: "alliance", a: "Centauri Authority", b: "Alpha Centauri Settlement Bureau",
+    message: "Centauri Unification - the colonies and the Authority merge under one charter" },
+  { year: 3320, type: "war", a: "Centauri Authority", b: "Tau Ceti Mission", region: { lat: [1, 3], lon: [102, 105] }, reinforce: 10,
+    message: "First Interstellar War - the Centaurians and the Tau Cetians fight over Earth-bound trade routes" },
+  { year: 3360, type: "peace_treaty", a: "Centauri Authority", b: "Tau Ceti Mission",
+    message: "Sol-Side Treaty ends the First Interstellar War" },
+  { year: 3400, civ: { name: "Epsilon Eridani Republic", lat: 1.3, lon: 103.8, color: "#e8b84a" },
+    message: "Epsilon Eridani Republic chartered - the third extrasolar colony declares sovereignty" },
+  { year: 3440, type: "alliance", a: "Tau Ceti Mission", b: "Epsilon Eridani Republic",
+    message: "Outer-Stars Pact - the second-wave extrasolar colonies federate" },
+  { year: 3480, civ: { name: "Wolf 359 Outpost", lat: 1.3, lon: 103.8, color: "#a06a4a" },
+    message: "Wolf 359 Outpost reports back - humanity's nearest red dwarf hosts a research settlement" },
+  { year: 3540, civ: { name: "Sirius Outer Reach", lat: 1.3, lon: 103.8, color: "#dde4ff" },
+    message: "Sirius Outer Reach - the brightest near-Earth star is reached by laser-sail probes" },
+  { year: 3590, type: "alliance", a: "Sirius Outer Reach", b: "Many-Worlds Federation",
+    message: "Sirius Compact - the brightest extrasolar settlement joins the Federation" },
+  { year: 3620, type: "war", a: "Many-Worlds Federation", b: "Pluto-Charon Republic", region: { lat: [33, 38], lon: [137, 143] }, reinforce: 14,
+    message: "Kuiper Reduction War - the Federation forcibly integrates the trans-Neptunian holdouts" },
+  { year: 3650, type: "peace_treaty", a: "Many-Worlds Federation", b: "Pluto-Charon Republic",
+    message: "Pluto Reintegration Treaty ends the Kuiper Reduction War" },
+  { year: 3680, civ: { name: "61 Cygni Republic", lat: 1.3, lon: 103.8, color: "#80acff" },
+    message: "61 Cygni Republic - the first 'binary-star' colony declares sovereignty" },
+  { year: 3740, type: "war", a: "Centauri Authority", b: "61 Cygni Republic", region: { lat: [1, 3], lon: [102, 105] }, reinforce: 12,
+    message: "Cygni-Centauri War - the binary-star colonists fight for trade autonomy" },
+  { year: 3770, type: "peace_treaty", a: "Centauri Authority", b: "61 Cygni Republic",
+    message: "Cygnus Concord ends the Cygni-Centauri War" },
+  { year: 3800, civ: { name: "Orion Frontier", lat: 1.3, lon: 103.8, color: "#5d8acf" },
+    message: "Orion Frontier - the first deep-Orion-arm settlements established" },
+  { year: 3850, civ: { name: "Galactic Trade Council", lat: 1.3, lon: 103.8, color: "#b8a4e8" },
+    message: "Galactic Trade Council formed - all extrasolar colonies sign a common trade charter" },
+  { year: 3880, type: "war", a: "Galactic Trade Council", b: "Sol Federation", region: { lat: [25, 45], lon: [-130, -60] }, reinforce: 16,
+    message: "Trade-Sovereignty War - Earth resists the new galactic trade rules" },
+  { year: 3920, type: "peace_treaty", a: "Galactic Trade Council", b: "Sol Federation",
+    message: "Geneva-Galactic Treaty ends the Trade-Sovereignty War" },
+  { year: 3960, civ: { name: "Andromeda Survey Charter", lat: 1.3, lon: 103.8, color: "#9b6ae8" },
+    message: "Andromeda Survey Charter - the first probes head for the neighboring galaxy" },
+  { year: 4030, civ: { name: "Galactic Senate", lat: 51.5, lon: -0.1, color: "#fff5cc" },
+    message: "Galactic Senate convened in London - the first interstellar legislature opens" },
+  { year: 4090, type: "war", a: "Galactic Senate", b: "Pluto-Charon Republic", region: { lat: [33, 38], lon: [137, 143] }, reinforce: 14,
+    message: "Senate Pacification War - the Galactic Senate enforces compliance on the Kuiper holdouts" },
+  { year: 4130, type: "peace_treaty", a: "Galactic Senate", b: "Pluto-Charon Republic",
+    message: "Senate Charter Treaty ends the Pacification War" },
+  { year: 4180, type: "rename", from: "Lunar Republic", to: "Lunar Ascendancy", color: "#a89678", spawnIfMissing: { lat: 32.9, lon: -106.5 },
+    message: "Lunar Ascendancy - the Moon proclaims itself a post-physical civilization" },
+  { year: 4220, type: "alliance", a: "Lunar Ascendancy", b: "Ascended Sol",
+    message: "Ascended Compact - the Moon and Earth federate as post-physical civilizations" },
+  { year: 4280, civ: { name: "Stellar Engineers Guild", lat: 1.3, lon: 103.8, color: "#fff5cc" },
+    message: "Stellar Engineers Guild incorporated - the first Dyson swarm construction begins around Tau Ceti" },
+  { year: 4320, type: "war", a: "Stellar Engineers Guild", b: "Tau Ceti Mission", region: { lat: [1, 3], lon: [102, 105] }, reinforce: 10,
+    message: "Dyson War - the Tau Cetians revolt against the Engineers' stellar enclosure" },
+  { year: 4350, type: "peace_treaty", a: "Stellar Engineers Guild", b: "Tau Ceti Mission",
+    message: "Tau Concord ends the Dyson War - partial swarm authorized" },
+  { year: 4380, civ: { name: "Ringworld Consortium", lat: 1.3, lon: 103.8, color: "#e8c075" },
+    message: "Ringworld Consortium - the first ringworld is laid down around Sirius" },
+  { year: 4450, civ: { name: "Wormhole Survey Charter", lat: 1.3, lon: 103.8, color: "#9b6ae8" },
+    message: "Wormhole Survey Charter - the first stable transit gates open between Sol and Centauri" },
+  { year: 4490, type: "alliance", a: "Wormhole Survey Charter", b: "Many-Worlds Federation",
+    message: "Wormhole Pact - the Federation adopts FTL gate routing" },
+  { year: 4530, type: "war", a: "Wormhole Survey Charter", b: "Galactic Trade Council", region: { lat: [1, 3], lon: [102, 105] }, reinforce: 12,
+    message: "Gate-Tariff War - the trade council and the gate-keepers contest interstellar tolls" },
+  { year: 4570, type: "peace_treaty", a: "Wormhole Survey Charter", b: "Galactic Trade Council",
+    message: "Gate Concord ends the Gate-Tariff War" },
+  { year: 4660, civ: { name: "Pleiades Settlement Cluster", lat: 1.3, lon: 103.8, color: "#aaccff" },
+    message: "Pleiades Settlement Cluster - the seven-star colony charter is signed" },
+  { year: 4700, type: "alliance", a: "Pleiades Settlement Cluster", b: "Galactic Senate",
+    message: "Pleiades-Senate Compact - the cluster joins the Galactic Senate" },
+  { year: 4730, type: "war", a: "Pleiades Settlement Cluster", b: "Centauri Authority", region: { lat: [1, 3], lon: [102, 105] }, reinforce: 12,
+    message: "Cluster War - the Pleiades and Centauri contest the inner Orion arm" },
+  { year: 4770, type: "peace_treaty", a: "Pleiades Settlement Cluster", b: "Centauri Authority",
+    message: "Orion-Arm Treaty ends the Cluster War" },
+  { year: 4830, civ: { name: "Galactic Watch", lat: 51.5, lon: -0.1, color: "#5da9e8" },
+    message: "Galactic Watch chartered - the first standing interstellar military force is mustered" },
+  { year: 5800, type: "spawn_after_nuke",
+    civ: { name: "Mantis Reach", lat: -10.0, lon: -55.0, color: "#5da94a" },
+    tileCount: 60,
+    message: "Mantis Reach emerges from the irradiated Amazon - insectoid survivors stake out the green-again jungle" },
+  { year: 6000, civ: { name: "Mars Successor State", lat: 28.4, lon: -80.6, color: "#c84a3a" },
+    message: "Mars Successor State proclaimed - the Red Planet's polities reorganize after the long silence from Earth" },
+  { year: 6200, civ: { name: "Lunar Successor", lat: 32.9, lon: -106.5, color: "#a89678" },
+    message: "Lunar Successor - the Moon's civilization survives the Earth collapse and reasserts itself" },
+  { year: 6400, type: "war", a: "Mars Successor State", b: "Lunar Successor", region: { lat: [27, 35], lon: [-110, -75] }, reinforce: 10,
+    message: "Inner-Worlds Reckoning War - Mars and the Moon contest the abandoned Earth orbit" },
+  { year: 6450, type: "peace_treaty", a: "Mars Successor State", b: "Lunar Successor",
+    message: "Earth-Watch Treaty ends the Reckoning War - shared stewardship of dead Earth" },
+  { year: 6600, civ: { name: "Centauri Successor Republic", lat: 1.3, lon: 103.8, color: "#b8e84a" },
+    message: "Centauri Successor Republic - the extrasolar colonies survive the Federation's collapse" },
+  { year: 6800, civ: { name: "Galactic Recovery Authority", lat: 51.5, lon: -0.1, color: "#fff5cc" },
+    message: "Galactic Recovery Authority - the surviving extrasolar polities form a recovery body" },
+  { year: 7000, type: "alliance", a: "Mars Successor State", b: "Centauri Successor Republic",
+    message: "Inter-Stellar Reconnection - direct contact resumed between Mars and Centauri after the silence" },
+  { year: 7200, civ: { name: "Squid Surface Authority", lat: -10.0, lon: 160.0, color: "#5d4ac4" },
+    message: "Squid Surface Authority - the squid civilization expands to colonize newly-flooded coastal lowlands" },
+  { year: 7400, type: "war", a: "Squid Surface Authority", b: "Cockroach Empire", region: { lat: [10, 30], lon: [85, 100] }, reinforce: 12,
+    message: "Land-Sea War - the squid surface forces clash with the cockroach empire over the Bengal coast" },
+  { year: 7450, type: "peace_treaty", a: "Squid Surface Authority", b: "Cockroach Empire",
+    message: "Coastline Treaty ends the Land-Sea War - the species split coast and inland" },
+  { year: 7600, type: "alliance", a: "Mantis Reach", b: "Cockroach Empire",
+    message: "Insectoid Pact - the surviving land insectoids federate" },
+  { year: 7800, civ: { name: "New Sol Federation", lat: 39, lon: -77, color: "#5da9e8" },
+    message: "New Sol Federation - a successor polity emerges from rebuilt Earth orbit infrastructure" },
+  { year: 8000, type: "alliance", a: "New Sol Federation", b: "Galactic Recovery Authority",
+    message: "Reunification Compact - Sol rejoins the galactic order after a millennium of silence" },
+  { year: 8200, type: "war", a: "New Sol Federation", b: "Squid Surface Authority", region: { lat: [-15, -5], lon: [155, 165] }, reinforce: 14,
+    message: "Reclamation War - the new Sol polity contests the squid claim to Earth's oceans" },
+  { year: 8260, type: "peace_treaty", a: "New Sol Federation", b: "Squid Surface Authority",
+    message: "Pacific Treaty ends the Reclamation War - shared planetary stewardship" },
+  { year: 8400, civ: { name: "Andromeda Forerunners", lat: 1.3, lon: 103.8, color: "#9b6ae8" },
+    message: "Andromeda Forerunners return - the first probes report back from the neighboring galaxy" },
+  { year: 8600, civ: { name: "Local-Group Authority", lat: 51.5, lon: -0.1, color: "#fff5cc" },
+    message: "Local-Group Authority chartered - the first inter-galactic legislative body" },
+  { year: 8800, type: "war", a: "Local-Group Authority", b: "Andromeda Forerunners", region: { lat: [40, 50], lon: [-1, 5] }, reinforce: 16,
+    message: "Local-Group War - the Andromeda settlers contest the Authority's charter" },
+  { year: 8870, type: "peace_treaty", a: "Local-Group Authority", b: "Andromeda Forerunners",
+    message: "Local-Group Concord ends the war" },
+  { year: 9000, type: "rename", from: "Cockroach Empire", to: "Roach Hegemony", color: "#3a2014", spawnIfMissing: { lat: 24.0, lon: 90.0 },
+    message: "Roach Hegemony - the cockroach civilization formalizes its empire after millennia" },
+  { year: 9200, type: "rename", from: "Squid Empire", to: "Squid Talassocracy", color: "#7d3ad8", spawnIfMissing: { lat: -10.0, lon: 160.0 },
+    message: "Squid Talassocracy proclaimed - the squid civilization formalizes its naval empire" },
+  { year: 9400, civ: { name: "Trans-Galactic Mission", lat: 1.3, lon: 103.8, color: "#aaccff" },
+    message: "Trans-Galactic Mission departs - humanity's farthest probe begins the crossing to a third galaxy" },
+  { year: 9600, type: "alliance", a: "Roach Hegemony", b: "Squid Talassocracy",
+    message: "Earth Pact - the two surviving Earth-side civilizations sign a common defense charter" },
+  { year: 9800, civ: { name: "Eternity Council", lat: 51.5, lon: -0.1, color: "#fff5cc" },
+    message: "Eternity Council convened - the longest-lived stewardship body in human history" },
+  { year: 9999, civ: { name: "Tenth-Millennium Compact", lat: 0.0, lon: 0.0, color: "#fff5cc" },
+    message: "Tenth-Millennium Compact - on the eve of year 10000, all surviving civilizations sign a single accord" },
 
   
 
@@ -1616,16 +1817,17 @@ function latLonToTile(lat, lon) {
   return { col: ((col % COLS) + COLS) % COLS, row: Math.max(0, Math.min(ROWS - 1, row)) };
 }
 
-function nearestLand(col, row) {
-  if (PASSABLE(MAP[row][col])) return { col, row };
-  for (let radius = 1; radius < 10; radius++) {
+function nearestLand(col, row, civ) {
+  const ok = (b) => civ && civ.aquaticOnly ? (b === "ocean") : PASSABLE(b);
+  if (ok(MAP[row][col])) return { col, row };
+  for (let radius = 1; radius < 14; radius++) {
     for (let dr = -radius; dr <= radius; dr++) {
       for (let dc = -radius; dc <= radius; dc++) {
         if (Math.abs(dr) !== radius && Math.abs(dc) !== radius) continue;
         const r = row + dr;
         if (r < 0 || r >= ROWS) continue;
         const c = ((col + dc) % COLS + COLS) % COLS;
-        if (PASSABLE(MAP[r][c])) return { col: c, row: r };
+        if (ok(MAP[r][c])) return { col: c, row: r };
       }
     }
   }
@@ -1958,8 +2160,8 @@ function tribalNameFromBiome(biome) {
 }
 
 function placeCivOnMap(civ, capitalCol, capitalRow, isStarting = true) {
-  
-  const { col, row } = nearestLand(capitalCol, capitalRow);
+
+  const { col, row } = nearestLand(capitalCol, capitalRow, civ);
   const settlement = {
     id: nextSettlementId++,
     col, row,
@@ -1971,10 +2173,11 @@ function placeCivOnMap(civ, capitalCol, capitalRow, isStarting = true) {
     walls: false,
   };
   civ.settlements.push(settlement);
-  
+
   state.ownership[row][col] = civ.id;
   for (const [nc, nr] of neighbors(col, row)) {
-    if (PASSABLE(MAP[nr][nc]) && state.ownership[nr][nc] === -1) {
+    const okBiome = civ.aquaticOnly ? (MAP[nr][nc] === "ocean") : PASSABLE(MAP[nr][nc]);
+    if (okBiome && state.ownership[nr][nc] === -1) {
       state.ownership[nr][nc] = civ.id;
     }
   }
@@ -3491,7 +3694,7 @@ function tick() {
 
     
     
-    const SPLIT_BLOCKLIST = new Set(["Rome", "Western Rome", "Romano-Goths", "Nuclear Wasteland", "Cockroach Empire", "Squid Empire"]);
+    const SPLIT_BLOCKLIST = new Set(["Rome", "Western Rome", "Romano-Goths", "Nuclear Wasteland", "Cockroach Tribe", "Cockroach Empire", "Squid Tribe", "Squid Empire"]);
     for (const civ of state.civs.slice()) {
       if (!civ.alive || civ.isPlayer) continue;
       if (civ.isStartingTribe) continue;
@@ -3613,10 +3816,6 @@ function aiTurn(civ) {
         }
       }
     } else if (civ.aquaticOnly) {
-      // Aquatic civs (Squid Empire) can't fight on land - their combat
-      // units expand by claiming adjacent unowned ocean tiles. Each
-      // tick, every army tries to claim ONE adjacent ocean tile, OR
-      // walks toward the nearest unowned ocean target if none neighbour.
       const ns = neighbors(army.col, army.row);
       let claimed = false;
       for (const [nc, nr] of ns) {
@@ -3632,12 +3831,22 @@ function aiTurn(civ) {
           const step = stepTowards(army.col, army.row, target.col, target.row, civ.id, false);
           if (step) tryMoveOrAttack(army, step.col, step.row);
         } else if (Math.random() < 0.3) {
-          // Random ocean wander.
           const oceanOpts = ns.filter(([c, r]) => MAP[r][c] === "ocean");
           if (oceanOpts.length) {
             const [nc, nr] = oceanOpts[Math.floor(Math.random() * oceanOpts.length)];
             tryMoveOrAttack(army, nc, nr);
           }
+        }
+      }
+      if (MAP[army.row][army.col] === "ocean" && state.ownership[army.row][army.col] === civ.id) {
+        let nearCity = false;
+        for (const s of civ.settlements) {
+          const dx = Math.abs(s.col - army.col);
+          const dy = Math.abs(s.row - army.row);
+          if (Math.max(dx, dy) < 6) { nearCity = true; break; }
+        }
+        if (!nearCity && civ.settlements.length < 60 && Math.random() < 0.04) {
+          placeCivOnMap(civ, army.col, army.row, false);
         }
       }
     } else {
@@ -3725,7 +3934,8 @@ function playerLeaderAssist(civ) {
 
     if (army.type === "settler") {
 
-      if (state.ownership[army.row][army.col] === -1 && PASSABLE(MAP[army.row][army.col])) {
+      const settlerOk = civ.aquaticOnly ? (MAP[army.row][army.col] === "ocean") : PASSABLE(MAP[army.row][army.col]);
+      if (state.ownership[army.row][army.col] === -1 && settlerOk) {
         placeCivOnMap(civ, army.col, army.row, false);
         const i = civ.armies.indexOf(army);
         if (i >= 0) civ.armies.splice(i, 1);
@@ -4235,8 +4445,8 @@ function checkCapitulation(loser, winner) {
     // when defeated - the post-apocalypse civs (Wasteland, Cockroach,
     // Squid) would otherwise resurrect USA / Russia / etc the moment
     // they lose a single skirmish.
-    const NO_FRAGMENT = new Set(["Nuclear Wasteland", "Cockroach Empire", "Squid Empire"]);
-    if (NO_FRAGMENT.has(loser.name)) {
+    const NO_FRAGMENT = new Set(["Nuclear Wasteland", "Cockroach Tribe", "Cockroach Empire", "Squid Tribe", "Squid Empire"]);
+    if (NO_FRAGMENT.has(loser.name) || (loser.previousNames || []).some(n => NO_FRAGMENT.has(n))) {
       if (winner && winner.alive) {
         for (let r = 0; r < ROWS; r++) {
           for (let c = 0; c < COLS; c++) {
