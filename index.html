@@ -1183,6 +1183,15 @@
     </div>
   </div>
 
+  <!-- Solar system overview modal -->
+  <div id="solar-system-modal" style="display:none;position:fixed;inset:0;background:radial-gradient(circle at 50% 50%, #08060a 0%, #02010c 80%);z-index:550;color:#cfbf95;font-family:Georgia,serif;">
+    <button id="solar-system-close" style="position:absolute;top:16px;right:20px;background:#3a2a14;border:1px solid #6a5a3c;color:#fff5cc;padding:6px 14px;cursor:pointer;letter-spacing:2px;font-family:Georgia,serif;">CLOSE</button>
+    <h2 style="text-align:center;margin:24px 0 6px;color:#ffd24a;letter-spacing:8px;">— SOLAR SYSTEM —</h2>
+    <div id="solar-system-year" style="text-align:center;font-size:13px;color:#a89678;margin-bottom:18px;">—</div>
+    <div id="solar-system-bodies" style="display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:18px 32px;padding:0 30px 60px;"></div>
+    <div style="position:absolute;bottom:18px;left:0;right:0;text-align:center;font-size:11px;color:#5a4a32;">Click a planet/moon to view its dominant civilization in the country panel.</div>
+  </div>
+
   <!-- Customization modal -->
   <div id="customize-modal" class="hidden">
     <div class="cm-card">
@@ -1324,6 +1333,7 @@
     <div style="text-align:center;color:#8a7a5c;font-size:10px;margin-top:4px;">Space = pause/play · 1-5 = speed</div>
     <div style="display:flex;gap:6px;margin-top:8px;">
       <button id="faction-mode-btn" class="speed-btn" style="flex:1;font-size:11px;letter-spacing:1px;">FACTION MAP</button>
+      <button id="solar-system-btn" class="speed-btn" style="flex:1;font-size:11px;letter-spacing:1px;">SOLAR SYSTEM</button>
     </div>
     <div style="display:flex;gap:6px;margin-top:6px;">
       <button id="frontline-draw-btn" class="speed-btn" style="flex:1;font-size:11px;letter-spacing:1px;" title="Click to enter frontline-target mode; then click a neighbouring country's tile to mark its border as your front line.">ADD FRONT LINE</button>

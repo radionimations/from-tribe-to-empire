@@ -826,6 +826,22 @@ const HISTORICAL_EVENTS = [
     message: "Mars declares full independence - the Mars Republic is born" },
   { year: 2400, civ: { name: "Asteroid Belt Coalition", lat: 47.6, lon: -122.3, color: "#a8a8a8" },
     message: "Asteroid Belt Coalition opens an Earth-side embassy in Seattle" },
+  { year: 2420, type: "alliance", a: "Mars Republic", b: "Mars Colony Authority",
+    message: "Mars terraforming Phase I - greenhouse atmosphere project begins" },
+  { year: 2520, type: "alliance", a: "Mars Republic", b: "Lunar Republic",
+    message: "Mars terraforming Phase II - first liquid water seas on Hellas" },
+  { year: 2640, type: "alliance", a: "Mars Republic", b: "Asteroid Belt Coalition",
+    message: "Mars terraforming complete - the Red Planet turns blue and green" },
+  { year: 2780, civ: { name: "Venus Sky-Cities", lat: 4.6, lon: -74.0, color: "#e8c020" },
+    message: "Venus Sky-Cities terraforming begins - aerostat colonies seed sulphuric clouds" },
+  { year: 2950, type: "alliance", a: "Saturn Moons Confederation", b: "Mars Republic",
+    message: "Europa terraforming begins under the ice shell" },
+  { year: 3080, type: "rename", from: "Venus Sky-Cities", to: "Republic of Venus", color: "#3a8a4a", spawnIfMissing: { lat: 4.6, lon: -74.0 },
+    message: "Venus terraforming complete - the Republic of Venus is proclaimed" },
+  { year: 3300, type: "alliance", a: "Centauri Authority", b: "Sol Federation",
+    message: "Proxima Centauri b terraforming begins under Centauri Authority charter" },
+  { year: 3450, type: "rename", from: "Asteroid Belt Coalition", to: "Belt Hollow Republic", color: "#a8a8a8", spawnIfMissing: { lat: 47.6, lon: -122.3 },
+    message: "Asteroid Belt terraforming - mass-driven hollow-rock habitats finished" },
   { year: 2440, type: "alliance", a: "Mars Republic", b: "USA",
     message: "Earth-Mars Compact - permanent peace and shared infrastructure" },
   { year: 2500, type: "peace_treaty", a: "Eurasian Republic", b: "USA",
@@ -7144,6 +7160,90 @@ if (_factionBtn) {
     render();
   });
 }
+
+const SOLAR_BODIES = [
+  { name: "Sun",     color: "#ffd24a", radius: 56, dominator: null,                       isOrbit: false, parent: null   },
+  { name: "Mercury", color: "#a89678", radius: 14, dominator: null,                       isOrbit: true,  parent: "Sun"  },
+  { name: "Venus",   color: "#e8c020", radius: 22, dominator: null,                       isOrbit: true,  parent: "Sun"  },
+  { name: "Earth",   color: "#3a8a4a", radius: 24, dominator: "<largest>",                isOrbit: true,  parent: "Sun"  },
+  { name: "Moon",    color: "#cfcfcf", radius: 10, dominator: "Lunar Republic",           isOrbit: true,  parent: "Earth"},
+  { name: "Mars",    color: "#c84a3a", radius: 20, dominator: "Mars Republic",            isOrbit: true,  parent: "Sun"  },
+  { name: "Phobos",  color: "#7a5a3a", radius: 6,  dominator: "Mars Republic",            isOrbit: true,  parent: "Mars" },
+  { name: "Deimos",  color: "#7a5a3a", radius: 5,  dominator: "Mars Republic",            isOrbit: true,  parent: "Mars" },
+  { name: "Asteroid Belt", color: "#a8a8a8", radius: 10, dominator: "Asteroid Belt Coalition", isOrbit: true, parent: "Sun" },
+  { name: "Jupiter", color: "#d4b85a", radius: 46, dominator: null,                       isOrbit: true,  parent: "Sun"  },
+  { name: "Europa",  color: "#cfe4ff", radius: 8,  dominator: null,                       isOrbit: true,  parent: "Jupiter" },
+  { name: "Saturn",  color: "#e8c075", radius: 40, dominator: "Saturn Moons Confederation", isOrbit: true, parent: "Sun" },
+  { name: "Titan",   color: "#d4a657", radius: 9,  dominator: "Saturn Moons Confederation", isOrbit: true, parent: "Saturn" },
+  { name: "Uranus",  color: "#5dc4e8", radius: 30, dominator: null,                       isOrbit: true,  parent: "Sun"  },
+  { name: "Neptune", color: "#3a6ad8", radius: 30, dominator: null,                       isOrbit: true,  parent: "Sun"  },
+  { name: "Pluto",   color: "#a89678", radius: 8,  dominator: null,                       isOrbit: true,  parent: "Sun"  },
+  { name: "Proxima Centauri b", color: "#7d3ad8", radius: 18, dominator: "Centauri Authority", isOrbit: true, parent: "(deep space)" },
+];
+function resolveDominator(b) {
+  if (b.dominator === "<largest>") {
+    let best = null, bestT = -1;
+    for (const c of state.civs) {
+      if (!c.alive) continue;
+      const t = countTiles(c);
+      if (t > bestT) { bestT = t; best = c; }
+    }
+    return best;
+  }
+  if (!b.dominator) return null;
+  return state.civs.find(c => c.alive && (c.name === b.dominator || (c.previousNames || []).includes(b.dominator))) || null;
+}
+function openSolarSystem() {
+  const modal = document.getElementById("solar-system-modal");
+  if (!modal) return;
+  modal.style.display = "block";
+  document.getElementById("solar-system-year").textContent = yearLabel(Math.floor(state.year));
+  const container = document.getElementById("solar-system-bodies");
+  container.innerHTML = "";
+  for (const body of SOLAR_BODIES) {
+    const dom = resolveDominator(body);
+    const card = document.createElement("div");
+    card.style.cssText = "display:flex;flex-direction:column;align-items:center;cursor:" + (dom ? "pointer" : "default") + ";min-width:96px;";
+    const cv = document.createElement("canvas");
+    cv.width = 96; cv.height = 96;
+    const cx = cv.getContext("2d");
+    cx.clearRect(0, 0, 96, 96);
+    const r = body.radius;
+    const g = cx.createRadialGradient(48 - r * 0.3, 48 - r * 0.3, r * 0.1, 48, 48, r);
+    g.addColorStop(0, "#ffffff");
+    g.addColorStop(0.15, body.color);
+    g.addColorStop(1, "#000");
+    cx.fillStyle = g;
+    cx.beginPath(); cx.arc(48, 48, r, 0, Math.PI * 2); cx.fill();
+    if (body.name === "Saturn") {
+      cx.strokeStyle = "rgba(255, 220, 150, 0.5)";
+      cx.lineWidth = 2;
+      cx.beginPath(); cx.ellipse(48, 48, r * 1.6, r * 0.45, 0, 0, Math.PI * 2); cx.stroke();
+    }
+    card.appendChild(cv);
+    const nm = document.createElement("div");
+    nm.textContent = body.name;
+    nm.style.cssText = "color:#ffd24a;font-size:13px;letter-spacing:2px;margin-top:4px;";
+    card.appendChild(nm);
+    const sub = document.createElement("div");
+    sub.textContent = dom ? dom.name : "Uninhabited";
+    sub.style.cssText = "color:" + (dom ? "#cfbf95" : "#5a4a32") + ";font-size:10px;margin-top:2px;text-align:center;max-width:140px;";
+    card.appendChild(sub);
+    if (dom) {
+      card.addEventListener("click", () => {
+        modal.style.display = "none";
+        showCountryPanel(dom);
+      });
+    }
+    container.appendChild(card);
+  }
+}
+const _solarBtn = document.getElementById("solar-system-btn");
+if (_solarBtn) _solarBtn.addEventListener("click", openSolarSystem);
+const _solarClose = document.getElementById("solar-system-close");
+if (_solarClose) _solarClose.addEventListener("click", () => {
+  document.getElementById("solar-system-modal").style.display = "none";
+});
 
 const _frontlineDrawBtn = document.getElementById("frontline-draw-btn");
 const _frontlineClearBtn = document.getElementById("frontline-clear-btn");
