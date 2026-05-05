@@ -195,6 +195,38 @@ const HISTORICAL_EVENTS = [
   
   { year: -999, type: "alliance", a: "Polans", b: "Balts", message: "Polans and Balts swear a non-aggression pact - the seed of every later Polish-Lithuanian union" },
 
+  { year: -750, civ: { name: "Kingdom of Kush", lat: 18.5, lon: 31.8, color: "#a06bff" }, replaces: "Kush",
+    message: "Kingdom of Kush rises at Napata - the Nubian state asserts itself south of Egypt" },
+  { year: -727, type: "claim", civ: "Kingdom of Kush", region: { lat: [15, 30], lon: [25, 38] },
+    message: "Kushite Pharaohs of the 25th Dynasty conquer Egypt" },
+  { year: -591, type: "claim", civ: "Kingdom of Kush", region: { lat: [10, 22], lon: [28, 38] },
+    message: "Kingdom of Kush retreats south to Meroe after losing Egypt" },
+  { year: -300, civ: { name: "Meroitic Kingdom", lat: 16.93, lon: 33.72, color: "#9054e8" }, replaces: "Kingdom of Kush",
+    message: "Meroitic Kingdom proclaimed - Kush relocates fully to Meroe and forges its own script" },
+  { year: -100, type: "claim", civ: "Meroitic Kingdom", region: { lat: [10, 22], lon: [25, 40] },
+    message: "Meroitic Kingdom controls the entire Middle Nile and Red Sea trade" },
+  { year: 350, type: "secede", target: "Meroitic Kingdom", civ: "Nobatia",
+    spawn: { name: "Nobatia", lat: 21.0, lon: 31.5, color: "#7d3ad8" },
+    region: { lat: [20, 24], lon: [29, 33] },
+    message: "Nobatia secedes from the collapsing Meroitic Kingdom in Lower Nubia" },
+  { year: 360, type: "secede", target: "Meroitic Kingdom", civ: "Makuria",
+    spawn: { name: "Makuria", lat: 18.5, lon: 31.8, color: "#a06bff" },
+    region: { lat: [16, 21], lon: [29, 33] },
+    message: "Makuria secedes from the collapsing Meroitic Kingdom in Middle Nubia" },
+  { year: 370, type: "secede", target: "Meroitic Kingdom", civ: "Alodia",
+    spawn: { name: "Alodia", lat: 15.6, lon: 32.5, color: "#5d3ac4" },
+    region: { lat: [12, 17], lon: [30, 36] },
+    message: "Alodia rises in Upper Nubia as the Meroitic Kingdom finally falls" },
+  { year: 700, type: "merge", from: ["Nobatia", "Makuria"], to: { name: "Greater Makuria", color: "#a06bff" },
+    message: "Greater Makuria - Nobatia and Makuria unite against Arab raids" },
+  { year: 1317, civ: { name: "Sennar Sultanate", lat: 13.55, lon: 33.62, color: "#7a5a3a" }, replaces: "Greater Makuria",
+    message: "Sennar Sultanate - the Funj clans displace the last Christian Nubian kingdom" },
+  { year: 1504, type: "claim", civ: "Sennar Sultanate", region: { lat: [10, 18], lon: [30, 38] },
+    message: "Sennar Sultanate consolidates the Middle Nile" },
+  { year: 1820, type: "absorb", absorber: "Ottomans", target: "Sennar Sultanate",
+    message: "Ottoman Egypt conquers the Sennar Sultanate - Nubia falls under Ottoman-Egyptian rule" },
+
+
   
 
   
@@ -1058,61 +1090,77 @@ const HISTORICAL_EVENTS = [
     message: "First Cislunar War - Chinese orbital strikes contest the lunar Helium-3 monopoly" },
   { year: 2138, type: "peace_treaty", a: "Lunar Republic", b: "People's Republic of China",
     message: "Tycho Treaty ends the First Cislunar War - lunar mining quotas established" },
-  { year: 2170, civ: { name: "L5 Habitat League", lat: 28.4, lon: -80.6, color: "#9bb8d4" },
+  { year: 2170, civ: { name: "L5 Habitat League", lat: 28.4, lon: -80.6, color: "#9bb8d4", planet: "Moon" },
     message: "L5 Habitat League founded - the first permanent O'Neill cylinders open at the Earth-Moon Lagrange point" },
+  { year: 2185, civ: { name: "Mercury Solar Authority", lat: 0.0, lon: 0.0, color: "#a89678", planet: "Mercury" },
+    message: "Mercury Solar Authority - sun-shaded basins host the first permanent solar-furnace colonies" },
   { year: 2200, type: "alliance", a: "Mars Colony Authority", b: "Lunar Republic",
     message: "Inner Worlds Pact - Mars and the Moon coordinate orbital infrastructure" },
-  { year: 2230, civ: { name: "Phobos Mining Guild", lat: 28.4, lon: -80.6, color: "#7a5a3a" },
+  { year: 2230, civ: { name: "Phobos Mining Guild", lat: 0.0, lon: 0.0, color: "#7a5a3a", planet: "Phobos" },
     message: "Phobos Mining Guild incorporated - the Martian moons become humanity's first deep-space industrial hub" },
+  { year: 2245, civ: { name: "Deimos Watchtower", lat: 10.0, lon: 30.0, color: "#8a6a4a", planet: "Deimos" },
+    message: "Deimos Watchtower - the smaller Martian moon hosts the system's first long-baseline observatory" },
   { year: 2260, type: "war", a: "Phobos Mining Guild", b: "Mars Colony Authority", region: { lat: [25, 32], lon: [-82, -77] }, reinforce: 6,
     message: "Phobos Strike - the moon-miners revolt against Mars Authority taxation" },
   { year: 2275, type: "peace_treaty", a: "Phobos Mining Guild", b: "Mars Colony Authority",
     message: "Olympus Accord recognizes Phobos autonomy" },
-  { year: 2310, civ: { name: "Ceres Free Port", lat: 47.6, lon: -122.3, color: "#c4c4a8" },
+  { year: 2310, civ: { name: "Ceres Free Port", lat: 0.0, lon: 0.0, color: "#c4c4a8", planet: "Asteroid Belt" },
     message: "Ceres Free Port chartered - the largest asteroid becomes a tax-free trade hub" },
+  { year: 2370, civ: { name: "Io Volcanic League", lat: 0.0, lon: 0.0, color: "#e8c020", planet: "Io" },
+    message: "Io Volcanic League - sulphur-mining outposts cluster around the Loki Patera" },
+  { year: 2375, civ: { name: "Ganymede Free State", lat: 0.0, lon: 0.0, color: "#a89678", planet: "Ganymede" },
+    message: "Ganymede Free State - the largest moon's magnetic shelter hosts a sovereign settlement" },
   { year: 2340, type: "war", a: "Mars Republic", b: "Lunar Republic", region: { lat: [27, 33], lon: [-82, -77] }, reinforce: 10,
     message: "Independence War - Mars secedes by force from joint Lunar-Earth oversight" },
   { year: 2355, type: "peace_treaty", a: "Mars Republic", b: "Lunar Republic",
     message: "Hellas Accord recognizes Mars as a sovereign state" },
-  { year: 2390, civ: { name: "Jovian Trojans Authority", lat: 35.7, lon: 139.7, color: "#c4a880" },
+  { year: 2390, civ: { name: "Jovian Trojans Authority", lat: 20.0, lon: -90.0, color: "#c4a880", planet: "Asteroid Belt" },
     message: "Jovian Trojans Authority chartered - the L4/L5 asteroid clusters of Jupiter become a sovereign zone" },
   { year: 2425, type: "war", a: "Jovian Trojans Authority", b: "Asteroid Belt Coalition", region: { lat: [40, 50], lon: [-125, -110] }, reinforce: 8,
     message: "Trojan-Belt War - rival prospectors clash over the icy Jovian asteroids" },
   { year: 2450, type: "peace_treaty", a: "Jovian Trojans Authority", b: "Asteroid Belt Coalition",
     message: "Galilean Concord ends the Trojan-Belt War" },
-  { year: 2480, civ: { name: "Callisto Settlement", lat: 35.7, lon: 139.7, color: "#a89070" },
+  { year: 2480, civ: { name: "Callisto Settlement", lat: 0.0, lon: 0.0, color: "#a89070", planet: "Callisto" },
     message: "Callisto Settlement opened - Jupiter's outer moon becomes humanity's deepest planetary outpost" },
   { year: 2510, type: "alliance", a: "Mars Republic", b: "Phobos Mining Guild",
     message: "Mars-Phobos Reunification Pact - the Martian moons rejoin the Mars sphere" },
-  { year: 2555, civ: { name: "Europan Order", lat: 35.7, lon: 139.7, color: "#3a8acf" },
+  { year: 2555, civ: { name: "Europan Order", lat: 0.0, lon: 0.0, color: "#3a8acf", planet: "Europa" },
     message: "Europan Order founded - the first sub-ice colonies harvest Europa's hidden ocean" },
+  { year: 2580, civ: { name: "Mimas Cold Republic", lat: 0.0, lon: 0.0, color: "#d4d4e8", planet: "Mimas" },
+    message: "Mimas Cold Republic - the smallest spherical moon hosts a low-gravity research enclave" },
   { year: 2590, type: "war", a: "Europan Order", b: "Saturn Moons Confederation", region: { lat: [35, 40], lon: [135, 145] }, reinforce: 10,
     message: "Outer Moons War - the Europans contest Saturn's claim to the gas-giant moons" },
   { year: 2615, type: "peace_treaty", a: "Europan Order", b: "Saturn Moons Confederation",
     message: "Cassini Accord ends the Outer Moons War" },
   { year: 2660, type: "alliance", a: "L5 Habitat League", b: "Lunar Republic",
     message: "Cislunar Concord - the orbital habitats federate with the lunar government" },
-  { year: 2690, civ: { name: "Triton Cooperative", lat: 35.7, lon: 139.7, color: "#5d8acf" },
+  { year: 2670, civ: { name: "Titan Methanate Republic", lat: 0.0, lon: 0.0, color: "#d4a657", planet: "Titan" },
+    message: "Titan Methanate Republic - the methane-lake colonies declare independence from the Saturn Confederation" },
+  { year: 2685, civ: { name: "Uranus Tilt League", lat: 0.0, lon: 0.0, color: "#5dc4e8", planet: "Uranus" },
+    message: "Uranus Tilt League - cloud-city aerostat collectives chartered in the ice giant's upper atmosphere" },
+  { year: 2690, civ: { name: "Triton Cooperative", lat: 0.0, lon: 0.0, color: "#5d8acf", planet: "Triton" },
     message: "Triton Cooperative chartered - Neptune's moon becomes humanity's first colony beyond the gas giants" },
+  { year: 2705, civ: { name: "Neptune Storm Council", lat: 0.0, lon: 0.0, color: "#3a6ad8", planet: "Neptune" },
+    message: "Neptune Storm Council - the Great Dark Spot's pressure-gradient power stations form a sovereign body" },
   { year: 2720, type: "war", a: "Saturn Moons Confederation", b: "Mars Republic", region: { lat: [25, 35], lon: [-82, -75] }, reinforce: 12,
     message: "Saturnian-Martian War - the gas-giant powers reach inward against the Red Planet" },
   { year: 2745, type: "peace_treaty", a: "Saturn Moons Confederation", b: "Mars Republic",
     message: "Encke Treaty ends the Saturnian-Martian War" },
   { year: 2790, type: "alliance", a: "Venus Sky-Cities", b: "Mars Republic",
     message: "Inner-Worlds Triumvirate - Venus, Mars, and Earth coordinate inner-system terraforming" },
-  { year: 2810, civ: { name: "Pluto-Charon Republic", lat: 35.7, lon: 139.7, color: "#9a6acf" },
+  { year: 2810, civ: { name: "Pluto-Charon Republic", lat: 0.0, lon: 0.0, color: "#9a6acf", planet: "Pluto" },
     message: "Pluto-Charon Republic declared - the Kuiper-belt twins claim the outer reaches" },
   { year: 2840, type: "war", a: "Pluto-Charon Republic", b: "Triton Cooperative", region: { lat: [33, 38], lon: [137, 143] }, reinforce: 8,
     message: "Outer-Dark War - the Kuiper polities clash for trans-Neptunian dominance" },
   { year: 2870, type: "peace_treaty", a: "Pluto-Charon Republic", b: "Triton Cooperative",
     message: "Kuiper Concord ends the Outer-Dark War" },
-  { year: 2900, civ: { name: "Oort Survey Charter", lat: 35.7, lon: 139.7, color: "#5a5acf" },
+  { year: 2900, civ: { name: "Oort Survey Charter", lat: 0.0, lon: 0.0, color: "#5a5acf", planet: "Pluto" },
     message: "Oort Survey Charter - the first probe missions to humanity's last solar frontier" },
   { year: 2940, type: "alliance", a: "Europan Order", b: "Pan-Solar Diaspora",
     message: "Subglacial Pact - all sub-ice colonies federate under the Diaspora charter" },
   { year: 2980, type: "rename", from: "Mars Colony Authority", to: "Mars Greater Republic", color: "#c84a3a", spawnIfMissing: { lat: 28.4, lon: -80.6 },
     message: "Mars Greater Republic - the Authority and Republic merge into a single greater Martian polity" },
-  { year: 3020, civ: { name: "Alpha Centauri Settlement Bureau", lat: 1.3, lon: 103.8, color: "#b8e84a" },
+  { year: 3020, civ: { name: "Alpha Centauri Settlement Bureau", lat: 0.0, lon: 0.0, color: "#b8e84a", planet: "Proxima Centauri b" },
     message: "Alpha Centauri Settlement Bureau - the first sleeper-ship missions reach Proxima b" },
   { year: 3070, type: "war", a: "Solar Republic", b: "Pluto-Charon Republic", region: { lat: [33, 38], lon: [137, 143] }, reinforce: 12,
     message: "Outer-Sphere War - the Solar Republic forces Kuiper compliance" },
@@ -3235,34 +3283,66 @@ function fireEvent(ev) {
   if (!ev.civ) return;
   const lat = ev.civ.lat, lon = ev.civ.lon;
 
-  
+
   if (typeof lat !== "number" || typeof lon !== "number") {
     log("event", ev.message + " - but no successor state could form (predecessor is gone).");
     return;
   }
   const { col, row } = latLonToTile(lat, lon);
 
-  
-  
+
   const civ = makeCiv({ name: ev.civ.name, color: ev.civ.color });
   state.civs.push(civ);
 
-  
   civ.era = yearToEra(state.year);
   civ.techPoints = ERAS[civ.era].threshold;
-  applyFlagColor(civ);   
+  applyFlagColor(civ);
   for (const c of state.civs) {
     if (c.id !== civ.id) {
       civ.relations[c.id] = 0;
       c.relations[civ.id] = 0;
     }
   }
-  const s = placeCivOnMap(civ, col, row);
-  s.pop = 4;
-  civ.armies.push({
-    id: nextArmyId++, col: s.col, row: s.row,
-    type: bestUnitForEra(civ.era), count: 3, civId: civ.id, moves: 1,
-  });
+  const targetPlanet = ev.civ.planet || "Earth";
+  if (targetPlanet !== "Earth") {
+    if (!state.planetOwnership) state.planetOwnership = {};
+    if (!state.planetOwnership[targetPlanet]) {
+      state.planetOwnership[targetPlanet] = rebuildPlanetOwnership(targetPlanet);
+    }
+    const grid = state.planetOwnership[targetPlanet];
+    const seedCol = Math.max(0, Math.min(COLS - 1, col));
+    const seedRow = Math.max(0, Math.min(ROWS - 1, row));
+    const queue = [[seedCol, seedRow]];
+    const seen = new Set([seedRow * COLS + seedCol]);
+    let claimed = 0;
+    while (queue.length && claimed < 18) {
+      const [c, r] = queue.shift();
+      if (r < 0 || r >= ROWS || c < 0 || c >= COLS) continue;
+      if (grid[r][c] !== -1) continue;
+      grid[r][c] = civ.id;
+      claimed++;
+      for (const [nc, nr] of neighbors(c, r)) {
+        const k = nr * COLS + nc;
+        if (!seen.has(k)) { seen.add(k); queue.push([nc, nr]); }
+      }
+    }
+    civ.settlements.push({
+      id: nextSettlementId++, col: seedCol, row: seedRow,
+      name: ev.civ.name + " Hub",
+      pop: 4, food: 0, prod: 0, queue: [], walls: false, planet: targetPlanet,
+    });
+    civ.armies.push({
+      id: nextArmyId++, col: seedCol, row: seedRow,
+      type: bestUnitForEra(civ.era), count: 3, civId: civ.id, moves: 1, planet: targetPlanet,
+    });
+  } else {
+    const s = placeCivOnMap(civ, col, row);
+    s.pop = 4;
+    civ.armies.push({
+      id: nextArmyId++, col: s.col, row: s.row,
+      type: bestUnitForEra(civ.era), count: 3, civId: civ.id, moves: 1,
+    });
+  }
   log("event", ev.message);
   invalidateTintCache();
 }
@@ -8565,21 +8645,26 @@ function zoomIntoPlanet(bodyName) {
 // them (so e.g. Mars Republic + Mars Colony Authority each get a
 // chunk of Mars).
 const PLANET_RESIDENTS = {
-  "Mercury": [],
+  "Mercury": ["Mercury Solar Authority"],
   "Venus":   ["Republic of Venus", "Venus Sky-Cities"],
-  "Moon":    ["Lunar Republic"],
+  "Moon":    ["Lunar Republic", "L5 Habitat League"],
   "Mars":    ["Mars Republic", "Mars Colony Authority"],
-  "Phobos":  ["Mars Republic"],
-  "Deimos":  ["Mars Republic"],
-  "Asteroid Belt": ["Belt Hollow Republic", "Asteroid Belt Coalition"],
+  "Phobos":  ["Mars Republic", "Phobos Mining Guild"],
+  "Deimos":  ["Mars Republic", "Deimos Watchtower"],
+  "Asteroid Belt": ["Belt Hollow Republic", "Asteroid Belt Coalition", "Ceres Free Port", "Jovian Trojans Authority"],
   "Jupiter": [],
-  "Europa":  ["Saturn Moons Confederation"],
+  "Io":      ["Io Volcanic League"],
+  "Europa":  ["Saturn Moons Confederation", "Europan Order"],
+  "Ganymede":["Ganymede Free State"],
+  "Callisto":["Callisto Settlement"],
   "Saturn":  ["Saturn Moons Confederation"],
-  "Titan":   ["Saturn Moons Confederation"],
-  "Uranus":  [],
-  "Neptune": [],
-  "Pluto":   [],
-  "Proxima Centauri b": ["Centauri Authority"],
+  "Mimas":   ["Mimas Cold Republic"],
+  "Titan":   ["Saturn Moons Confederation", "Titan Methanate Republic"],
+  "Uranus":  ["Uranus Tilt League"],
+  "Neptune": ["Neptune Storm Council"],
+  "Triton":  ["Triton Cooperative"],
+  "Pluto":   ["Pluto-Charon Republic", "Oort Survey Charter"],
+  "Proxima Centauri b": ["Centauri Authority", "Alpha Centauri Settlement Bureau"],
 };
 
 function rebuildPlanetOwnership(bodyName) {
