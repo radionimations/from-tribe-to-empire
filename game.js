@@ -6584,7 +6584,7 @@ function renderTileInfo() {
 
   let actions = "";
   const player = state.civs[0];
-  if (state.debug || !player || !player.isPlayer) {
+  if (!player || !player.isPlayer) {
     actEl.innerHTML = "";
     return;
   }
@@ -8314,15 +8314,15 @@ const SOLAR_ORBITS = [
   { name: "Deimos",             color: "#7a5a3a", au: 0.00016,  size: 2,  angle: 4.0,  parent: "Mars",   dominator: "Mars Republic",                   texture: "https://upload.wikimedia.org/wikipedia/commons/7/72/Deimos_map_by_Askaniy.png" },
   { name: "Asteroid Belt",      color: "#a8a8a8", au: 2.7,      size: 4,  angle: 4.0,  parent: "Sun",    dominator: "Asteroid Belt Coalition",         texture: null },
   { name: "Jupiter",            color: "#d4b85a", au: 5.2,      size: 16, angle: 4.7,  parent: "Sun",    dominator: null,                              texture: "https://www.solarsystemscope.com/images/textures/full/2k_jupiter.jpg" },
-  { name: "Io",                 color: "#e8c020", au: 0.00282,  size: 3,  angle: 0.7,  parent: "Jupiter", dominator: null,                             texture: null },
-  { name: "Europa",             color: "#cfe4ff", au: 0.00448,  size: 3,  angle: 1.2,  parent: "Jupiter", dominator: null,                             texture: "https://upload.wikimedia.org/wikipedia/commons/a/a1/Europa_-_November_25%2C_1999_%2826428520994%29.jpg" },
+  { name: "Io",                 color: "#e8c020", au: 0.00282,  size: 3,  angle: 0.7,  parent: "Jupiter", dominator: null,                             texture: "https://upload.wikimedia.org/wikipedia/commons/e/e4/Io_from_Galileo_and_Voyager_missions.jpg" },
+  { name: "Europa",             color: "#cfe4ff", au: 0.00448,  size: 3,  angle: 1.2,  parent: "Jupiter", dominator: null,                             texture: "https://upload.wikimedia.org/wikipedia/commons/7/74/Jupiter_II-Europa_map_NASA_JPL_Voyager.jpg" },
   { name: "Ganymede",           color: "#a89678", au: 0.00715,  size: 4,  angle: 2.0,  parent: "Jupiter", dominator: null,                             texture: "https://upload.wikimedia.org/wikipedia/commons/8/81/Ganymede_map_by_Askaniy.png" },
   { name: "Callisto",           color: "#7a6a5a", au: 0.01258,  size: 4,  angle: 4.5,  parent: "Jupiter", dominator: null,                             texture: "https://upload.wikimedia.org/wikipedia/commons/a/a1/Callisto_map_by_Askaniy.png" },
   { name: "Saturn",             color: "#e8c075", au: 9.58,     size: 14, angle: 5.4,  parent: "Sun",    dominator: "Saturn Moons Confederation",      texture: "https://www.solarsystemscope.com/images/textures/full/2k_saturn.jpg" },
   { name: "Mimas",              color: "#cfcfcf", au: 0.00124,  size: 2,  angle: 1.5,  parent: "Saturn", dominator: "Saturn Moons Confederation",      texture: "https://upload.wikimedia.org/wikipedia/commons/5/5a/Map_of_Mimas_2010-02_PIA12780.jpg" },
   { name: "Titan",              color: "#d4a657", au: 0.00817,  size: 3,  angle: 2.5,  parent: "Saturn", dominator: "Saturn Moons Confederation",      texture: "https://upload.wikimedia.org/wikipedia/commons/9/91/Titan_-_Map_Projected_-_July_25_2015.png" },
   { name: "Uranus",             color: "#5dc4e8", au: 19.2,     size: 11, angle: 0.3,  parent: "Sun",    dominator: null,                              texture: "https://www.solarsystemscope.com/images/textures/full/2k_uranus.jpg" },
-  { name: "Neptune",            color: "#3a6ad8", au: 30.05,    size: 11, angle: 1.0,  parent: "Sun",    dominator: null,                              texture: "https://www.solarsystemscope.com/images/textures/full/2k_neptune.jpg" },
+  { name: "Neptune",            color: "#7ec3ed", au: 30.05,    size: 11, angle: 1.0,  parent: "Sun",    dominator: null,                              texture: "https://www.solarsystemscope.com/images/textures/full/2k_neptune.jpg" },
   { name: "Triton",             color: "#cfaf7a", au: 0.00237,  size: 3,  angle: 2.4,  parent: "Neptune", dominator: null,                             texture: "https://upload.wikimedia.org/wikipedia/commons/6/61/Triton_map_no_grid.jpg" },
   { name: "Pluto",              color: "#a89678", au: 39.48,    size: 4,  angle: 2.1,  parent: "Sun",    dominator: null,                              texture: "https://upload.wikimedia.org/wikipedia/commons/4/4c/Pluto_crater_map_Robbins_Dones_2023.png" },
   { name: "Proxima Centauri b", color: "#7d3ad8", au: 268000,   size: 7,  angle: 5.6,  parent: null,     dominator: "Centauri Authority",              texture: null },
@@ -8370,8 +8370,8 @@ function renderSolarSystem() {
     const ringRadius = body.au * z;
     if (ringRadius < 4 || ringRadius > Math.max(w, h) * 50) continue;   // skip absurdly small/large
     const parentPos = body.parent ? _solarBodyPos(SOLAR_ORBITS.find(b => b.name === body.parent)) : { x: 0, y: 0 };
-    cx.strokeStyle = "rgba(120, 100, 70, 0.15)";
-    cx.lineWidth = 1;
+    cx.strokeStyle = "rgba(200, 170, 110, 0.45)";
+    cx.lineWidth = 1.2;
     cx.beginPath();
     cx.arc(cxC + parentPos.x * z, cyC + parentPos.y * z, ringRadius, 0, Math.PI * 2);
     cx.stroke();
