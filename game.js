@@ -6112,15 +6112,16 @@ function drawSettlementMarkers() {
   const currentPlanet = state.currentPlanet || "Earth";
   for (const civ of state.civs) {
     if (!civ.alive) continue;
+    let firstOnPlanetIdx = -1;
+    for (let i = 0; i < civ.settlements.length; i++) {
+      if ((civ.settlements[i].planet || "Earth") === currentPlanet) { firstOnPlanetIdx = i; break; }
+    }
     for (let i = 0; i < civ.settlements.length; i++) {
       const s = civ.settlements[i];
-      // Only draw settlements that belong on the planet we're viewing.
       if ((s.planet || "Earth") !== currentPlanet) continue;
       const x = (s.col + 0.5) * TILE;
       const y = (s.row + 0.5) * TILE;
-      if (i === 0) {
-
-        
+      if (i === firstOnPlanetIdx) {
         const r = Math.min(TILE * 0.95, 1.4 + Math.sqrt(s.pop) * 0.5);
         drawStar(ctx, x, y, r, civ.color, "#000", civ.isPlayer ? "#fff" : null);
       } else {
@@ -6267,14 +6268,16 @@ function drawCivBlobLabels() {
 }
 
 function drawLabels() {
-  
+
   const fontMap = TILE * 1.5;
   ctx.font = `${fontMap}px Georgia, serif`;
   ctx.textBaseline = "middle";
   ctx.textAlign = "left";
+  const currentPlanet = state.currentPlanet || "Earth";
   for (const civ of state.civs) {
     if (!civ.alive) continue;
     for (const s of civ.settlements) {
+      if ((s.planet || "Earth") !== currentPlanet) continue;
       const tx = (s.col + 0.5) * TILE + TILE * 0.7;
       const ty = (s.row + 0.5) * TILE;
       const label = s.name;
@@ -6799,6 +6802,11 @@ function aiTryLaunchRocket(civ) {
   if (candidates.length === 0) return;
   const [col, row] = candidates[Math.floor(Math.random() * candidates.length)];
   grid[row][col] = civ.id;
+  for (const [nc, nr] of neighbors(col, row)) {
+    if (grid[nr][nc] !== -1) continue;
+    if (MAP[nr][nc] === "ocean") continue;
+    grid[nr][nc] = civ.id;
+  }
   ensurePlanetSettlement(civ, col, row, planetName);
   civ.armies.push({
     id: nextArmyId++, col, row,
@@ -6834,8 +6842,11 @@ function launchToPlanet(planetName, cost) {
   }
   const [col, row] = candidates[Math.floor(Math.random() * candidates.length)];
   grid[row][col] = player.id;
-  // Plant a colony city + starting army at the landing tile so the
-  // player has somewhere to build immediately.
+  for (const [nc, nr] of neighbors(col, row)) {
+    if (grid[nr][nc] !== -1) continue;
+    if (MAP[nr][nc] === "ocean") continue;
+    grid[nr][nc] = player.id;
+  }
   ensurePlanetSettlement(player, col, row, planetName);
   player.armies.push({
     id: nextArmyId++, col, row,
