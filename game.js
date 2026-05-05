@@ -8664,10 +8664,32 @@ function _hideDescendingOverlay() {
 }
 
 function enterPlanetSurface(bodyName) {
-  if (!bodyName || bodyName === "Earth") {
+  if (!bodyName) return;
+  if (bodyName === "Earth") {
     const modal = document.getElementById("solar-system-modal");
     if (modal) modal.style.display = "none";
     _solarHideDescendOverlay();
+    if (!state.currentPlanet || state.currentPlanet === "Earth") return;
+    _showDescendingOverlay("Earth");
+    if (state.planetOwnership) state.planetOwnership[state.currentPlanet] = state.ownership;
+    if (state._earthOwnership) {
+      state.ownership = state._earthOwnership;
+    } else if (state.planetOwnership && state.planetOwnership["Earth"]) {
+      state.ownership = state.planetOwnership["Earth"];
+    }
+    state._earthOwnership = null;
+    state.currentPlanet = "Earth";
+    if (state._earthSpeed != null) {
+      state.speed = state._earthSpeed;
+      state._earthSpeed = null;
+    }
+    const banner = document.getElementById("planet-banner");
+    if (banner) banner.style.display = "none";
+    const back = document.getElementById("planet-return-btn");
+    if (back) back.style.display = "none";
+    invalidateTintCache();
+    render();
+    setTimeout(_hideDescendingOverlay, 600);
     return;
   }
   if (state.currentPlanet && state.currentPlanet !== "Earth") {
