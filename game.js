@@ -5305,14 +5305,23 @@ function render() {
   ctx.scale(view.zoom, view.zoom);
 
   ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(biomeCache, 0, 0);
   if (state.currentPlanet && state.currentPlanet !== "Earth") {
-    const body = (typeof SOLAR_BODIES !== "undefined") ? SOLAR_BODIES.find(b => b.name === state.currentPlanet) : null;
+    // Skip Earth biome on other planets - the player should see the
+    // planet's surface, not Earth continents tinted. Try the planet
+    // texture first; fall back to a solid planet-colour fill.
+    const body = (typeof SOLAR_ORBITS !== "undefined") ? SOLAR_ORBITS.find(b => b.name === state.currentPlanet) : null;
     const planetColor = body && body.color ? body.color : "#7a5a3a";
     ctx.fillStyle = planetColor;
-    ctx.globalAlpha = 0.82;
     ctx.fillRect(0, 0, MAP_W, MAP_H);
-    ctx.globalAlpha = 1;
+    if (body && body.texture && _planetTextureCache[body.name] && _planetTextureCache[body.name].complete) {
+      ctx.imageSmoothingEnabled = true;
+      ctx.globalAlpha = 0.85;
+      ctx.drawImage(_planetTextureCache[body.name], 0, 0, MAP_W, MAP_H);
+      ctx.globalAlpha = 1;
+      ctx.imageSmoothingEnabled = false;
+    }
+  } else {
+    ctx.drawImage(biomeCache, 0, 0);
   }
 
   if (tribalBlobCanvas) {
@@ -7248,23 +7257,23 @@ function makeBodyCard(body, options) {
 // wheel zooms (cursor-anchored), drag pans. Zoom range is huge - far
 // enough out to see Proxima Centauri at 268,000 AU.
 const SOLAR_ORBITS = [
-  { name: "Sun",                color: "#ffd24a", au: 0,        size: 28, angle: 0,    parent: null,     dominator: null },
-  { name: "Mercury",            color: "#a89678", au: 0.39,     size: 6,  angle: 0.6,  parent: "Sun",    dominator: null },
-  { name: "Venus",              color: "#e8c020", au: 0.72,     size: 8,  angle: 1.4,  parent: "Sun",    dominator: "Republic of Venus" },
-  { name: "Earth",              color: "#3a8a4a", au: 1.0,      size: 9,  angle: 2.3,  parent: "Sun",    dominator: "<largest>" },
-  { name: "Moon",               color: "#cfcfcf", au: 0.0026,   size: 3,  angle: 0.5,  parent: "Earth",  dominator: "Lunar Republic" },
-  { name: "Mars",               color: "#c84a3a", au: 1.52,     size: 7,  angle: 3.1,  parent: "Sun",    dominator: "Mars Republic" },
-  { name: "Phobos",             color: "#7a5a3a", au: 0.00006,  size: 2,  angle: 1.0,  parent: "Mars",   dominator: "Mars Republic" },
-  { name: "Deimos",             color: "#7a5a3a", au: 0.00016,  size: 2,  angle: 4.0,  parent: "Mars",   dominator: "Mars Republic" },
-  { name: "Asteroid Belt",      color: "#a8a8a8", au: 2.7,      size: 4,  angle: 4.0,  parent: "Sun",    dominator: "Asteroid Belt Coalition" },
-  { name: "Jupiter",            color: "#d4b85a", au: 5.2,      size: 16, angle: 4.7,  parent: "Sun",    dominator: null },
-  { name: "Europa",             color: "#cfe4ff", au: 0.00448,  size: 3,  angle: 1.2,  parent: "Jupiter", dominator: null },
-  { name: "Saturn",             color: "#e8c075", au: 9.58,     size: 14, angle: 5.4,  parent: "Sun",    dominator: "Saturn Moons Confederation" },
-  { name: "Titan",              color: "#d4a657", au: 0.00817,  size: 3,  angle: 2.5,  parent: "Saturn", dominator: "Saturn Moons Confederation" },
-  { name: "Uranus",             color: "#5dc4e8", au: 19.2,     size: 11, angle: 0.3,  parent: "Sun",    dominator: null },
-  { name: "Neptune",            color: "#3a6ad8", au: 30.05,    size: 11, angle: 1.0,  parent: "Sun",    dominator: null },
-  { name: "Pluto",              color: "#a89678", au: 39.48,    size: 4,  angle: 2.1,  parent: "Sun",    dominator: null },
-  { name: "Proxima Centauri b", color: "#7d3ad8", au: 268000,   size: 7,  angle: 5.6,  parent: null,     dominator: "Centauri Authority" },
+  { name: "Sun",                color: "#ffd24a", au: 0,        size: 28, angle: 0,    parent: null,     dominator: null,                              texture: null },
+  { name: "Mercury",            color: "#a89678", au: 0.39,     size: 6,  angle: 0.6,  parent: "Sun",    dominator: null,                              texture: "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3e/Solarsystemscope_texture_8k_mercury.jpg/1280px-Solarsystemscope_texture_8k_mercury.jpg" },
+  { name: "Venus",              color: "#e8c020", au: 0.72,     size: 8,  angle: 1.4,  parent: "Sun",    dominator: "Republic of Venus",               texture: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/85/Solarsystemscope_texture_8k_venus_surface.jpg/1280px-Solarsystemscope_texture_8k_venus_surface.jpg" },
+  { name: "Earth",              color: "#3a8a4a", au: 1.0,      size: 9,  angle: 2.3,  parent: "Sun",    dominator: "<largest>",                       texture: null },
+  { name: "Moon",               color: "#cfcfcf", au: 0.0026,   size: 3,  angle: 0.5,  parent: "Earth",  dominator: "Lunar Republic",                  texture: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Solarsystemscope_texture_8k_moon.jpg/1280px-Solarsystemscope_texture_8k_moon.jpg" },
+  { name: "Mars",               color: "#c84a3a", au: 1.52,     size: 7,  angle: 3.1,  parent: "Sun",    dominator: "Mars Republic",                   texture: "https://upload.wikimedia.org/wikipedia/commons/thumb/0/05/Solarsystemscope_texture_8k_mars.jpg/1280px-Solarsystemscope_texture_8k_mars.jpg" },
+  { name: "Phobos",             color: "#7a5a3a", au: 0.00006,  size: 2,  angle: 1.0,  parent: "Mars",   dominator: "Mars Republic",                   texture: null },
+  { name: "Deimos",             color: "#7a5a3a", au: 0.00016,  size: 2,  angle: 4.0,  parent: "Mars",   dominator: "Mars Republic",                   texture: null },
+  { name: "Asteroid Belt",      color: "#a8a8a8", au: 2.7,      size: 4,  angle: 4.0,  parent: "Sun",    dominator: "Asteroid Belt Coalition",         texture: null },
+  { name: "Jupiter",            color: "#d4b85a", au: 5.2,      size: 16, angle: 4.7,  parent: "Sun",    dominator: null,                              texture: "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0a/Solarsystemscope_texture_8k_jupiter.jpg/1280px-Solarsystemscope_texture_8k_jupiter.jpg" },
+  { name: "Europa",             color: "#cfe4ff", au: 0.00448,  size: 3,  angle: 1.2,  parent: "Jupiter", dominator: null,                             texture: null },
+  { name: "Saturn",             color: "#e8c075", au: 9.58,     size: 14, angle: 5.4,  parent: "Sun",    dominator: "Saturn Moons Confederation",      texture: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c7/Solarsystemscope_texture_8k_saturn.jpg/1280px-Solarsystemscope_texture_8k_saturn.jpg" },
+  { name: "Titan",              color: "#d4a657", au: 0.00817,  size: 3,  angle: 2.5,  parent: "Saturn", dominator: "Saturn Moons Confederation",      texture: null },
+  { name: "Uranus",             color: "#5dc4e8", au: 19.2,     size: 11, angle: 0.3,  parent: "Sun",    dominator: null,                              texture: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/95/Solarsystemscope_texture_2k_uranus.jpg/1024px-Solarsystemscope_texture_2k_uranus.jpg" },
+  { name: "Neptune",            color: "#3a6ad8", au: 30.05,    size: 11, angle: 1.0,  parent: "Sun",    dominator: null,                              texture: "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5e/Solarsystemscope_texture_2k_neptune.jpg/1024px-Solarsystemscope_texture_2k_neptune.jpg" },
+  { name: "Pluto",              color: "#a89678", au: 39.48,    size: 4,  angle: 2.1,  parent: "Sun",    dominator: null,                              texture: null },
+  { name: "Proxima Centauri b", color: "#7d3ad8", au: 268000,   size: 7,  angle: 5.6,  parent: null,     dominator: "Centauri Authority",              texture: null },
 ];
 // Keep SOLAR_BODIES populated from SOLAR_ORBITS so the zoomIntoPlanet
 // helper still works (it expects radius + parent fields).
@@ -7320,6 +7329,17 @@ function renderSolarSystem() {
     const p = _solarBodyPos(body);
     const sx = cxC + p.x * z, sy = cyC + p.y * z;
     if (sx < -200 || sx > w + 200 || sy < -200 || sy > h + 200) continue;
+    // Cull a body whose orbital radius around its parent is smaller
+    // than the parent's draw radius - it would just be sitting on top of
+    // the parent. Lets moons fade out as you zoom out and prevents
+    // cluttered overlap (e.g. Phobos/Deimos disappear unless zoomed in).
+    if (body.parent) {
+      const parent = SOLAR_ORBITS.find(b => b.name === body.parent);
+      if (parent) {
+        const orbitPx = body.au * z;
+        if (orbitPx < parent.size + 4) continue;
+      }
+    }
     const r = body.size;
     const g = cx.createRadialGradient(sx - r * 0.3, sy - r * 0.3, r * 0.1, sx, sy, r);
     g.addColorStop(0, "#ffffff");
@@ -7410,12 +7430,100 @@ function _solarBodyAtPoint(px, py) {
     if (!dragging.moved) {
       const rect = cv.getBoundingClientRect();
       const body = _solarBodyAtPoint(e.clientX - rect.left, e.clientY - rect.top);
-      if (body) zoomIntoPlanet(body.name);
+      if (body) _solarFocusBody(body);
     }
     dragging = null;
     cv.style.cursor = "grab";
   });
 })();
+
+let _solarFocusedBody = null;
+function _solarFocusBody(body) {
+  // Smoothly pan + zoom so this body's largest moon orbit fits the
+  // viewport. With no moons (e.g. Mercury, Pluto), just zoom in to
+  // the body's own size at a reasonable scale.
+  const cv = document.getElementById("solar-system-canvas");
+  if (!cv) return;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  const fitPx = Math.min(w, h) * 0.35;
+  const moons = SOLAR_ORBITS.filter(b => b.parent === body.name);
+  const maxMoonAU = moons.length ? Math.max.apply(null, moons.map(b => b.au)) : 0.0008;
+  const targetZoom = Math.max(0.0005, fitPx / Math.max(0.0001, maxMoonAU * 1.4));
+  const p = _solarBodyPos(body);
+  const targetPanX = -p.x * targetZoom;
+  const targetPanY = -p.y * targetZoom;
+  _solarAnimateView(targetPanX, targetPanY, targetZoom, 600);
+  _solarFocusedBody = body;
+  _solarShowDescendOverlay(body);
+}
+
+function _solarAnimateView(targetPanX, targetPanY, targetZoom, duration) {
+  const startPanX = _solarView.panX;
+  const startPanY = _solarView.panY;
+  const startZoom = _solarView.zoom;
+  const t0 = performance.now();
+  function step() {
+    const elapsed = performance.now() - t0;
+    const t = Math.min(1, elapsed / duration);
+    const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    _solarView.panX = startPanX + (targetPanX - startPanX) * ease;
+    _solarView.panY = startPanY + (targetPanY - startPanY) * ease;
+    _solarView.zoom = Math.exp(Math.log(startZoom) + (Math.log(targetZoom) - Math.log(startZoom)) * ease);
+    renderSolarSystem();
+    if (t < 1) requestAnimationFrame(step);
+  }
+  step();
+}
+
+function _solarHideDescendOverlay() {
+  const old = document.getElementById("solar-descend-overlay");
+  if (old) old.remove();
+}
+
+function _solarShowDescendOverlay(body) {
+  _solarHideDescendOverlay();
+  const dom = resolveDominator(body);
+  const modal = document.getElementById("solar-system-modal");
+  if (!modal) return;
+  const overlay = document.createElement("div");
+  overlay.id = "solar-descend-overlay";
+  overlay.style.cssText = "position:absolute;bottom:60px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:8px;z-index:560;";
+  const title = document.createElement("div");
+  title.textContent = body.name.toUpperCase();
+  title.style.cssText = "color:#ffd24a;font-family:Georgia,serif;font-size:22px;letter-spacing:6px;";
+  overlay.appendChild(title);
+  if (dom) {
+    const sub = document.createElement("div");
+    sub.textContent = dom.name;
+    sub.style.cssText = "color:#cfbf95;font-size:13px;";
+    overlay.appendChild(sub);
+  }
+  const row = document.createElement("div");
+  row.style.cssText = "display:flex;gap:10px;margin-top:6px;";
+  if (body.name !== "Sun" && body.name !== "Asteroid Belt") {
+    const descend = document.createElement("button");
+    descend.textContent = "↓ DESCEND TO SURFACE";
+    descend.style.cssText = "background:linear-gradient(180deg,#a8923a,#624a14);border:1px solid #ffd24a;color:#fff5cc;padding:8px 18px;letter-spacing:2px;font-family:Georgia,serif;cursor:pointer;font-weight:bold;";
+    descend.addEventListener("click", () => {
+      _solarHideDescendOverlay();
+      enterPlanetSurface(body.name);
+    });
+    row.appendChild(descend);
+  }
+  if (dom) {
+    const visit = document.createElement("button");
+    visit.textContent = "👁 VIEW " + dom.name.toUpperCase();
+    visit.style.cssText = "background:#3a2a14;border:1px solid #6a5a3c;color:#fff5cc;padding:8px 14px;letter-spacing:2px;font-family:Georgia,serif;cursor:pointer;";
+    visit.addEventListener("click", () => {
+      _solarHideDescendOverlay();
+      modal.style.display = "none";
+      showCountryPanel(dom);
+    });
+    row.appendChild(visit);
+  }
+  overlay.appendChild(row);
+  modal.appendChild(overlay);
+}
 
 function openSolarSystem() {
   const modal = document.getElementById("solar-system-modal");
@@ -7425,7 +7533,8 @@ function openSolarSystem() {
   document.getElementById("solar-system-bodies").style.display = "none";
   const cv = document.getElementById("solar-system-canvas");
   if (cv) cv.style.display = "block";
-  // Reset to a sensible default view that fits the inner solar system.
+  _solarHideDescendOverlay();
+  _solarFocusedBody = null;
   _solarView.panX = 0; _solarView.panY = 0; _solarView.zoom = 50;
   _solarRequestRender();
 }
@@ -7514,17 +7623,31 @@ function zoomIntoPlanet(bodyName) {
 // every tile as land (PASSABLE override) and skips state borders. Each
 // planet has its own ownership grid so claims don't bleed between
 // worlds. The dominator civ from SOLAR_BODIES gets all tiles by default.
+const _planetTextureCache = {};
+function _loadPlanetTexture(body) {
+  if (!body || !body.texture) return;
+  if (_planetTextureCache[body.name]) return;
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+  img.onload = () => { invalidateTintCache(); render(); };
+  img.onerror = () => { delete _planetTextureCache[body.name]; };
+  img.src = body.texture;
+  _planetTextureCache[body.name] = img;
+}
+
 function enterPlanetSurface(bodyName) {
   if (!bodyName || bodyName === "Earth") {
-    // Earth: just close the modal.
     const modal = document.getElementById("solar-system-modal");
     if (modal) modal.style.display = "none";
+    _solarHideDescendOverlay();
     return;
   }
   if (state.currentPlanet && state.currentPlanet !== "Earth") {
-    // Already on another planet - swap into the new one cleanly.
     exitPlanetSurface();
   }
+  // Kick off texture load if available.
+  const obody = SOLAR_ORBITS.find(b => b.name === bodyName);
+  if (obody) _loadPlanetTexture(obody);
   // Save Earth state.
   state._earthSpeed = state.speed;
   state.speed = 0;
