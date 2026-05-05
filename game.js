@@ -409,7 +409,7 @@ const HISTORICAL_EVENTS = [
   { year: -200, civ: { name: "Han China",   lat: 34,  lon: 109,  color: "#e84a4a" }, replaces: "Zhou China", message: "The Han dynasty rises in China" },
   { year: -200, type: "goal", civ: "Han China", region: { lat: [22, 45], lon: [98, 122] }, priority: 0.85, message: "Han China sets its sights on westward expansion (Silk Road)" },
 
-  { year:  100, civ: { name: "Maya",        lat: 17,  lon: -89,  color: "#3aa9c4" }, message: "The Maya cities flourish" },
+  { year: -400, civ: { name: "Maya",        lat: 17,  lon: -89,  color: "#3aa9c4" }, replaces: "Olmec", message: "Olmec civilization fades - the Maya rise as their successors in the lowlands" },
   
   { year:  220, type: "secede", target: "Han China", civ: "Cao Wei",      spawn: { name: "Cao Wei",      lat: 35, lon: 110, color: "#c83030" }, region: { lat: [32, 42], lon: [100, 122] }, message: "Three Kingdoms: Cao Wei takes the north" },
   { year:  220, type: "secede", target: "Han China", civ: "Eastern Wu",   spawn: { name: "Eastern Wu",   lat: 30, lon: 118, color: "#3a6ad8" }, region: { lat: [24, 33], lon: [110, 122] }, message: "Three Kingdoms: Sun Quan takes the southeast" },
@@ -1125,7 +1125,6 @@ const HISTORICAL_EVENTS = [
 
   { year:   -108, type: "absorb", absorber: "Han China", target: "Gojoseon", message: "Han Wudi conquers Gojoseon - Korean peninsula falls under Chinese control" },
   
-  { year:  -400, type: "absorb", absorber: "Maya", target: "Olmec", message: "Olmec civilization fades - Maya rises in the lowlands" },
   
   { year: 1670, type: "absorb", absorber: "Morocco", target: "Mali Empire", message: "Saadi sultans take Timbuktu - Mali Empire is no more" },
   
@@ -1175,7 +1174,7 @@ const HISTORICAL_EVENTS = [
   { year: 1299, type: "goal", civ: "Ottomans", region: { lat: [22, 45], lon: [20, 50] }, priority: 0.9, message: "The Ottomans aim for Anatolia, the Levant, and the Balkans" },
   { year: 1453, type: "claim", civ: "Ottomans", region: { lat: [40, 42], lon: [28, 30] }, message: "The Ottomans take Constantinople" },
 
-  { year: 1428, civ: { name: "Aztec",       lat: 19.4,lon: -99,  color: "#3aa9c4" }, message: "The Aztec Triple Alliance is forged" },
+  { year: 1428, civ: { name: "Aztec",       lat: 19.4,lon: -99,  color: "#3aa9c4" }, replaces: "Maya", message: "The Aztec Triple Alliance is forged - Mesoamerican lineage continues" },
   { year: 1438, civ: { name: "Inca",        lat: -13.5,lon: -71.9,color: "#c44aa8" }, replaces: "Chavin", message: "Pachacuti founds the Inca Empire" },
 
   
@@ -1315,6 +1314,8 @@ const HISTORICAL_EVENTS = [
     region: { lat: [51, 72], lon: [-180, -130] },
     message: "Alaska Purchase - Seward buys Alaska from Russia" },
   
+  { year: 1900, type: "claim", civ: "USA", byOwner: "USA",
+    message: "United States consolidates the entire continental and territorial USA into one federation" },
   { year: 1898, type: "claim", civ: "USA", byOwner: "USA",
     region: { lat: [17, 23], lon: [-160, -65] },
     message: "Hawaii annexed and Puerto Rico taken from Spain" },
@@ -1672,6 +1673,7 @@ const TREE_PARENT_OVERRIDES = {
   "East Germany": "Germany",
   
   "USA": "Great Britain",
+  "Mexico": "Aztec",
 };
 
 const SAME_IDENTITY_OVERRIDES = new Set([
@@ -2457,16 +2459,6 @@ function fireEvent(ev) {
         }
       }
 
-      let anyAlive = false;
-      for (const c of state.civs) {
-        if (!c.alive) continue;
-        if (lineage.has(c.name)) { anyAlive = true; break; }
-        if ((c.previousNames || []).some(n => lineage.has(n))) { anyAlive = true; break; }
-      }
-      if (!anyAlive) {
-        log("event", ev.message + " - " + civName + "'s father lineage left no surviving descendants; the state cannot reform.");
-        return;
-      }
     }
     let newCiv = state.civs.find(c => c.alive && c.name === ev.civ);
 
