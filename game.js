@@ -3618,6 +3618,30 @@ function tick() {
         state.planetOwnership[body.name] = rebuildPlanetOwnership(body.name);
       }
     }
+    for (const [planetName, grid] of Object.entries(state.planetOwnership)) {
+      if (planetName === "Earth") continue;
+      const allowedIds = new Set();
+      for (const c of state.civs) {
+        if (!c.alive) continue;
+        let hasPresence = false;
+        for (const s of (c.settlements || [])) {
+          if ((s.planet || "Earth") === planetName) { hasPresence = true; break; }
+        }
+        if (!hasPresence) {
+          for (const a of (c.armies || [])) {
+            if ((a.planet || "Earth") === planetName) { hasPresence = true; break; }
+          }
+        }
+        if (hasPresence) allowedIds.add(c.id);
+      }
+      for (let r = 0; r < ROWS; r++) {
+        for (let cc = 0; cc < COLS; cc++) {
+          const o = grid[r][cc];
+          if (o === -1) continue;
+          if (!allowedIds.has(o)) grid[r][cc] = -1;
+        }
+      }
+    }
   }
 
   if (state.planetOwnership) {
