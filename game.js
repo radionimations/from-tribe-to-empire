@@ -3777,11 +3777,17 @@ function aiTurn(civ) {
     const settlements = civ.settlements.length;
     const wantsExpand = settlements < 3 + civ.era && Math.random() < 0.4;
     const wantsArmy = totalUnits < settlements * 3 + civ.era * 2;
-    if (wantsExpand) {
+    if (civ.era >= 6 && !civ.aquaticOnly && Math.random() < 0.18) {
+      s.queue.push({ type: "rocket_scraps", progress: 0 });
+    } else if (wantsExpand) {
       s.queue.push({ type: "settler", progress: 0 });
     } else if (wantsArmy || Math.random() < 0.7) {
       s.queue.push({ type: bestUnitForEra(civ.era), progress: 0 });
     }
+  }
+
+  if (!civ.isPlayer && civ.era >= 6 && !civ.aquaticOnly) {
+    aiTryLaunchRocket(civ);
   }
 
   
@@ -6674,6 +6680,59 @@ function ensurePlanetSettlement(civ, col, row, planetName) {
   };
   civ.settlements.push(s);
   return s;
+}
+
+function countCivScraps(civ) {
+  let n = 0;
+  for (const a of (civ.armies || [])) if (a.type === "rocket_scraps") n += a.count || 0;
+  return n;
+}
+
+function consumeCivScraps(civ, n) {
+  let remaining = n;
+  const newArmies = [];
+  for (const a of (civ.armies || [])) {
+    if (a.type !== "rocket_scraps" || remaining <= 0) { newArmies.push(a); continue; }
+    if (a.count > remaining) { a.count -= remaining; remaining = 0; newArmies.push(a); }
+    else { remaining -= a.count; }
+  }
+  civ.armies = newArmies;
+  return remaining === 0;
+}
+
+function aiTryLaunchRocket(civ) {
+  if (!civ || !civ.alive || civ.isPlayer) return;
+  const scraps = countCivScraps(civ);
+  if (scraps < 10) return;
+  if (Math.random() > 0.05) return;
+  const affordable = Object.entries(PLANET_LAUNCH_COSTS).filter(([n, c]) => scraps >= c);
+  if (affordable.length === 0) return;
+  affordable.sort((a, b) => b[1] - a[1]);
+  const top = affordable.slice(0, Math.min(3, affordable.length));
+  const [planetName, cost] = top[Math.floor(Math.random() * top.length)];
+  if (!consumeCivScraps(civ, cost)) return;
+  if (!state.planetOwnership) state.planetOwnership = {};
+  if (!state.planetOwnership[planetName]) {
+    state.planetOwnership[planetName] = rebuildPlanetOwnership(planetName);
+  }
+  const grid = state.planetOwnership[planetName];
+  const candidates = [];
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (grid[r][c] !== -1) continue;
+      if (MAP[r][c] === "ocean") continue;
+      candidates.push([c, r]);
+    }
+  }
+  if (candidates.length === 0) return;
+  const [col, row] = candidates[Math.floor(Math.random() * candidates.length)];
+  grid[row][col] = civ.id;
+  ensurePlanetSettlement(civ, col, row, planetName);
+  civ.armies.push({
+    id: nextArmyId++, col, row,
+    type: "modern", count: 3, civId: civ.id, moves: 1, planet: planetName,
+  });
+  log("event", "🚀 " + civ.name + " launches a rocket to " + planetName + " and founds a colony.");
 }
 
 function launchToPlanet(planetName, cost) {
