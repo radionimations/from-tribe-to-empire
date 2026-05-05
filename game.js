@@ -3360,7 +3360,50 @@ function tick() {
   
   maybeTriggerWarMode();
 
-  
+  // Off-screen planet evolution. While the player is on Earth, every
+  // other planet whose ownership grid exists also evolves: each civ
+  // with a presence on that planet picks a random border tile and
+  // claims one adjacent unowned, biome-appropriate tile per tick. So
+  // the Lunar Republic / Mars Republic / Squid Empire keep expanding
+  // even when no one's looking at them.
+  if (state.planetOwnership) {
+    for (const [planetName, grid] of Object.entries(state.planetOwnership)) {
+      if (planetName === "Earth") continue;
+      // Build civ-id -> sample-of-owned-tiles for civs with presence.
+      const civTiles = new Map();
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const id = grid[r][c];
+          if (id < 0) continue;
+          if (!civTiles.has(id)) civTiles.set(id, []);
+          const arr = civTiles.get(id);
+          // Reservoir-style sampling - keep ~50 tiles per civ.
+          if (arr.length < 50) arr.push([c, r]);
+          else if (Math.random() < 0.05) arr[Math.floor(Math.random() * 50)] = [c, r];
+        }
+      }
+      for (const [id, tiles] of civTiles) {
+        const civ = state.civs[civIndexById(id)];
+        if (!civ || !civ.alive) continue;
+        // Try ~3 random border picks; first valid claim wins.
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const [bc, br] = tiles[Math.floor(Math.random() * tiles.length)];
+          const ns = neighbors(bc, br);
+          let claimed = false;
+          for (const [nc, nr] of ns) {
+            if (grid[nr][nc] !== -1) continue;
+            // Aquatic civs only claim ocean tiles; land civs only land.
+            if (civ.aquaticOnly) { if (MAP[nr][nc] !== "ocean") continue; }
+            else { if (!PASSABLE(MAP[nr][nc])) continue; }
+            grid[nr][nc] = id;
+            claimed = true;
+            break;
+          }
+          if (claimed) break;
+        }
+      }
+    }
+  }
 
   
   
