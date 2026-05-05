@@ -7349,22 +7349,27 @@ function makeBodyCard(body, options) {
 // wheel zooms (cursor-anchored), drag pans. Zoom range is huge - far
 // enough out to see Proxima Centauri at 268,000 AU.
 const SOLAR_ORBITS = [
-  { name: "Sun",                color: "#ffd24a", au: 0,        size: 28, angle: 0,    parent: null,     dominator: null,                              texture: null },
+  { name: "Sun",                color: "#ffd24a", au: 0,        size: 28, angle: 0,    parent: null,     dominator: null,                              texture: "https://www.solarsystemscope.com/images/textures/full/2k_sun.jpg" },
   { name: "Mercury",            color: "#a89678", au: 0.39,     size: 6,  angle: 0.6,  parent: "Sun",    dominator: null,                              texture: "https://www.solarsystemscope.com/images/textures/full/2k_mercury.jpg" },
   { name: "Venus",              color: "#e8c020", au: 0.72,     size: 8,  angle: 1.4,  parent: "Sun",    dominator: "Republic of Venus",               texture: "https://www.solarsystemscope.com/images/textures/full/2k_venus_surface.jpg" },
   { name: "Earth",              color: "#3a8a4a", au: 1.0,      size: 9,  angle: 2.3,  parent: "Sun",    dominator: "<largest>",                       texture: null },
   { name: "Moon",               color: "#cfcfcf", au: 0.0026,   size: 3,  angle: 0.5,  parent: "Earth",  dominator: "Lunar Republic",                  texture: "https://www.solarsystemscope.com/images/textures/full/2k_moon.jpg" },
   { name: "Mars",               color: "#c84a3a", au: 1.52,     size: 7,  angle: 3.1,  parent: "Sun",    dominator: "Mars Republic",                   texture: "https://www.solarsystemscope.com/images/textures/full/2k_mars.jpg" },
-  { name: "Phobos",             color: "#7a5a3a", au: 0.00006,  size: 2,  angle: 1.0,  parent: "Mars",   dominator: "Mars Republic",                   texture: null },
-  { name: "Deimos",             color: "#7a5a3a", au: 0.00016,  size: 2,  angle: 4.0,  parent: "Mars",   dominator: "Mars Republic",                   texture: null },
+  { name: "Phobos",             color: "#7a5a3a", au: 0.00006,  size: 2,  angle: 1.0,  parent: "Mars",   dominator: "Mars Republic",                   texture: "https://upload.wikimedia.org/wikipedia/commons/3/30/Phobos_map_by_Askaniy.png" },
+  { name: "Deimos",             color: "#7a5a3a", au: 0.00016,  size: 2,  angle: 4.0,  parent: "Mars",   dominator: "Mars Republic",                   texture: "https://upload.wikimedia.org/wikipedia/commons/7/72/Deimos_map_by_Askaniy.png" },
   { name: "Asteroid Belt",      color: "#a8a8a8", au: 2.7,      size: 4,  angle: 4.0,  parent: "Sun",    dominator: "Asteroid Belt Coalition",         texture: null },
   { name: "Jupiter",            color: "#d4b85a", au: 5.2,      size: 16, angle: 4.7,  parent: "Sun",    dominator: null,                              texture: "https://www.solarsystemscope.com/images/textures/full/2k_jupiter.jpg" },
-  { name: "Europa",             color: "#cfe4ff", au: 0.00448,  size: 3,  angle: 1.2,  parent: "Jupiter", dominator: null,                             texture: null },
+  { name: "Io",                 color: "#e8c020", au: 0.00282,  size: 3,  angle: 0.7,  parent: "Jupiter", dominator: null,                             texture: null },
+  { name: "Europa",             color: "#cfe4ff", au: 0.00448,  size: 3,  angle: 1.2,  parent: "Jupiter", dominator: null,                             texture: "https://upload.wikimedia.org/wikipedia/commons/a/a1/Europa_-_November_25%2C_1999_%2826428520994%29.jpg" },
+  { name: "Ganymede",           color: "#a89678", au: 0.00715,  size: 4,  angle: 2.0,  parent: "Jupiter", dominator: null,                             texture: "https://upload.wikimedia.org/wikipedia/commons/8/81/Ganymede_map_by_Askaniy.png" },
+  { name: "Callisto",           color: "#7a6a5a", au: 0.01258,  size: 4,  angle: 4.5,  parent: "Jupiter", dominator: null,                             texture: "https://upload.wikimedia.org/wikipedia/commons/a/a1/Callisto_map_by_Askaniy.png" },
   { name: "Saturn",             color: "#e8c075", au: 9.58,     size: 14, angle: 5.4,  parent: "Sun",    dominator: "Saturn Moons Confederation",      texture: "https://www.solarsystemscope.com/images/textures/full/2k_saturn.jpg" },
-  { name: "Titan",              color: "#d4a657", au: 0.00817,  size: 3,  angle: 2.5,  parent: "Saturn", dominator: "Saturn Moons Confederation",      texture: null },
+  { name: "Mimas",              color: "#cfcfcf", au: 0.00124,  size: 2,  angle: 1.5,  parent: "Saturn", dominator: "Saturn Moons Confederation",      texture: "https://upload.wikimedia.org/wikipedia/commons/5/5a/Map_of_Mimas_2010-02_PIA12780.jpg" },
+  { name: "Titan",              color: "#d4a657", au: 0.00817,  size: 3,  angle: 2.5,  parent: "Saturn", dominator: "Saturn Moons Confederation",      texture: "https://upload.wikimedia.org/wikipedia/commons/9/91/Titan_-_Map_Projected_-_July_25_2015.png" },
   { name: "Uranus",             color: "#5dc4e8", au: 19.2,     size: 11, angle: 0.3,  parent: "Sun",    dominator: null,                              texture: "https://www.solarsystemscope.com/images/textures/full/2k_uranus.jpg" },
   { name: "Neptune",            color: "#3a6ad8", au: 30.05,    size: 11, angle: 1.0,  parent: "Sun",    dominator: null,                              texture: "https://www.solarsystemscope.com/images/textures/full/2k_neptune.jpg" },
-  { name: "Pluto",              color: "#a89678", au: 39.48,    size: 4,  angle: 2.1,  parent: "Sun",    dominator: null,                              texture: null },
+  { name: "Triton",             color: "#cfaf7a", au: 0.00237,  size: 3,  angle: 2.4,  parent: "Neptune", dominator: null,                             texture: "https://upload.wikimedia.org/wikipedia/commons/6/61/Triton_map_no_grid.jpg" },
+  { name: "Pluto",              color: "#a89678", au: 39.48,    size: 4,  angle: 2.1,  parent: "Sun",    dominator: null,                              texture: "https://upload.wikimedia.org/wikipedia/commons/4/4c/Pluto_crater_map_Robbins_Dones_2023.png" },
   { name: "Proxima Centauri b", color: "#7d3ad8", au: 268000,   size: 7,  angle: 5.6,  parent: null,     dominator: "Centauri Authority",              texture: null },
 ];
 // Keep SOLAR_BODIES populated from SOLAR_ORBITS so the zoomIntoPlanet
