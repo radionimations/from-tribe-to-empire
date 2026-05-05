@@ -3943,6 +3943,16 @@ function tick() {
       if (civ.isStartingTribe) continue;
       if (SPLIT_BLOCKLIST.has(civ.name)) continue;
       if ((civ.previousNames || []).some(n => SPLIT_BLOCKLIST.has(n))) continue;
+      let hasEarthPresence = false;
+      for (const s of (civ.settlements || [])) {
+        if ((s.planet || "Earth") === "Earth") { hasEarthPresence = true; break; }
+      }
+      if (!hasEarthPresence) {
+        for (const a of (civ.armies || [])) {
+          if ((a.planet || "Earth") === "Earth") { hasEarthPresence = true; break; }
+        }
+      }
+      if (!hasEarthPresence) continue;
       if (civ.foundedYear == null || civ.lastChangeYear == null) continue;
       const lifespan = state.year - civ.foundedYear;
       const stale = state.year - civ.lastChangeYear;
