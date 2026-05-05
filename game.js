@@ -8645,7 +8645,7 @@ function enterPlanetSurface(bodyName) {
   // doesn't appear before 2350; Republic of Venus doesn't appear
   // before 3080; etc).
   if (!state.planetOwnership) state.planetOwnership = {};
-  if (!(state._modMarsSurvival && bodyName === "Mars" && state.planetOwnership["Mars"])) {
+  if (!state.planetOwnership[bodyName]) {
     state.planetOwnership[bodyName] = rebuildPlanetOwnership(bodyName);
   }
   state.ownership = state.planetOwnership[bodyName];
