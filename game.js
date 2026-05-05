@@ -997,9 +997,23 @@ const HISTORICAL_EVENTS = [
   { year: 4750, civ: { name: "Earth Free Federation", lat: 0.0, lon: 23.0, color: "#5dc4e8" },
     message: "Earth Free Federation - a planetary citizens' charter is signed in equatorial Africa" },
   { year: 4880, type: "war", a: "Earth Free Federation", b: "Many-Worlds Federation", region: { lat: [-60, 70], lon: [-180, 180] }, reinforce: 22,
-    message: "Last Great War - Earth's federation fights the interstellar one for sovereignty" },
-  { year: 4945, type: "peace_treaty", a: "Earth Free Federation", b: "Many-Worlds Federation",
-    message: "Final Concord - the war ends; preparations begin for the twelfth cycle's millennial reset" },
+    message: "Last Great War begins - Earth's federation fights the interstellar one for sovereignty" },
+  { year: 4882, type: "wartime", on: true, message: "Nuclear exchanges escalate worldwide - the war goes total" },
+  { year: 4885, type: "nuke_weakest", message: "Nuclear strikes obliterate the weakest holdouts" },
+  { year: 4890, type: "nuke_weakest", message: "More nations vanish in the second wave of strikes" },
+  { year: 4895, type: "nuke_weakest", message: "Capitals burn - smaller states collapse" },
+  { year: 4900, type: "nuke_weakest", message: "Atmospheric fallout cripples the global power grid" },
+  { year: 4905, type: "nuke_weakest", message: "Nuclear winter sets in - frail polities starve and die" },
+  { year: 4910, type: "nuke_weakest", message: "Mid-tier states succumb to the cascading collapse" },
+  { year: 4915, type: "nuke_weakest", message: "Mid-Atlantic strikes wipe out coastal nations" },
+  { year: 4920, type: "nuke_weakest", message: "Steppe states fragment and disappear" },
+  { year: 4925, type: "nuke_weakest", message: "Surviving regional unions disintegrate under fallout" },
+  { year: 4930, type: "nuke_weakest", message: "African and South-American republics fall silent" },
+  { year: 4935, type: "nuke_weakest", message: "Asian federations collapse one after another" },
+  { year: 4940, type: "nuke_weakest", message: "The strongest powers tear at each other in their final spasm" },
+  { year: 4945, type: "nuke_unify", color: "#3a2a14",
+    excludeNames: ["Mars Republic", "Mars Colony Authority", "Lunar Republic", "Asteroid Belt Coalition", "Saturn Moons Confederation", "Pan-Solar Diaspora", "Centauri Authority", "Many-Worlds Federation", "Solar Republic", "Sol Federation", "Ascended Sol", "Anchor Eternity"],
+    message: "All Earth-side civilizations have been annihilated. Nuclear Wasteland inherits the planet." },
 
   
 
@@ -2744,6 +2758,53 @@ function fireEvent(ev) {
   if (ev.type === "wartime") {
     state.isWartime = !!ev.on;
     log(ev.on ? "war" : "peace", ev.message);
+    return;
+  }
+
+  if (ev.type === "nuke_weakest") {
+    const exclude = new Set(ev.excludeNames || [
+      "Mars Republic", "Mars Colony Authority", "Lunar Republic",
+      "Asteroid Belt Coalition", "Saturn Moons Confederation",
+      "Pan-Solar Diaspora", "Centauri Authority", "Many-Worlds Federation",
+      "Solar Republic", "Sol Federation", "Ascended Sol", "Anchor Eternity",
+      "Nuclear Wasteland",
+    ]);
+    let candidates = state.civs.filter(c => c.alive && !c.isPlayer && !exclude.has(c.name));
+    if (candidates.length === 0) { log("war", ev.message); return; }
+    candidates.sort((a, b) => (civStrength(a) + countTiles(a)) - (civStrength(b) + countTiles(b)));
+    const victim = candidates[0];
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (state.ownership[r][c] === victim.id) state.ownership[r][c] = -1;
+      }
+    }
+    victim.settlements = [];
+    victim.armies = [];
+    victim.alive = false;
+    log("war", ev.message + " - " + victim.name + " is annihilated.");
+    invalidateTintCache();
+    return;
+  }
+
+  if (ev.type === "nuke_unify") {
+    const exclude = new Set(ev.excludeNames || []);
+    const wasteland = makeCiv({ name: "Nuclear Wasteland", color: ev.color || "#3a2a14" });
+    state.civs.push(wasteland);
+    for (const c of state.civs) {
+      if (c.id === wasteland.id) continue;
+      if (!c.alive || c.isPlayer) continue;
+      if (exclude.has(c.name)) continue;
+      for (let r = 0; r < ROWS; r++) {
+        for (let cc = 0; cc < COLS; cc++) {
+          if (state.ownership[r][cc] === c.id) state.ownership[r][cc] = wasteland.id;
+        }
+      }
+      c.settlements = [];
+      c.armies = [];
+      c.alive = false;
+    }
+    log("war", ev.message);
+    invalidateTintCache();
     return;
   }
 
