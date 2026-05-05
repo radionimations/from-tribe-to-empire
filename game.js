@@ -3609,12 +3609,14 @@ function tick() {
     if (!state.planetOwnership) state.planetOwnership = {};
     for (const planetName of Object.keys(PLANET_RESIDENTS)) {
       if (state.planetOwnership[planetName]) continue;
-      const residentNames = PLANET_RESIDENTS[planetName] || [];
-      const anyAlive = residentNames.some(nm =>
-        state.civs.find(c => c.alive && (c.name === nm || (c.previousNames || []).includes(nm)))
-      );
-      if (!anyAlive) continue;
       state.planetOwnership[planetName] = rebuildPlanetOwnership(planetName);
+    }
+    if (typeof SOLAR_ORBITS !== "undefined") {
+      for (const body of SOLAR_ORBITS) {
+        if (!body || !body.name || body.name === "Sun" || body.name === "Earth") continue;
+        if (state.planetOwnership[body.name]) continue;
+        state.planetOwnership[body.name] = rebuildPlanetOwnership(body.name);
+      }
     }
   }
 
