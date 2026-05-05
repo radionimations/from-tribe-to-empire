@@ -3704,7 +3704,12 @@ function findExpansionTile(civ, col, row, claimedTargets) {
       const r = row + dr;
       if (r < 0 || r >= ROWS) continue;
       const c = ((col + dc) % COLS + COLS) % COLS;
-      if (!PASSABLE(MAP[r][c])) continue;
+      // Aquatic-only civs (Squid) expand into ocean tiles only.
+      if (civ && civ.aquaticOnly) {
+        if (MAP[r][c] !== "ocean") continue;
+      } else {
+        if (!PASSABLE(MAP[r][c])) continue;
+      }
       if (state.ownership[r][c] !== -1) continue;
       if (claimedTargets && claimedTargets.has(r * COLS + c)) continue;
       
@@ -3824,6 +3829,25 @@ function tryMoveOrAttack(army, toC, toR) {
   const unitDef = UNITS[army.type];
   
   if (MAP[toR][toC] === "ocean") {
+    // Aquatic-only civs (Squid Empire) claim unowned ocean tiles and
+    // fight rival ocean-owners. Other civs just transit.
+    if (civ && civ.aquaticOnly) {
+      const oceanOwner = state.ownership[toR][toC];
+      if (oceanOwner === army.civId || oceanOwner === -1) {
+        setArmyTile(army, toC, toR);
+        army.moves = Math.max(0, army.moves - 1);
+        if (oceanOwner === -1) state.ownership[toR][toC] = army.civId;
+        return true;
+      }
+      if (sameFaction(army.civId, oceanOwner)) {
+        setArmyTile(army, toC, toR);
+        army.moves = Math.max(0, army.moves - 1);
+        return true;
+      }
+      resolveCombat(army, toC, toR);
+      army.moves = 0;
+      return true;
+    }
     setArmyTile(army, toC, toR);
     army.moves = Math.max(0, army.moves - 1);
     return true;
