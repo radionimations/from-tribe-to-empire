@@ -5370,7 +5370,8 @@ function render() {
   
   const _now = performance.now();
   const _tickMs = (state.phase === "playing" && state.speed > 0) ? SPEED_TURN_MS[state.speed] : 0;
-  for (const civ of state.civs) {
+  const _skipArmies = state.currentPlanet && state.currentPlanet !== "Earth";
+  if (!_skipArmies) for (const civ of state.civs) {
     if (!civ.alive) continue;
     for (const a of civ.armies) {
       let aCol = a.col, aRow = a.row;
@@ -5504,11 +5505,15 @@ function render() {
     }
   }
 
-  drawHoi4Cities();
-  
-  drawCivBlobLabels();
-  
-  drawSettlementMarkers();
+  // Capitals, HOI4 cities, country labels, and unit markers all live
+  // on the Earth ownership grid - skip them when viewing another
+  // planet so we don't see Earth-side cities + armies under a Mars
+  // texture.
+  if (!state.currentPlanet || state.currentPlanet === "Earth") {
+    drawHoi4Cities();
+    drawCivBlobLabels();
+    drawSettlementMarkers();
+  }
 
   ctx.restore();
 }
