@@ -41,6 +41,7 @@ const PASSABLE = (b) => {
 };
 
 function canMoveInto(civ, biome) {
+  if (civ && civ.aquaticOnly) return biome === "ocean";   // squid tribe etc.
   if (biome === "ocean") return !!(civ && civ.era >= 1);
   return PASSABLE(biome);
 }
@@ -1031,8 +1032,15 @@ const HISTORICAL_EVENTS = [
   { year: 4935, type: "nuke_weakest", message: "Asian federations collapse one after another" },
   { year: 4940, type: "nuke_weakest", message: "The strongest powers tear at each other in their final spasm" },
   { year: 4945, type: "nuke_unify", color: "#3a2a14",
-    excludeNames: ["Mars Republic", "Mars Colony Authority", "Lunar Republic", "Asteroid Belt Coalition", "Saturn Moons Confederation", "Pan-Solar Diaspora", "Centauri Authority", "Many-Worlds Federation", "Solar Republic", "Sol Federation", "Ascended Sol", "Anchor Eternity"],
     message: "All Earth-side civilizations have been annihilated. Nuclear Wasteland inherits the planet." },
+  { year: 5400, type: "spawn_after_nuke",
+    civ: { name: "Cockroach Empire", lat: 24.0, lon: 90.0, color: "#3a2014" },
+    tileCount: 80,
+    message: "From the radioactive ruins, the Cockroach Empire emerges in the Bengal delta - the only land-creatures that survived the nuclear winter." },
+  { year: 5700, type: "spawn_aquatic",
+    civ: { name: "Squid Empire", lat: -10.0, lon: 160.0, color: "#7d3ad8" },
+    tileCount: 200,
+    message: "The Squid Empire rises from the irradiated Pacific - a fully aquatic civilization that can only colonize the oceans, lakes, and seas." },
 
   
 
@@ -2798,23 +2806,104 @@ function fireEvent(ev) {
   }
 
   if (ev.type === "nuke_unify") {
-    const exclude = new Set(ev.excludeNames || []);
     const wasteland = makeCiv({ name: "Nuclear Wasteland", color: ev.color || "#3a2a14" });
     state.civs.push(wasteland);
+    // Wipe EVERY non-player civ on Earth and absorb their territory
+    // into the Wasteland. Off-world civs (Mars Republic etc.) keep
+    // their alive flag but lose their Earth-side seats, so they don't
+    // re-conquer the planet from a stray tile.
     for (const c of state.civs) {
       if (c.id === wasteland.id) continue;
       if (!c.alive || c.isPlayer) continue;
-      if (exclude.has(c.name)) continue;
+      let hadTiles = false;
       for (let r = 0; r < ROWS; r++) {
         for (let cc = 0; cc < COLS; cc++) {
-          if (state.ownership[r][cc] === c.id) state.ownership[r][cc] = wasteland.id;
+          if (state.ownership[r][cc] === c.id) {
+            state.ownership[r][cc] = wasteland.id;
+            hadTiles = true;
+          }
         }
       }
       c.settlements = [];
       c.armies = [];
-      c.alive = false;
+      // Earth-side civs (with tiles) die. Off-world civs get marked
+      // tile-less but keep alive so the solar-system view still finds
+      // their dominator entries.
+      if (hadTiles) c.alive = false;
+    }
+    // Stock the Wasteland with garrisons in every major HOI4 state
+    // centre so a neighbour army can't just walk in and re-claim.
+    if (typeof HOI4_CITIES !== "undefined") {
+      let placed = 0;
+      for (const sd of HOI4_CITIES) {
+        if (placed > 80) break;
+        if (typeof sd.x !== "number") continue;
+        const col = Math.max(0, Math.min(COLS - 1, Math.floor(sd.x / TILE)));
+        const row = Math.max(0, Math.min(ROWS - 1, Math.floor(sd.y / TILE)));
+        if (state.ownership[row][col] !== wasteland.id) continue;
+        wasteland.armies.push({ id: nextArmyId++, col, row, type: "modern", count: 4, civId: wasteland.id, moves: 0 });
+        placed++;
+      }
     }
     log("war", ev.message);
+    invalidateTintCache();
+    return;
+  }
+
+  // Generic spawn helper for the post-apocalypse tribes.
+  if (ev.type === "spawn_aquatic" || ev.type === "spawn_after_nuke") {
+    const civ = makeCiv({ name: ev.civ.name, color: ev.civ.color });
+    state.civs.push(civ);
+    if (ev.type === "spawn_aquatic") civ.aquaticOnly = true;
+    civ.isStartingTribe = true;     // mark as tribe so meatball borders apply
+    for (const c of state.civs) {
+      if (c.id !== civ.id) {
+        civ.relations[c.id] = 0;
+        c.relations[civ.id] = 0;
+      }
+    }
+    // Place on map: aquatic spawns into an ocean cluster; land tribes
+    // grab a cluster of wasteland tiles around their lat/lon.
+    const lat = ev.civ.lat, lon = ev.civ.lon;
+    if (typeof lat === "number" && typeof lon === "number") {
+      const { col, row } = latLonToTile(lat, lon);
+      // For aquatic civ - flood-fill ocean tiles outward up to N tiles.
+      const target = ev.type === "spawn_aquatic" ? "ocean" : "land";
+      const want = ev.tileCount || 60;
+      const queue = [[col, row]];
+      const seen = new Set();
+      seen.add(row * COLS + col);
+      let claimed = 0;
+      while (queue.length && claimed < want) {
+        const [c, r] = queue.shift();
+        if (r < 0 || r >= ROWS || c < 0 || c >= COLS) continue;
+        const ok = target === "ocean" ? (MAP[r][c] === "ocean") : (PASSABLE(MAP[r][c]));
+        if (!ok) continue;
+        // For land target, only claim wasteland tiles (don't steal from the player).
+        if (target === "land" && state.ownership[r][c] >= 0) {
+          const ownerCiv = state.civs[civIndexById(state.ownership[r][c])];
+          if (ownerCiv && ownerCiv.isPlayer) continue;
+        }
+        state.ownership[r][c] = civ.id;
+        claimed++;
+        for (const [nc, nr] of neighbors(c, r)) {
+          const k = nr * COLS + nc;
+          if (!seen.has(k)) { seen.add(k); queue.push([nc, nr]); }
+        }
+      }
+      // Plant a settlement at the spawn tile (or first claimed tile).
+      civ.settlements.push({
+        id: nextSettlementId++, col, row,
+        name: ev.civ.name,
+        pop: 3, food: 0, prod: 0, queue: [], walls: false,
+      });
+      // Starting army.
+      civ.armies.push({
+        id: nextArmyId++, col, row,
+        type: "modern", count: 6, civId: civ.id, moves: 0,
+      });
+    }
+    log("event", ev.message);
     invalidateTintCache();
     return;
   }
@@ -3224,7 +3313,8 @@ function tick() {
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       if (MAP[r][c] === "ocean" && state.ownership[r][c] !== -1) {
-        state.ownership[r][c] = -1;
+        const ownerCiv = state.civs[civIndexById(state.ownership[r][c])];
+        if (!ownerCiv || !ownerCiv.aquaticOnly) state.ownership[r][c] = -1;
       }
     }
   }
@@ -7400,7 +7490,10 @@ function _solarBodyAtPoint(px, py) {
     const rect = cv.getBoundingClientRect();
     const mx = e.clientX - rect.left, my = e.clientY - rect.top;
     const factor = e.deltaY < 0 ? 1.2 : 1 / 1.2;
-    const newZoom = Math.max(0.00002, Math.min(20000, _solarView.zoom * factor));
+    // Unlimited zoom both ways (clamped to wide finite bounds so we don't
+    // hit floating-point precision wall - 10^-15 is sub-millimetre on a
+    // light-year scale, 10^15 is a million pixels per AU).
+    const newZoom = Math.max(1e-15, Math.min(1e15, _solarView.zoom * factor));
     // Anchor zoom on the mouse cursor.
     const w = cv.clientWidth, h = cv.clientHeight;
     const cxC = w / 2 + _solarView.panX, cyC = h / 2 + _solarView.panY;
