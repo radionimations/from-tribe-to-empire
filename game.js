@@ -3652,6 +3652,7 @@ function tick() {
     }
     for (const [planetName, grid] of Object.entries(state.planetOwnership)) {
       if (planetName === _curPlanetName) continue;
+      const planetIsEarth = planetName === "Earth";
 
       for (const civ of state.civs) {
         if (!civ.alive) continue;
@@ -3662,7 +3663,9 @@ function tick() {
             const ns = neighbors(army.col, army.row);
             const own = [], unowned = [], hostile = [];
             for (const [c, r] of ns) {
-              const okBiome = civ.aquaticOnly ? (MAP[r][c] === "ocean") : PASSABLE(MAP[r][c]);
+              const okBiome = planetIsEarth
+                ? (civ.aquaticOnly ? (MAP[r][c] === "ocean") : PASSABLE(MAP[r][c]))
+                : true;
               if (!okBiome) continue;
               const o = grid[r][c];
               if (o === -1) unowned.push([c, r]);
@@ -3743,8 +3746,10 @@ function tick() {
           let claimed = false;
           for (const [nc, nr] of ns) {
             if (grid[nr][nc] !== -1) continue;
-            if (civ.aquaticOnly) { if (MAP[nr][nc] !== "ocean") continue; }
-            else { if (!PASSABLE(MAP[nr][nc])) continue; }
+            if (planetIsEarth) {
+              if (civ.aquaticOnly) { if (MAP[nr][nc] !== "ocean") continue; }
+              else { if (!PASSABLE(MAP[nr][nc])) continue; }
+            }
             grid[nr][nc] = id;
             claimed = true;
             break;
@@ -6835,10 +6840,11 @@ function aiTryLaunchRocket(civ) {
   }
   const grid = state.planetOwnership[planetName];
   const candidates = [];
+  const planetIsEarth = planetName === "Earth";
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       if (grid[r][c] !== -1) continue;
-      if (MAP[r][c] === "ocean") continue;
+      if (planetIsEarth && MAP[r][c] === "ocean") continue;
       candidates.push([c, r]);
     }
   }
@@ -6847,7 +6853,7 @@ function aiTryLaunchRocket(civ) {
   grid[row][col] = civ.id;
   for (const [nc, nr] of neighbors(col, row)) {
     if (grid[nr][nc] !== -1) continue;
-    if (MAP[nr][nc] === "ocean") continue;
+    if (planetIsEarth && MAP[nr][nc] === "ocean") continue;
     grid[nr][nc] = civ.id;
   }
   ensurePlanetSettlement(civ, col, row, planetName);
@@ -6872,10 +6878,11 @@ function launchToPlanet(planetName, cost) {
   }
   const grid = state.planetOwnership[planetName];
   const candidates = [];
+  const planetIsEarth = planetName === "Earth";
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       if (grid[r][c] !== -1) continue;
-      if (MAP[r][c] === "ocean") continue;
+      if (planetIsEarth && MAP[r][c] === "ocean") continue;
       candidates.push([c, r]);
     }
   }
@@ -6887,7 +6894,7 @@ function launchToPlanet(planetName, cost) {
   grid[row][col] = player.id;
   for (const [nc, nr] of neighbors(col, row)) {
     if (grid[nr][nc] !== -1) continue;
-    if (MAP[nr][nc] === "ocean") continue;
+    if (planetIsEarth && MAP[nr][nc] === "ocean") continue;
     grid[nr][nc] = player.id;
   }
   ensurePlanetSettlement(player, col, row, planetName);
