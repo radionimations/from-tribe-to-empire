@@ -7193,50 +7193,125 @@ function resolveDominator(b) {
   if (!b.dominator) return null;
   return state.civs.find(c => c.alive && (c.name === b.dominator || (c.previousNames || []).includes(b.dominator))) || null;
 }
+function drawSolarBody(cv, body, scale) {
+  const cx = cv.getContext("2d");
+  cx.clearRect(0, 0, cv.width, cv.height);
+  const cxC = cv.width / 2, cyC = cv.height / 2;
+  const r = body.radius * scale;
+  const g = cx.createRadialGradient(cxC - r * 0.3, cyC - r * 0.3, r * 0.1, cxC, cyC, r);
+  g.addColorStop(0, "#ffffff");
+  g.addColorStop(0.15, body.color);
+  g.addColorStop(1, "#000");
+  cx.fillStyle = g;
+  cx.beginPath(); cx.arc(cxC, cyC, r, 0, Math.PI * 2); cx.fill();
+  if (body.name === "Saturn") {
+    cx.strokeStyle = "rgba(255, 220, 150, 0.65)";
+    cx.lineWidth = Math.max(1, scale);
+    cx.beginPath(); cx.ellipse(cxC, cyC, r * 1.6, r * 0.45, 0, 0, Math.PI * 2); cx.stroke();
+  }
+}
+
+function makeBodyCard(body, options) {
+  options = options || {};
+  const dom = resolveDominator(body);
+  const card = document.createElement("div");
+  card.style.cssText = "display:flex;flex-direction:column;align-items:center;cursor:pointer;min-width:" + (options.min || 96) + "px;transition:transform 0.3s, opacity 0.3s;";
+  const sz = options.canvas || 96;
+  const cv = document.createElement("canvas");
+  cv.width = sz; cv.height = sz;
+  drawSolarBody(cv, body, options.scale || 1);
+  card.appendChild(cv);
+  const nm = document.createElement("div");
+  nm.textContent = body.name;
+  nm.style.cssText = "color:#ffd24a;font-size:" + (options.nameSize || 13) + "px;letter-spacing:2px;margin-top:4px;";
+  card.appendChild(nm);
+  const sub = document.createElement("div");
+  sub.textContent = dom ? dom.name : "Uninhabited";
+  sub.style.cssText = "color:" + (dom ? "#cfbf95" : "#5a4a32") + ";font-size:" + (options.subSize || 10) + "px;margin-top:2px;text-align:center;max-width:160px;";
+  card.appendChild(sub);
+  return { card, dom };
+}
+
 function openSolarSystem() {
   const modal = document.getElementById("solar-system-modal");
   if (!modal) return;
   modal.style.display = "block";
   document.getElementById("solar-system-year").textContent = yearLabel(Math.floor(state.year));
   const container = document.getElementById("solar-system-bodies");
-  container.innerHTML = "";
-  for (const body of SOLAR_BODIES) {
-    const dom = resolveDominator(body);
-    const card = document.createElement("div");
-    card.style.cssText = "display:flex;flex-direction:column;align-items:center;cursor:" + (dom ? "pointer" : "default") + ";min-width:96px;";
-    const cv = document.createElement("canvas");
-    cv.width = 96; cv.height = 96;
-    const cx = cv.getContext("2d");
-    cx.clearRect(0, 0, 96, 96);
-    const r = body.radius;
-    const g = cx.createRadialGradient(48 - r * 0.3, 48 - r * 0.3, r * 0.1, 48, 48, r);
-    g.addColorStop(0, "#ffffff");
-    g.addColorStop(0.15, body.color);
-    g.addColorStop(1, "#000");
-    cx.fillStyle = g;
-    cx.beginPath(); cx.arc(48, 48, r, 0, Math.PI * 2); cx.fill();
-    if (body.name === "Saturn") {
-      cx.strokeStyle = "rgba(255, 220, 150, 0.5)";
-      cx.lineWidth = 2;
-      cx.beginPath(); cx.ellipse(48, 48, r * 1.6, r * 0.45, 0, 0, Math.PI * 2); cx.stroke();
+  container.style.transition = "opacity 0.35s";
+  container.style.opacity = "0";
+  setTimeout(() => {
+    container.innerHTML = "";
+    for (const body of SOLAR_BODIES) {
+      const { card, dom } = makeBodyCard(body);
+      card.addEventListener("click", () => zoomIntoPlanet(body.name));
+      container.appendChild(card);
     }
-    card.appendChild(cv);
-    const nm = document.createElement("div");
-    nm.textContent = body.name;
-    nm.style.cssText = "color:#ffd24a;font-size:13px;letter-spacing:2px;margin-top:4px;";
-    card.appendChild(nm);
-    const sub = document.createElement("div");
-    sub.textContent = dom ? dom.name : "Uninhabited";
-    sub.style.cssText = "color:" + (dom ? "#cfbf95" : "#5a4a32") + ";font-size:10px;margin-top:2px;text-align:center;max-width:140px;";
-    card.appendChild(sub);
-    if (dom) {
-      card.addEventListener("click", () => {
-        modal.style.display = "none";
-        showCountryPanel(dom);
-      });
+    container.style.opacity = "1";
+  }, 80);
+}
+
+function zoomIntoPlanet(bodyName) {
+  const modal = document.getElementById("solar-system-modal");
+  const container = document.getElementById("solar-system-bodies");
+  if (!container) return;
+  container.style.transition = "opacity 0.4s";
+  container.style.opacity = "0";
+  setTimeout(() => {
+    container.innerHTML = "";
+    const body = SOLAR_BODIES.find(b => b.name === bodyName);
+    if (!body) { openSolarSystem(); return; }
+    // Layout: back button row, big planet, moon row, dominator panel.
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "display:flex;flex-direction:column;align-items:center;width:100%;gap:18px;";
+    const back = document.createElement("button");
+    back.textContent = "← BACK TO SOLAR SYSTEM";
+    back.style.cssText = "background:#3a2a14;border:1px solid #6a5a3c;color:#fff5cc;padding:6px 16px;cursor:pointer;letter-spacing:2px;font-family:Georgia,serif;align-self:flex-start;margin-left:30px;";
+    back.addEventListener("click", openSolarSystem);
+    wrap.appendChild(back);
+    // Big planet, scaled up 4x with click-to-surface stub.
+    const big = makeBodyCard(body, { canvas: 320, scale: 5, nameSize: 24, subSize: 13, min: 320 });
+    big.card.style.cursor = "pointer";
+    big.card.addEventListener("click", () => {
+      flashHint("Surface view of " + body.name + " is not yet built.");
+    });
+    wrap.appendChild(big.card);
+    // Moons of this body (children where parent === bodyName).
+    const moons = SOLAR_BODIES.filter(b => b.parent === bodyName);
+    if (moons.length > 0) {
+      const moonRow = document.createElement("div");
+      moonRow.style.cssText = "display:flex;gap:24px;justify-content:center;flex-wrap:wrap;margin-top:8px;";
+      const lbl = document.createElement("div");
+      lbl.textContent = "MOONS";
+      lbl.style.cssText = "width:100%;text-align:center;color:#a89678;font-size:11px;letter-spacing:3px;margin-bottom:6px;";
+      moonRow.appendChild(lbl);
+      for (const moon of moons) {
+        const mc = makeBodyCard(moon, { canvas: 110, scale: 1.4 });
+        mc.card.addEventListener("click", () => zoomIntoPlanet(moon.name));
+        moonRow.appendChild(mc.card);
+      }
+      wrap.appendChild(moonRow);
     }
-    container.appendChild(card);
-  }
+    // Parent body link (if this is a moon).
+    if (body.parent && body.parent !== "Sun" && body.parent !== "(deep space)") {
+      const pwrap = document.createElement("div");
+      pwrap.style.cssText = "color:#a89678;font-size:11px;margin-top:6px;";
+      pwrap.textContent = "Orbiting ";
+      const plink = document.createElement("a");
+      plink.textContent = body.parent;
+      plink.style.cssText = "color:#ffd24a;cursor:pointer;text-decoration:underline;";
+      plink.addEventListener("click", () => zoomIntoPlanet(body.parent));
+      pwrap.appendChild(plink);
+      wrap.appendChild(pwrap);
+    }
+    // Surface-view hint.
+    const hint = document.createElement("div");
+    hint.textContent = "Click the planet to descend to its surface (placeholder for now).";
+    hint.style.cssText = "color:#5a4a32;font-size:11px;margin-top:8px;";
+    wrap.appendChild(hint);
+    container.appendChild(wrap);
+    container.style.opacity = "1";
+  }, 380);
 }
 const _solarBtn = document.getElementById("solar-system-btn");
 if (_solarBtn) _solarBtn.addEventListener("click", openSolarSystem);
