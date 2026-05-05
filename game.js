@@ -7242,29 +7242,206 @@ function makeBodyCard(body, options) {
   return { card, dom };
 }
 
+// Canvas-based orbital solar map. Bodies are drawn at real AU
+// distances from the Sun (fixed orbital angles); planet display sizes
+// stay constant in screen px so zoom only affects orbit radii. Mouse
+// wheel zooms (cursor-anchored), drag pans. Zoom range is huge - far
+// enough out to see Proxima Centauri at 268,000 AU.
+const SOLAR_ORBITS = [
+  { name: "Sun",                color: "#ffd24a", au: 0,        size: 28, angle: 0,    parent: null,     dominator: null },
+  { name: "Mercury",            color: "#a89678", au: 0.39,     size: 6,  angle: 0.6,  parent: "Sun",    dominator: null },
+  { name: "Venus",              color: "#e8c020", au: 0.72,     size: 8,  angle: 1.4,  parent: "Sun",    dominator: "Republic of Venus" },
+  { name: "Earth",              color: "#3a8a4a", au: 1.0,      size: 9,  angle: 2.3,  parent: "Sun",    dominator: "<largest>" },
+  { name: "Moon",               color: "#cfcfcf", au: 0.0026,   size: 3,  angle: 0.5,  parent: "Earth",  dominator: "Lunar Republic" },
+  { name: "Mars",               color: "#c84a3a", au: 1.52,     size: 7,  angle: 3.1,  parent: "Sun",    dominator: "Mars Republic" },
+  { name: "Phobos",             color: "#7a5a3a", au: 0.00006,  size: 2,  angle: 1.0,  parent: "Mars",   dominator: "Mars Republic" },
+  { name: "Deimos",             color: "#7a5a3a", au: 0.00016,  size: 2,  angle: 4.0,  parent: "Mars",   dominator: "Mars Republic" },
+  { name: "Asteroid Belt",      color: "#a8a8a8", au: 2.7,      size: 4,  angle: 4.0,  parent: "Sun",    dominator: "Asteroid Belt Coalition" },
+  { name: "Jupiter",            color: "#d4b85a", au: 5.2,      size: 16, angle: 4.7,  parent: "Sun",    dominator: null },
+  { name: "Europa",             color: "#cfe4ff", au: 0.00448,  size: 3,  angle: 1.2,  parent: "Jupiter", dominator: null },
+  { name: "Saturn",             color: "#e8c075", au: 9.58,     size: 14, angle: 5.4,  parent: "Sun",    dominator: "Saturn Moons Confederation" },
+  { name: "Titan",              color: "#d4a657", au: 0.00817,  size: 3,  angle: 2.5,  parent: "Saturn", dominator: "Saturn Moons Confederation" },
+  { name: "Uranus",             color: "#5dc4e8", au: 19.2,     size: 11, angle: 0.3,  parent: "Sun",    dominator: null },
+  { name: "Neptune",            color: "#3a6ad8", au: 30.05,    size: 11, angle: 1.0,  parent: "Sun",    dominator: null },
+  { name: "Pluto",              color: "#a89678", au: 39.48,    size: 4,  angle: 2.1,  parent: "Sun",    dominator: null },
+  { name: "Proxima Centauri b", color: "#7d3ad8", au: 268000,   size: 7,  angle: 5.6,  parent: null,     dominator: "Centauri Authority" },
+];
+// Keep SOLAR_BODIES populated from SOLAR_ORBITS so the zoomIntoPlanet
+// helper still works (it expects radius + parent fields).
+SOLAR_BODIES.length = 0;
+for (const o of SOLAR_ORBITS) {
+  SOLAR_BODIES.push({ name: o.name, color: o.color, radius: o.size + 6, dominator: o.dominator, isOrbit: !!o.parent, parent: o.parent });
+}
+
+const _solarView = { panX: 0, panY: 0, zoom: 30 };   // zoom = px per AU
+let _solarRAF = null;
+
+function _solarBodyPos(body) {
+  if (body.parent) {
+    const parent = SOLAR_ORBITS.find(b => b.name === body.parent);
+    if (parent) {
+      const pp = _solarBodyPos(parent);
+      return {
+        x: pp.x + Math.cos(body.angle) * body.au,
+        y: pp.y + Math.sin(body.angle) * body.au,
+      };
+    }
+  }
+  return {
+    x: Math.cos(body.angle) * body.au,
+    y: Math.sin(body.angle) * body.au,
+  };
+}
+
+function renderSolarSystem() {
+  const cv = document.getElementById("solar-system-canvas");
+  if (!cv || cv.style.display === "none") return;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const cx = cv.getContext("2d");
+  cx.clearRect(0, 0, w, h);
+  const cxC = w / 2 + _solarView.panX;
+  const cyC = h / 2 + _solarView.panY;
+  const z = _solarView.zoom;
+  // Draw orbital rings.
+  for (const body of SOLAR_ORBITS) {
+    if (body.au === 0) continue;
+    const ringRadius = body.au * z;
+    if (ringRadius < 4 || ringRadius > Math.max(w, h) * 50) continue;   // skip absurdly small/large
+    const parentPos = body.parent ? _solarBodyPos(SOLAR_ORBITS.find(b => b.name === body.parent)) : { x: 0, y: 0 };
+    cx.strokeStyle = "rgba(120, 100, 70, 0.15)";
+    cx.lineWidth = 1;
+    cx.beginPath();
+    cx.arc(cxC + parentPos.x * z, cyC + parentPos.y * z, ringRadius, 0, Math.PI * 2);
+    cx.stroke();
+  }
+  // Draw bodies.
+  for (const body of SOLAR_ORBITS) {
+    const p = _solarBodyPos(body);
+    const sx = cxC + p.x * z, sy = cyC + p.y * z;
+    if (sx < -200 || sx > w + 200 || sy < -200 || sy > h + 200) continue;
+    const r = body.size;
+    const g = cx.createRadialGradient(sx - r * 0.3, sy - r * 0.3, r * 0.1, sx, sy, r);
+    g.addColorStop(0, "#ffffff");
+    g.addColorStop(0.2, body.color);
+    g.addColorStop(1, "#000");
+    cx.fillStyle = g;
+    cx.beginPath(); cx.arc(sx, sy, r, 0, Math.PI * 2); cx.fill();
+    if (body.name === "Saturn") {
+      cx.strokeStyle = "rgba(255, 220, 150, 0.6)";
+      cx.lineWidth = 1.5;
+      cx.beginPath(); cx.ellipse(sx, sy, r * 1.6, r * 0.45, 0, 0, Math.PI * 2); cx.stroke();
+    }
+    if (body.au === 0 || r >= 5) {
+      cx.fillStyle = "#ffd24a";
+      cx.font = (r >= 12 ? "13px" : "11px") + ' Georgia, serif';
+      cx.textAlign = "center";
+      cx.fillText(body.name, sx, sy + r + 14);
+      const dom = resolveDominator(body);
+      if (dom) {
+        cx.fillStyle = "#cfbf95";
+        cx.font = '10px Georgia, serif';
+        cx.fillText(dom.name, sx, sy + r + 28);
+      }
+    }
+  }
+}
+
+function _solarFrame() {
+  renderSolarSystem();
+  _solarRAF = null;
+}
+function _solarRequestRender() {
+  if (_solarRAF) return;
+  _solarRAF = requestAnimationFrame(_solarFrame);
+}
+function _solarBodyAtPoint(px, py) {
+  const cv = document.getElementById("solar-system-canvas");
+  if (!cv) return null;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  const cxC = w / 2 + _solarView.panX, cyC = h / 2 + _solarView.panY;
+  const z = _solarView.zoom;
+  let best = null, bestD = 22 * 22;
+  for (const body of SOLAR_ORBITS) {
+    const p = _solarBodyPos(body);
+    const sx = cxC + p.x * z, sy = cyC + p.y * z;
+    const dx = sx - px, dy = sy - py;
+    const d = dx * dx + dy * dy;
+    if (d < (body.size + 6) * (body.size + 6) && d < bestD) {
+      bestD = d; best = body;
+    }
+  }
+  return best;
+}
+(function wireSolarCanvas() {
+  const cv = document.getElementById("solar-system-canvas");
+  if (!cv) return;
+  let dragging = null;
+  cv.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const rect = cv.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.2 : 1 / 1.2;
+    const newZoom = Math.max(0.00002, Math.min(20000, _solarView.zoom * factor));
+    // Anchor zoom on the mouse cursor.
+    const w = cv.clientWidth, h = cv.clientHeight;
+    const cxC = w / 2 + _solarView.panX, cyC = h / 2 + _solarView.panY;
+    _solarView.panX = mx - w / 2 - (mx - cxC) * (newZoom / _solarView.zoom);
+    _solarView.panY = my - h / 2 - (my - cyC) * (newZoom / _solarView.zoom);
+    _solarView.zoom = newZoom;
+    _solarRequestRender();
+  }, { passive: false });
+  cv.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    dragging = { x: e.clientX, y: e.clientY, panX: _solarView.panX, panY: _solarView.panY, moved: false };
+    cv.style.cursor = "grabbing";
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - dragging.x, dy = e.clientY - dragging.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) dragging.moved = true;
+    _solarView.panX = dragging.panX + dx;
+    _solarView.panY = dragging.panY + dy;
+    _solarRequestRender();
+  });
+  window.addEventListener("mouseup", (e) => {
+    if (!dragging) return;
+    if (!dragging.moved) {
+      const rect = cv.getBoundingClientRect();
+      const body = _solarBodyAtPoint(e.clientX - rect.left, e.clientY - rect.top);
+      if (body) zoomIntoPlanet(body.name);
+    }
+    dragging = null;
+    cv.style.cursor = "grab";
+  });
+})();
+
 function openSolarSystem() {
   const modal = document.getElementById("solar-system-modal");
   if (!modal) return;
   modal.style.display = "block";
   document.getElementById("solar-system-year").textContent = yearLabel(Math.floor(state.year));
-  const container = document.getElementById("solar-system-bodies");
-  container.style.transition = "opacity 0.35s";
-  container.style.opacity = "0";
-  setTimeout(() => {
-    container.innerHTML = "";
-    for (const body of SOLAR_BODIES) {
-      const { card, dom } = makeBodyCard(body);
-      card.addEventListener("click", () => zoomIntoPlanet(body.name));
-      container.appendChild(card);
-    }
-    container.style.opacity = "1";
-  }, 80);
+  document.getElementById("solar-system-bodies").style.display = "none";
+  const cv = document.getElementById("solar-system-canvas");
+  if (cv) cv.style.display = "block";
+  // Reset to a sensible default view that fits the inner solar system.
+  _solarView.panX = 0; _solarView.panY = 0; _solarView.zoom = 50;
+  _solarRequestRender();
 }
 
 function zoomIntoPlanet(bodyName) {
   const modal = document.getElementById("solar-system-modal");
   const container = document.getElementById("solar-system-bodies");
   if (!container) return;
+  // Switch from canvas view to the zoomed-in card view.
+  const cv = document.getElementById("solar-system-canvas");
+  if (cv) cv.style.display = "none";
+  container.style.display = "flex";
+  container.style.flexWrap = "wrap";
+  container.style.justifyContent = "center";
+  container.style.alignItems = "center";
+  container.style.gap = "18px 32px";
+  container.style.padding = "0 30px 60px";
   container.style.transition = "opacity 0.4s";
   container.style.opacity = "0";
   setTimeout(() => {
