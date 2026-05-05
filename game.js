@@ -6199,16 +6199,18 @@ function drawCivBlobLabels() {
   }
   for (const civ of state.civs) {
     if (!civ.alive || !civ._components || civ._components.length === 0) continue;
-    if (factionMode && memberIdSet.has(civ.id)) continue;   
+    if (factionMode && memberIdSet.has(civ.id)) continue;
     const text = civ.name.toUpperCase();
+    let drewAny = false;
+    let fallbackComp = null;
     for (const comp of civ._components) {
+      if (!fallbackComp || comp.tiles > fallbackComp.tiles) fallbackComp = comp;
       if (comp.tiles < 2) continue;
       let cx = (comp.col + 0.5) * TILE;
       let cy = (comp.row + 0.5) * TILE;
       const angle = comp.angle || 0;
       const dx = Math.cos(angle), dy = Math.sin(angle);
 
-      
       let lenFwd = inscribedExtent(cx, cy, dx, dy, civ.id);
       let lenRev = inscribedExtent(cx, cy, -dx, -dy, civ.id);
       if (lenFwd + lenRev < TILE * 1.5) {
@@ -6225,7 +6227,7 @@ function drawCivBlobLabels() {
       const fitByWidth = lengthMap * 0.86 / Math.max(4, text.length * charW);
       const fitByHeight = heightMap * 0.55;
       const fontMap = Math.max(2, Math.min(56, Math.min(fitByWidth, fitByHeight)));
-      if (fontMap < 2.5) continue;   
+      if (fontMap < 2.5) continue;
 
       ctx.save();
       ctx.translate(cx, cy);
@@ -6237,6 +6239,21 @@ function drawCivBlobLabels() {
       ctx.strokeText(text, 0, 0);
       ctx.fillStyle = "#15110a";
       ctx.fillText(text, 0, 0);
+      ctx.restore();
+      drewAny = true;
+    }
+    if (!drewAny && fallbackComp) {
+      const cx = (fallbackComp.col + 0.5) * TILE;
+      const cy = (fallbackComp.row + 0.5) * TILE;
+      const fontMap = Math.max(6, Math.min(20, Math.sqrt(fallbackComp.tiles) * 4));
+      ctx.save();
+      ctx.font = `bold ${fontMap}px "Trajan Pro", "Cinzel", Georgia, serif`;
+      ctx.lineWidth = Math.max(0.4, fontMap * 0.22);
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(245,235,210,0.9)";
+      ctx.strokeText(text, cx, cy);
+      ctx.fillStyle = "#15110a";
+      ctx.fillText(text, cx, cy);
       ctx.restore();
     }
   }
