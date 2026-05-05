@@ -3060,7 +3060,6 @@ function fireEvent(ev) {
         const col = Math.max(0, Math.min(COLS - 1, Math.floor(sd.x / TILE)));
         const row = Math.max(0, Math.min(ROWS - 1, Math.floor(sd.y / TILE)));
         if (state.ownership[row][col] !== wasteland.id) continue;
-        wasteland.armies.push({ id: nextArmyId++, col, row, type: "modern", count: 4, civId: wasteland.id, moves: 0, planet: "Earth" });
         wasteland.settlements.push({
           id: nextSettlementId++, col, row,
           name: "Wasteland Outpost",
@@ -3069,6 +3068,9 @@ function fireEvent(ev) {
         placed++;
       }
     }
+    wasteland.armies = [];
+    wasteland.cantMakeUnits = true;
+    wasteland.cantMoveUnits = true;
     log("war", ev.message);
     invalidateTintCache();
     return;
@@ -3536,9 +3538,14 @@ function tick() {
   
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
-      if (MAP[r][c] === "ocean" && state.ownership[r][c] !== -1) {
-        const ownerCiv = state.civs[civIndexById(state.ownership[r][c])];
-        if (!ownerCiv || !ownerCiv.aquaticOnly) state.ownership[r][c] = -1;
+      const o = state.ownership[r][c];
+      if (o === -1) continue;
+      const ownerCiv = state.civs[civIndexById(o)];
+      if (!ownerCiv) { state.ownership[r][c] = -1; continue; }
+      if (MAP[r][c] === "ocean" && !ownerCiv.aquaticOnly) {
+        state.ownership[r][c] = -1;
+      } else if (MAP[r][c] !== "ocean" && ownerCiv.aquaticOnly) {
+        state.ownership[r][c] = -1;
       }
     }
   }
@@ -3563,12 +3570,23 @@ function tick() {
   
   maybeTriggerWarMode();
 
-  // Off-screen planet evolution. While the player is on Earth, every
-  // other planet whose ownership grid exists also evolves: each civ
-  // with a presence on that planet picks a random border tile and
-  // claims one adjacent unowned, biome-appropriate tile per tick. So
-  // the Lunar Republic / Mars Republic / Squid Empire keep expanding
-  // even when no one's looking at them.
+  // Auto-seed planet ownership grids for any body in PLANET_RESIDENTS
+  // whose residents are now alive. Without this, Mars/Moon/etc only
+  // start evolving once the player visits, and the off-screen tick has
+  // nothing to iterate over.
+  if (typeof PLANET_RESIDENTS !== "undefined" && typeof rebuildPlanetOwnership === "function") {
+    if (!state.planetOwnership) state.planetOwnership = {};
+    for (const planetName of Object.keys(PLANET_RESIDENTS)) {
+      if (state.planetOwnership[planetName]) continue;
+      const residentNames = PLANET_RESIDENTS[planetName] || [];
+      const anyAlive = residentNames.some(nm =>
+        state.civs.find(c => c.alive && (c.name === nm || (c.previousNames || []).includes(nm)))
+      );
+      if (!anyAlive) continue;
+      state.planetOwnership[planetName] = rebuildPlanetOwnership(planetName);
+    }
+  }
+
   if (state.planetOwnership) {
     for (const [planetName, grid] of Object.entries(state.planetOwnership)) {
       if (planetName === "Earth") continue;
@@ -3744,6 +3762,14 @@ function tick() {
 }
 
 function aiTurn(civ) {
+
+  if (civ.cantMakeUnits || civ.name === "Nuclear Wasteland") {
+    civ.armies = [];
+    for (const s of civ.settlements) {
+      s.queue = (s.queue || []).filter(q => q.type === "wall");
+    }
+    return;
+  }
 
   for (const s of civ.settlements) {
     if (s.queue.length > 0) continue;
@@ -4137,10 +4163,9 @@ function sameFaction(civAId, civBId) {
 }
 
 function tryMoveOrAttack(army, toC, toR) {
-  // Rocket Scraps are immovable - they sit at their build city until
-  // launched. Block any move attempt.
   if (army.type === "rocket_scraps") return false;
   const civ = state.civs[civIndexById(army.civId)];
+  if (civ && (civ.cantMoveUnits || civ.name === "Nuclear Wasteland")) return false;
   if (!canMoveInto(civ, MAP[toR][toC])) return false;
   const unitDef = UNITS[army.type];
   
