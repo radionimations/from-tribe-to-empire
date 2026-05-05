@@ -7692,6 +7692,20 @@ function _loadPlanetTexture(body) {
   _planetTextureCache[body.name] = img;
 }
 
+function _showDescendingOverlay(bodyName) {
+  const ov = document.getElementById("planet-descend-overlay");
+  const t = document.getElementById("planet-descend-title");
+  const s = document.getElementById("planet-descend-sub");
+  if (!ov) return;
+  if (t) t.textContent = "— DESCENDING TO " + bodyName.toUpperCase() + " —";
+  if (s) s.textContent = "Loading surface projection…";
+  ov.style.display = "flex";
+}
+function _hideDescendingOverlay() {
+  const ov = document.getElementById("planet-descend-overlay");
+  if (ov) ov.style.display = "none";
+}
+
 function enterPlanetSurface(bodyName) {
   if (!bodyName || bodyName === "Earth") {
     const modal = document.getElementById("solar-system-modal");
@@ -7702,6 +7716,9 @@ function enterPlanetSurface(bodyName) {
   if (state.currentPlanet && state.currentPlanet !== "Earth") {
     exitPlanetSurface();
   }
+  // Show the descending overlay so the player has something to look at
+  // while the surface projection loads.
+  _showDescendingOverlay(bodyName);
   // Kick off texture load if available.
   const obody = SOLAR_ORBITS.find(b => b.name === bodyName);
   if (obody) _loadPlanetTexture(obody);
@@ -7729,6 +7746,18 @@ function enterPlanetSurface(bodyName) {
   if (back) back.style.display = "";
   invalidateTintCache();
   render();
+  // Hide descending overlay once the texture is ready (or immediately
+  // after a short delay if there's no texture for this body).
+  const tex = obody && obody.texture ? _planetTextureCache[bodyName] : null;
+  if (tex && !tex.complete) {
+    const onDone = () => { _hideDescendingOverlay(); render(); };
+    tex.addEventListener("load", onDone, { once: true });
+    tex.addEventListener("error", onDone, { once: true });
+    // Safety timeout - hide after 12s even if image is slow.
+    setTimeout(_hideDescendingOverlay, 12000);
+  } else {
+    setTimeout(_hideDescendingOverlay, 600);
+  }
 }
 function exitPlanetSurface() {
   if (!state.currentPlanet || state.currentPlanet === "Earth") return;

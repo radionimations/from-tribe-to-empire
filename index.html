@@ -1253,6 +1253,14 @@
   <div id="map-wrap">
     <canvas id="map"></canvas>
     <canvas id="overlay"></canvas>
+    <div id="planet-descend-overlay" style="display:none;position:absolute;inset:0;background:radial-gradient(circle at 50% 50%, rgba(8,6,10,0.92) 0%, rgba(2,1,12,0.98) 80%);z-index:700;flex-direction:column;align-items:center;justify-content:center;color:#ffd24a;font-family:Georgia,serif;text-align:center;">
+      <div id="planet-descend-title" style="font-size:36px;letter-spacing:14px;margin-bottom:18px;text-shadow:0 0 30px rgba(255,210,74,0.6);">— DESCENDING —</div>
+      <div id="planet-descend-sub" style="font-size:14px;letter-spacing:3px;color:#cfbf95;margin-bottom:30px;">Loading surface projection…</div>
+      <div style="width:240px;height:6px;background:#1a0e04;border:1px solid #6a5a3c;border-radius:3px;overflow:hidden;">
+        <div id="planet-descend-bar" style="height:100%;background:linear-gradient(90deg,#a8923a,#ffd24a);width:5%;animation:planet-descend-pulse 1.4s linear infinite;"></div>
+      </div>
+      <style>@keyframes planet-descend-pulse { 0%{width:5%;margin-left:0%}50%{width:55%;margin-left:25%}100%{width:5%;margin-left:95%} }</style>
+    </div>
     <button id="planet-return-btn" style="display:none;position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:200;padding:8px 18px;background:linear-gradient(180deg,#3a2a14,#1a0e04);border:1px solid #ffd24a;color:#fff5cc;letter-spacing:3px;font-family:Georgia,serif;cursor:pointer;">↑ RETURN TO SOLAR SYSTEM</button>
     <div id="planet-banner" style="display:none;position:absolute;top:60px;left:50%;transform:translateX(-50%);z-index:200;color:#ffd24a;letter-spacing:6px;font-family:Georgia,serif;font-size:18px;text-shadow:0 0 14px rgba(0,0,0,0.9);">— —</div>
     <button id="player-flag-btn" class="hidden" title="View your country">
