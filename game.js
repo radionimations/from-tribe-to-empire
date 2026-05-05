@@ -5464,10 +5464,13 @@ function render() {
   
   const _now = performance.now();
   const _tickMs = (state.phase === "playing" && state.speed > 0) ? SPEED_TURN_MS[state.speed] : 0;
-  const _skipArmies = state.currentPlanet && state.currentPlanet !== "Earth";
-  if (!_skipArmies) for (const civ of state.civs) {
+  const _currentPlanet = state.currentPlanet || "Earth";
+  for (const civ of state.civs) {
     if (!civ.alive) continue;
     for (const a of civ.armies) {
+      // Per-planet armies: only show armies tagged for the planet
+      // we're viewing (default Earth for legacy armies).
+      if ((a.planet || "Earth") !== _currentPlanet) continue;
       let aCol = a.col, aRow = a.row;
       
       if (a.moveStartedAt && _tickMs > 0 && _tickMs !== Infinity && a.prevCol != null) {
@@ -5599,14 +5602,15 @@ function render() {
     }
   }
 
-  // Capitals, HOI4 cities, country labels, and unit markers all live
-  // on the Earth ownership grid - skip them when viewing another
-  // planet so we don't see Earth-side cities + armies under a Mars
-  // texture.
+  // Country labels + per-planet settlement/army markers. HOI4 city
+  // dots are Earth-only (they're a fixed dataset). Settlements have
+  // an optional `planet` field that defaults to "Earth"; we filter
+  // by it inside drawSettlementMarkers, so player colonies on Mars
+  // appear only on Mars's surface render.
+  drawCivBlobLabels();
+  drawSettlementMarkers();
   if (!state.currentPlanet || state.currentPlanet === "Earth") {
     drawHoi4Cities();
-    drawCivBlobLabels();
-    drawSettlementMarkers();
   }
 
   ctx.restore();
@@ -5635,13 +5639,15 @@ function drawHoi4Cities() {
 }
 
 function drawSettlementMarkers() {
-  
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
+  const currentPlanet = state.currentPlanet || "Earth";
   for (const civ of state.civs) {
     if (!civ.alive) continue;
     for (let i = 0; i < civ.settlements.length; i++) {
       const s = civ.settlements[i];
+      // Only draw settlements that belong on the planet we're viewing.
+      if ((s.planet || "Earth") !== currentPlanet) continue;
       const x = (s.col + 0.5) * TILE;
       const y = (s.row + 0.5) * TILE;
       if (i === 0) {
@@ -6259,25 +6265,35 @@ window.openLaunchPicker = function () {
   modal.style.display = "flex";
 };
 
+function ensurePlanetSettlement(civ, col, row, planetName) {
+  if (!civ.settlements) civ.settlements = [];
+  for (const s of civ.settlements) {
+    if (s.col === col && s.row === row && (s.planet || "Earth") === planetName) return s;
+  }
+  const s = {
+    id: nextSettlementId++,
+    col, row,
+    name: civ.name + " Colony",
+    pop: 3, food: 0, prod: 0, queue: [], walls: false,
+    planet: planetName,
+  };
+  civ.settlements.push(s);
+  return s;
+}
+
 function launchToPlanet(planetName, cost) {
   const player = state.civs[0];
   if (!player || !player.isPlayer || !player.alive) return;
   if (!consumePlayerScraps(cost)) return;
-  // Lazy-init the planet's ownership grid using the same logic as
-  // descend-to-surface, so the resident civs are present too.
   if (!state.planetOwnership) state.planetOwnership = {};
   if (!state.planetOwnership[planetName]) {
     state.planetOwnership[planetName] = rebuildPlanetOwnership(planetName);
   }
   const grid = state.planetOwnership[planetName];
-  // Find every no-man's-land passable tile.
   const candidates = [];
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       if (grid[r][c] !== -1) continue;
-      // For aquatic-only planets we don't have - any planet allows land.
-      // Skip ocean tiles (since planets reuse Earth's biome grid; actual
-      // ocean tiles would be the same regardless).
       if (MAP[r][c] === "ocean") continue;
       candidates.push([c, r]);
     }
@@ -6288,9 +6304,14 @@ function launchToPlanet(planetName, cost) {
   }
   const [col, row] = candidates[Math.floor(Math.random() * candidates.length)];
   grid[row][col] = player.id;
-  log("event", "🚀 " + player.name + " launches a rocket to " + planetName + " (-" + cost + " scraps) and lands at an uncharted tile!");
-  // If the player is currently on Earth, immediately descend to the
-  // landed planet so they can see where they are.
+  // Plant a colony city + starting army at the landing tile so the
+  // player has somewhere to build immediately.
+  ensurePlanetSettlement(player, col, row, planetName);
+  player.armies.push({
+    id: nextArmyId++, col, row,
+    type: "modern", count: 3, civId: player.id, moves: 1, planet: planetName,
+  });
+  log("event", "🚀 " + player.name + " launches a rocket to " + planetName + " (-" + cost + " scraps) and founds a colony.");
   if (state.currentPlanet === "Earth" || !state.currentPlanet) {
     enterPlanetSurface(planetName);
   } else {
@@ -7915,6 +7936,18 @@ function rebuildPlanetOwnership(bodyName) {
       for (const [nc, nr] of neighbors(c, r)) {
         const k = nr * COLS + nc;
         if (!visited.has(k)) { visited.add(k); queue.push([nc, nr]); }
+      }
+    }
+    // Plant a capital city + starting garrison at the seed so the
+    // resident has somewhere to build from.
+    if (claimed > 0) {
+      ensurePlanetSettlement(seed.civ, seed.col, seed.row, bodyName);
+      const hasArmy = (seed.civ.armies || []).some(a => a.col === seed.col && a.row === seed.row && (a.planet || "Earth") === bodyName);
+      if (!hasArmy) {
+        seed.civ.armies.push({
+          id: nextArmyId++, col: seed.col, row: seed.row,
+          type: "modern", count: 3, civId: seed.civ.id, moves: 1, planet: bodyName,
+        });
       }
     }
   }
