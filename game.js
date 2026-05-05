@@ -7361,13 +7361,14 @@ function _solarBodyAtPoint(px, py) {
   const w = cv.clientWidth, h = cv.clientHeight;
   const cxC = w / 2 + _solarView.panX, cyC = h / 2 + _solarView.panY;
   const z = _solarView.zoom;
-  let best = null, bestD = 22 * 22;
+  let best = null, bestD = 50 * 50;   // generous click radius
   for (const body of SOLAR_ORBITS) {
     const p = _solarBodyPos(body);
     const sx = cxC + p.x * z, sy = cyC + p.y * z;
     const dx = sx - px, dy = sy - py;
     const d = dx * dx + dy * dy;
-    if (d < (body.size + 6) * (body.size + 6) && d < bestD) {
+    const hit = (body.size + 14) * (body.size + 14);
+    if (d < hit && d < bestD) {
       bestD = d; best = body;
     }
   }
@@ -7399,7 +7400,7 @@ function _solarBodyAtPoint(px, py) {
   window.addEventListener("mousemove", (e) => {
     if (!dragging) return;
     const dx = e.clientX - dragging.x, dy = e.clientY - dragging.y;
-    if (Math.abs(dx) + Math.abs(dy) > 3) dragging.moved = true;
+    if (Math.abs(dx) + Math.abs(dy) > 6) dragging.moved = true;
     _solarView.panX = dragging.panX + dx;
     _solarView.panY = dragging.panY + dy;
     _solarRequestRender();
@@ -7463,6 +7464,15 @@ function zoomIntoPlanet(bodyName) {
       enterPlanetSurface(body.name);
     });
     wrap.appendChild(big.card);
+    // Explicit Descend button so the click target isn't ambiguous.
+    const descend = document.createElement("button");
+    descend.textContent = "↓ DESCEND TO SURFACE";
+    descend.style.cssText = "background:linear-gradient(180deg,#a8923a,#624a14);border:1px solid #ffd24a;color:#fff5cc;padding:8px 22px;letter-spacing:3px;font-family:Georgia,serif;cursor:pointer;font-weight:bold;";
+    descend.addEventListener("click", (e) => {
+      e.stopPropagation();
+      enterPlanetSurface(body.name);
+    });
+    wrap.appendChild(descend);
     // Moons of this body (children where parent === bodyName).
     const moons = SOLAR_BODIES.filter(b => b.parent === bodyName);
     if (moons.length > 0) {
