@@ -3418,22 +3418,21 @@ function tick() {
         if (item.progress >= cost) {
           s.prod = 0;
           s.queue.shift();
+          const sPlanet = s.planet || "Earth";
           if (item.type === "settler") {
-            
             civ.armies.push({
               id: nextArmyId++, col: s.col, row: s.row,
-              type: "settler", count: 1, civId: civ.id, moves: 1,
+              type: "settler", count: 1, civId: civ.id, moves: 1, planet: sPlanet,
             });
             if (civ.isPlayer) log("peace", `${s.name} produces a Settler.`);
           } else {
-            
-            let army = civ.armies.find(a => a.col === s.col && a.row === s.row && a.type === item.type);
+            let army = civ.armies.find(a => a.col === s.col && a.row === s.row && a.type === item.type && (a.planet || "Earth") === sPlanet);
             if (army) {
               army.count++;
             } else {
               civ.armies.push({
                 id: nextArmyId++, col: s.col, row: s.row,
-                type: item.type, count: 1, civId: civ.id, moves: 1,
+                type: item.type, count: 1, civId: civ.id, moves: 1, planet: sPlanet,
               });
             }
             if (civ.isPlayer) log("peace", `${s.name} trains ${UNITS[item.type].name}.`);
@@ -3600,51 +3599,78 @@ function tick() {
   if (state.planetOwnership) {
     for (const [planetName, grid] of Object.entries(state.planetOwnership)) {
       if (planetName === "Earth") continue;
-      // Pass 1: planet-tagged armies actually MOVE + claim their next
-      // step. Each army tries one neighbour per tick (matching the
-      // pacing of Earth's per-army-per-tick movement).
+      if (planetName === state.currentPlanet) continue;
+
       for (const civ of state.civs) {
         if (!civ.alive) continue;
         const planetArmies = (civ.armies || []).filter(a => (a.planet || "Earth") === planetName);
         if (planetArmies.length === 0) continue;
         for (const army of planetArmies) {
-          // Find a valid neighbour to move into (unowned/own, or hostile if attacker).
-          const ns = neighbors(army.col, army.row);
-          // Prefer unowned, biome-appropriate tiles.
-          const candidates = ns.filter(([c, r]) => {
-            const okBiome = civ.aquaticOnly ? (MAP[r][c] === "ocean") : PASSABLE(MAP[r][c]);
-            if (!okBiome) return false;
-            const o = grid[r][c];
-            return o === -1 || o === civ.id;
-          });
-          if (candidates.length === 0) continue;
-          const [nc, nr] = candidates[Math.floor(Math.random() * candidates.length)];
-          if (grid[nr][nc] === -1) grid[nr][nc] = civ.id;
-          army.prevCol = army.col;
-          army.prevRow = army.row;
-          army.moveStartedAt = performance.now();
-          army.col = nc;
-          army.row = nr;
+          for (let step = 0; step < 2; step++) {
+            const ns = neighbors(army.col, army.row);
+            const own = [], unowned = [], hostile = [];
+            for (const [c, r] of ns) {
+              const okBiome = civ.aquaticOnly ? (MAP[r][c] === "ocean") : PASSABLE(MAP[r][c]);
+              if (!okBiome) continue;
+              const o = grid[r][c];
+              if (o === -1) unowned.push([c, r]);
+              else if (o === civ.id) own.push([c, r]);
+              else hostile.push([c, r, o]);
+            }
+            let target = null, attack = null;
+            if (unowned.length) target = unowned[Math.floor(Math.random() * unowned.length)];
+            else if (hostile.length && Math.random() < 0.5) {
+              attack = hostile[Math.floor(Math.random() * hostile.length)];
+              target = [attack[0], attack[1]];
+            } else if (own.length) target = own[Math.floor(Math.random() * own.length)];
+            if (!target) break;
+            const [nc, nr] = target;
+            if (attack) {
+              const defenderId = attack[2];
+              const defenderCiv = state.civs[civIndexById(defenderId)];
+              const attStr = (army.count || 1) * (1 + 0.15 * (civ.era || 0));
+              const defStr = (defenderCiv ? 2 * (1 + 0.15 * (defenderCiv.era || 0)) : 1);
+              const win = attStr * (0.7 + Math.random() * 0.6) > defStr;
+              if (!win) { army.count = Math.max(0, (army.count || 1) - 1); break; }
+              const defArmies = (defenderCiv && defenderCiv.armies) ? defenderCiv.armies.filter(a => a.col === nc && a.row === nr && (a.planet || "Earth") === planetName) : [];
+              for (const da of defArmies) {
+                const i = defenderCiv.armies.indexOf(da);
+                if (i >= 0) defenderCiv.armies.splice(i, 1);
+              }
+              const defSettlement = (defenderCiv && defenderCiv.settlements) ? defenderCiv.settlements.find(s => s.col === nc && s.row === nr && (s.planet || "Earth") === planetName) : null;
+              if (defSettlement) {
+                const i = defenderCiv.settlements.indexOf(defSettlement);
+                if (i >= 0) defenderCiv.settlements.splice(i, 1);
+                civ.settlements.push({ ...defSettlement, pop: Math.max(1, Math.floor((defSettlement.pop || 1) * 0.6)), queue: [], walls: false });
+              }
+              grid[nr][nc] = civ.id;
+            } else if (grid[nr][nc] === -1) {
+              grid[nr][nc] = civ.id;
+            }
+            army.prevCol = army.col;
+            army.prevRow = army.row;
+            army.moveStartedAt = performance.now();
+            army.col = nc;
+            army.row = nr;
+            if (army.count <= 0) break;
+          }
         }
       }
-      // Pass 2: settlement-driven recruitment. Every ~10 ticks each
-      // settlement on this planet spawns a new combat unit so the civ
-      // doesn't stall once its starting army is committed elsewhere.
-      if (state.turn % 10 === 0) {
+
+      if (state.turn % 5 === 0) {
         for (const civ of state.civs) {
           if (!civ.alive) continue;
+          if (civ.cantMakeUnits || civ.name === "Nuclear Wasteland") continue;
           for (const s of (civ.settlements || [])) {
             if ((s.planet || "Earth") !== planetName) continue;
             civ.armies.push({
               id: nextArmyId++, col: s.col, row: s.row,
-              type: "modern", count: 2, civId: civ.id, moves: 0, planet: planetName,
+              type: "modern", count: 3, civId: civ.id, moves: 0, planet: planetName,
             });
           }
         }
       }
-      // Pass 3: a slow grid-level fallback claim so civs without armies
-      // still trickle outward (e.g. resident civs whose starting army
-      // got destroyed).
+
       const civTiles = new Map();
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
@@ -3652,21 +3678,26 @@ function tick() {
           if (id < 0) continue;
           if (!civTiles.has(id)) civTiles.set(id, []);
           const arr = civTiles.get(id);
-          if (arr.length < 30) arr.push([c, r]);
-          else if (Math.random() < 0.05) arr[Math.floor(Math.random() * 30)] = [c, r];
+          if (arr.length < 60) arr.push([c, r]);
+          else if (Math.random() < 0.05) arr[Math.floor(Math.random() * 60)] = [c, r];
         }
       }
       for (const [id, tiles] of civTiles) {
         const civ = state.civs[civIndexById(id)];
         if (!civ || !civ.alive) continue;
-        const [bc, br] = tiles[Math.floor(Math.random() * tiles.length)];
-        const ns = neighbors(bc, br);
-        for (const [nc, nr] of ns) {
-          if (grid[nr][nc] !== -1) continue;
-          if (civ.aquaticOnly) { if (MAP[nr][nc] !== "ocean") continue; }
-          else { if (!PASSABLE(MAP[nr][nc])) continue; }
-          grid[nr][nc] = id;
-          break;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const [bc, br] = tiles[Math.floor(Math.random() * tiles.length)];
+          const ns = neighbors(bc, br);
+          let claimed = false;
+          for (const [nc, nr] of ns) {
+            if (grid[nr][nc] !== -1) continue;
+            if (civ.aquaticOnly) { if (MAP[nr][nc] !== "ocean") continue; }
+            else { if (!PASSABLE(MAP[nr][nc])) continue; }
+            grid[nr][nc] = id;
+            claimed = true;
+            break;
+          }
+          if (claimed) break;
         }
       }
     }
@@ -3812,11 +3843,11 @@ function aiTurn(civ) {
     );
   }
 
+  const _curPlanet = state.currentPlanet || "Earth";
   for (const army of civ.armies.slice()) {
     if (army.moves <= 0) continue;
-    
+    if ((army.planet || "Earth") !== _curPlanet) continue;
     if (army.type === "leader") continue;
-    
     if (manualArmyIds && manualArmyIds.has(army.id)) continue;
     if (army.type === "colonizer") {
 
