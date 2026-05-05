@@ -2261,26 +2261,45 @@ function spawnPlayer(col, row) {
 }
 
 function processEvents() {
-  for (const ev of HISTORICAL_EVENTS) {
-    if (ev._fired) continue;
-    if (state.year < ev.year) continue;
-
-    
-    if (Array.isArray(ev.requireDeadCivs)) {
-      const stillAlive = ev.requireDeadCivs.some(name => {
-        const c = state.civs.find(c => c.alive && c.name === name);
-        return !!c;
-      });
-      if (stillAlive) continue;   
+  const _savedOwnership = state.ownership;
+  const _savedPlanet = state.currentPlanet;
+  const offEarth = _savedPlanet && _savedPlanet !== "Earth";
+  if (offEarth) {
+    if (!state.planetOwnership) state.planetOwnership = {};
+    if (!state.planetOwnership["Earth"]) {
+      state.planetOwnership["Earth"] = state._earthOwnership || _savedOwnership;
     }
-    ev._fired = true;
-    try {
-      fireEvent(ev);
-    } catch (e) {
-      console.error("EVENT FAILED at year", state.year, "type=", ev.type || "spawn",
-        "civ=", typeof ev.civ === "string" ? ev.civ : ev.civ && ev.civ.name,
-        "region=", JSON.stringify(ev.region || null), "\nev=", JSON.stringify(ev), "\n", e);
-      log("death", "Event failed: " + (ev.message || JSON.stringify(ev)));
+    state.ownership = state.planetOwnership["Earth"];
+    state.currentPlanet = "Earth";
+  }
+  try {
+    for (const ev of HISTORICAL_EVENTS) {
+      if (ev._fired) continue;
+      if (state.year < ev.year) continue;
+
+      if (Array.isArray(ev.requireDeadCivs)) {
+        const stillAlive = ev.requireDeadCivs.some(name => {
+          const c = state.civs.find(c => c.alive && c.name === name);
+          return !!c;
+        });
+        if (stillAlive) continue;
+      }
+      ev._fired = true;
+      try {
+        fireEvent(ev);
+      } catch (e) {
+        console.error("EVENT FAILED at year", state.year, "type=", ev.type || "spawn",
+          "civ=", typeof ev.civ === "string" ? ev.civ : ev.civ && ev.civ.name,
+          "region=", JSON.stringify(ev.region || null), "\nev=", JSON.stringify(ev), "\n", e);
+        log("death", "Event failed: " + (ev.message || JSON.stringify(ev)));
+      }
+    }
+  } finally {
+    if (offEarth) {
+      state.planetOwnership["Earth"] = state.ownership;
+      state._earthOwnership = state.ownership;
+      state.ownership = _savedOwnership;
+      state.currentPlanet = _savedPlanet;
     }
   }
 }
