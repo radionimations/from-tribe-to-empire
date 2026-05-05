@@ -3844,7 +3844,7 @@ function aiTurn(civ) {
     const settlements = civ.settlements.length;
     const wantsExpand = settlements < 3 + civ.era && Math.random() < 0.4;
     const wantsArmy = totalUnits < settlements * 3 + civ.era * 2;
-    if (civ.era >= 6 && !civ.aquaticOnly && Math.random() < 0.18) {
+    if (civ.era >= 6 && state.year >= 2050 && !civ.aquaticOnly && Math.random() < 0.18) {
       s.queue.push({ type: "rocket_scraps", progress: 0 });
     } else if (wantsExpand) {
       s.queue.push({ type: "settler", progress: 0 });
@@ -3853,7 +3853,7 @@ function aiTurn(civ) {
     }
   }
 
-  if (!civ.isPlayer && civ.era >= 6 && !civ.aquaticOnly) {
+  if (!civ.isPlayer && civ.era >= 6 && state.year >= 2050 && !civ.aquaticOnly) {
     aiTryLaunchRocket(civ);
   }
 
@@ -6709,6 +6709,10 @@ function consumePlayerScraps(n) {
 }
 
 window.openLaunchPicker = function () {
+  if (state.year < 2050) {
+    flashHint("Interplanetary travel won't be possible until year 2050.");
+    return;
+  }
   const scraps = countPlayerScraps();
   const modal = document.getElementById("launch-modal");
   if (!modal) return;
@@ -6769,6 +6773,7 @@ function consumeCivScraps(civ, n) {
 
 function aiTryLaunchRocket(civ) {
   if (!civ || !civ.alive || civ.isPlayer) return;
+  if (state.year < 2050) return;
   const scraps = countCivScraps(civ);
   if (scraps < 10) return;
   if (Math.random() > 0.05) return;
@@ -6805,6 +6810,10 @@ function aiTryLaunchRocket(civ) {
 function launchToPlanet(planetName, cost) {
   const player = state.civs[0];
   if (!player || !player.isPlayer || !player.alive) return;
+  if (state.year < 2050) {
+    flashHint("Interplanetary travel won't be possible until year 2050.");
+    return;
+  }
   if (!consumePlayerScraps(cost)) return;
   if (!state.planetOwnership) state.planetOwnership = {};
   if (!state.planetOwnership[planetName]) {
