@@ -35,7 +35,10 @@ const BIOME_FOOD = {
 const BIOME_DEFENSE = {
   plains: 0, forest: 1, jungle: 1, desert: 0, tundra: 0, mountain: 3, ocean: 0,
 };
-const PASSABLE = (b) => b !== "ocean";
+const PASSABLE = (b) => {
+  if (typeof state !== "undefined" && state && state.currentPlanet && state.currentPlanet !== "Earth") return true;
+  return b !== "ocean";
+};
 
 function canMoveInto(civ, biome) {
   if (biome === "ocean") return !!(civ && civ.era >= 1);
@@ -5303,8 +5306,15 @@ function render() {
 
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(biomeCache, 0, 0);
+  if (state.currentPlanet && state.currentPlanet !== "Earth") {
+    const body = (typeof SOLAR_BODIES !== "undefined") ? SOLAR_BODIES.find(b => b.name === state.currentPlanet) : null;
+    const planetColor = body && body.color ? body.color : "#7a5a3a";
+    ctx.fillStyle = planetColor;
+    ctx.globalAlpha = 0.82;
+    ctx.fillRect(0, 0, MAP_W, MAP_H);
+    ctx.globalAlpha = 1;
+  }
 
-  
   if (tribalBlobCanvas) {
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(tribalBlobCanvas, 0, 0, MAP_W, MAP_H);
@@ -5313,7 +5323,7 @@ function render() {
   
   ctx.drawImage(tintCacheCanvas, 0, 0, MAP_W, MAP_H);
 
-  if (stateBorderPath) {
+  if (stateBorderPath && (!state.currentPlanet || state.currentPlanet === "Earth")) {
     ctx.strokeStyle = "rgba(0, 0, 0, 0.30)";
     ctx.lineWidth = Math.max(0.3, 0.8 / view.zoom);
     ctx.lineCap = "square";
@@ -7273,7 +7283,7 @@ function zoomIntoPlanet(bodyName) {
     const big = makeBodyCard(body, { canvas: 320, scale: 5, nameSize: 24, subSize: 13, min: 320 });
     big.card.style.cursor = "pointer";
     big.card.addEventListener("click", () => {
-      flashHint("Surface view of " + body.name + " is not yet built.");
+      enterPlanetSurface(body.name);
     });
     wrap.appendChild(big.card);
     // Moons of this body (children where parent === bodyName).
@@ -7313,6 +7323,69 @@ function zoomIntoPlanet(bodyName) {
     container.style.opacity = "1";
   }, 380);
 }
+// Reuses the Earth province grid as the planet's terrain, but treats
+// every tile as land (PASSABLE override) and skips state borders. Each
+// planet has its own ownership grid so claims don't bleed between
+// worlds. The dominator civ from SOLAR_BODIES gets all tiles by default.
+function enterPlanetSurface(bodyName) {
+  if (!bodyName || bodyName === "Earth") {
+    // Earth: just close the modal.
+    const modal = document.getElementById("solar-system-modal");
+    if (modal) modal.style.display = "none";
+    return;
+  }
+  if (state.currentPlanet && state.currentPlanet !== "Earth") {
+    // Already on another planet - swap into the new one cleanly.
+    exitPlanetSurface();
+  }
+  // Save Earth state.
+  state._earthSpeed = state.speed;
+  state.speed = 0;
+  state._earthOwnership = state.ownership;
+  // Lazy-init this planet's ownership.
+  if (!state.planetOwnership) state.planetOwnership = {};
+  if (!state.planetOwnership[bodyName]) {
+    const grid = Array.from({ length: ROWS }, () => new Array(COLS).fill(-1));
+    const body = SOLAR_BODIES.find(b => b.name === bodyName);
+    const dom = body ? resolveDominator(body) : null;
+    if (dom) {
+      for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) grid[r][c] = dom.id;
+    }
+    state.planetOwnership[bodyName] = grid;
+  }
+  state.ownership = state.planetOwnership[bodyName];
+  state.currentPlanet = bodyName;
+  // Hide solar-system modal, show return banner.
+  const modal = document.getElementById("solar-system-modal");
+  if (modal) modal.style.display = "none";
+  const banner = document.getElementById("planet-banner");
+  if (banner) {
+    banner.textContent = "— " + bodyName.toUpperCase() + " —";
+    banner.style.display = "";
+  }
+  const back = document.getElementById("planet-return-btn");
+  if (back) back.style.display = "";
+  invalidateTintCache();
+  render();
+}
+function exitPlanetSurface() {
+  if (!state.currentPlanet || state.currentPlanet === "Earth") return;
+  state.planetOwnership[state.currentPlanet] = state.ownership;
+  state.ownership = state._earthOwnership;
+  state._earthOwnership = null;
+  state.currentPlanet = "Earth";
+  if (state._earthSpeed != null) {
+    state.speed = state._earthSpeed;
+    state._earthSpeed = null;
+  }
+  document.getElementById("planet-banner").style.display = "none";
+  document.getElementById("planet-return-btn").style.display = "none";
+  invalidateTintCache();
+  render();
+}
+const _planetReturnBtn = document.getElementById("planet-return-btn");
+if (_planetReturnBtn) _planetReturnBtn.addEventListener("click", exitPlanetSurface);
+
 const _solarBtn = document.getElementById("solar-system-btn");
 if (_solarBtn) _solarBtn.addEventListener("click", openSolarSystem);
 const _solarClose = document.getElementById("solar-system-close");
