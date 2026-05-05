@@ -3369,7 +3369,51 @@ function tick() {
   if (state.planetOwnership) {
     for (const [planetName, grid] of Object.entries(state.planetOwnership)) {
       if (planetName === "Earth") continue;
-      // Build civ-id -> sample-of-owned-tiles for civs with presence.
+      // Pass 1: planet-tagged armies actually MOVE + claim their next
+      // step. Each army tries one neighbour per tick (matching the
+      // pacing of Earth's per-army-per-tick movement).
+      for (const civ of state.civs) {
+        if (!civ.alive) continue;
+        const planetArmies = (civ.armies || []).filter(a => (a.planet || "Earth") === planetName);
+        if (planetArmies.length === 0) continue;
+        for (const army of planetArmies) {
+          // Find a valid neighbour to move into (unowned/own, or hostile if attacker).
+          const ns = neighbors(army.col, army.row);
+          // Prefer unowned, biome-appropriate tiles.
+          const candidates = ns.filter(([c, r]) => {
+            const okBiome = civ.aquaticOnly ? (MAP[r][c] === "ocean") : PASSABLE(MAP[r][c]);
+            if (!okBiome) return false;
+            const o = grid[r][c];
+            return o === -1 || o === civ.id;
+          });
+          if (candidates.length === 0) continue;
+          const [nc, nr] = candidates[Math.floor(Math.random() * candidates.length)];
+          if (grid[nr][nc] === -1) grid[nr][nc] = civ.id;
+          army.prevCol = army.col;
+          army.prevRow = army.row;
+          army.moveStartedAt = performance.now();
+          army.col = nc;
+          army.row = nr;
+        }
+      }
+      // Pass 2: settlement-driven recruitment. Every ~10 ticks each
+      // settlement on this planet spawns a new combat unit so the civ
+      // doesn't stall once its starting army is committed elsewhere.
+      if (state.turn % 10 === 0) {
+        for (const civ of state.civs) {
+          if (!civ.alive) continue;
+          for (const s of (civ.settlements || [])) {
+            if ((s.planet || "Earth") !== planetName) continue;
+            civ.armies.push({
+              id: nextArmyId++, col: s.col, row: s.row,
+              type: "modern", count: 2, civId: civ.id, moves: 0, planet: planetName,
+            });
+          }
+        }
+      }
+      // Pass 3: a slow grid-level fallback claim so civs without armies
+      // still trickle outward (e.g. resident civs whose starting army
+      // got destroyed).
       const civTiles = new Map();
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
@@ -3377,29 +3421,21 @@ function tick() {
           if (id < 0) continue;
           if (!civTiles.has(id)) civTiles.set(id, []);
           const arr = civTiles.get(id);
-          // Reservoir-style sampling - keep ~50 tiles per civ.
-          if (arr.length < 50) arr.push([c, r]);
-          else if (Math.random() < 0.05) arr[Math.floor(Math.random() * 50)] = [c, r];
+          if (arr.length < 30) arr.push([c, r]);
+          else if (Math.random() < 0.05) arr[Math.floor(Math.random() * 30)] = [c, r];
         }
       }
       for (const [id, tiles] of civTiles) {
         const civ = state.civs[civIndexById(id)];
         if (!civ || !civ.alive) continue;
-        // Try ~3 random border picks; first valid claim wins.
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const [bc, br] = tiles[Math.floor(Math.random() * tiles.length)];
-          const ns = neighbors(bc, br);
-          let claimed = false;
-          for (const [nc, nr] of ns) {
-            if (grid[nr][nc] !== -1) continue;
-            // Aquatic civs only claim ocean tiles; land civs only land.
-            if (civ.aquaticOnly) { if (MAP[nr][nc] !== "ocean") continue; }
-            else { if (!PASSABLE(MAP[nr][nc])) continue; }
-            grid[nr][nc] = id;
-            claimed = true;
-            break;
-          }
-          if (claimed) break;
+        const [bc, br] = tiles[Math.floor(Math.random() * tiles.length)];
+        const ns = neighbors(bc, br);
+        for (const [nc, nr] of ns) {
+          if (grid[nr][nc] !== -1) continue;
+          if (civ.aquaticOnly) { if (MAP[nr][nc] !== "ocean") continue; }
+          else { if (!PASSABLE(MAP[nr][nc])) continue; }
+          grid[nr][nc] = id;
+          break;
         }
       }
     }
@@ -3576,8 +3612,35 @@ function aiTurn(civ) {
           }
         }
       }
+    } else if (civ.aquaticOnly) {
+      // Aquatic civs (Squid Empire) can't fight on land - their combat
+      // units expand by claiming adjacent unowned ocean tiles. Each
+      // tick, every army tries to claim ONE adjacent ocean tile, OR
+      // walks toward the nearest unowned ocean target if none neighbour.
+      const ns = neighbors(army.col, army.row);
+      let claimed = false;
+      for (const [nc, nr] of ns) {
+        if (MAP[nr][nc] !== "ocean") continue;
+        if (state.ownership[nr][nc] !== -1) continue;
+        tryMoveOrAttack(army, nc, nr);
+        claimed = true;
+        break;
+      }
+      if (!claimed) {
+        const target = findExpansionTile(civ, army.col, army.row);
+        if (target) {
+          const step = stepTowards(army.col, army.row, target.col, target.row, civ.id, false);
+          if (step) tryMoveOrAttack(army, step.col, step.row);
+        } else if (Math.random() < 0.3) {
+          // Random ocean wander.
+          const oceanOpts = ns.filter(([c, r]) => MAP[r][c] === "ocean");
+          if (oceanOpts.length) {
+            const [nc, nr] = oceanOpts[Math.floor(Math.random() * oceanOpts.length)];
+            tryMoveOrAttack(army, nc, nr);
+          }
+        }
+      }
     } else {
-      
       const enemy = findNearbyEnemy(civ, army.col, army.row, 6);
       if (enemy && shouldAttack(civ, enemy.civ, army)) {
         const step = stepTowards(army.col, army.row, enemy.col, enemy.row, civ.id, false);
@@ -3585,7 +3648,7 @@ function aiTurn(civ) {
           tryMoveOrAttack(army, step.col, step.row);
         }
       } else {
-        
+
         if (Math.random() < 0.3) {
           const opts = neighbors(army.col, army.row).filter(([c, r]) => PASSABLE(MAP[r][c]));
           if (opts.length) {
