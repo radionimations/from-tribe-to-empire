@@ -2162,6 +2162,7 @@ function tribalNameFromBiome(biome) {
 function placeCivOnMap(civ, capitalCol, capitalRow, isStarting = true) {
 
   const { col, row } = nearestLand(capitalCol, capitalRow, civ);
+  const curPlanet = state.currentPlanet || "Earth";
   const settlement = {
     id: nextSettlementId++,
     col, row,
@@ -2171,6 +2172,7 @@ function placeCivOnMap(civ, capitalCol, capitalRow, isStarting = true) {
     prod: 0,
     queue: [],
     walls: false,
+    planet: curPlanet,
   };
   civ.settlements.push(settlement);
 
@@ -2181,11 +2183,11 @@ function placeCivOnMap(civ, capitalCol, capitalRow, isStarting = true) {
       state.ownership[nr][nc] = civ.id;
     }
   }
-  
+
   if (isStarting) {
     civ.armies.push({
       id: nextArmyId++, col, row,
-      type: "warrior", count: 2, civId: civ.id, moves: 1,
+      type: "warrior", count: 2, civId: civ.id, moves: 1, planet: curPlanet,
     });
   }
   return settlement;
@@ -3017,36 +3019,37 @@ function fireEvent(ev) {
   if (ev.type === "nuke_unify") {
     const wasteland = makeCiv({ name: "Nuclear Wasteland", color: ev.color || "#3a2a14" });
     state.civs.push(wasteland);
-    // Off-world civs stay alive (with no Earth-side tiles) so the
-    // solar system view + planet-resident lookup still finds them.
-    // Earth-only civs are wiped completely.
-    const OFFWORLD_NAMES = new Set([
-      "Mars Republic", "Mars Colony Authority", "Lunar Republic",
-      "Asteroid Belt Coalition", "Belt Hollow Republic",
-      "Saturn Moons Confederation", "Pan-Solar Diaspora",
-      "Centauri Authority", "Many-Worlds Federation", "Solar Republic",
-      "Republic of Venus", "Venus Sky-Cities",
-    ]);
-    function isOffworld(c) {
-      if (OFFWORLD_NAMES.has(c.name)) return true;
-      for (const n of c.previousNames || []) if (OFFWORLD_NAMES.has(n)) return true;
+    function hasOffworldPresence(c) {
+      for (const s of (c.settlements || [])) {
+        if ((s.planet || "Earth") !== "Earth") return true;
+      }
+      for (const a of (c.armies || [])) {
+        if ((a.planet || "Earth") !== "Earth") return true;
+      }
+      if (state.planetOwnership) {
+        for (const [planetName, grid] of Object.entries(state.planetOwnership)) {
+          if (planetName === "Earth") continue;
+          for (let r = 0; r < ROWS; r++) {
+            for (let cc = 0; cc < COLS; cc++) {
+              if (grid[r][cc] === c.id) return true;
+            }
+          }
+        }
+      }
       return false;
     }
     for (const c of state.civs) {
       if (c.id === wasteland.id) continue;
       if (!c.alive || c.isPlayer) continue;
-      // Strip Earth tiles regardless. Earth-only civs go to alive=false
-      // (so checkCapitulation doesn't later fragment them into modern
-      // countries); off-world civs keep alive and just lose their seat.
+      const offworld = hasOffworldPresence(c);
       for (let r = 0; r < ROWS; r++) {
         for (let cc = 0; cc < COLS; cc++) {
           if (state.ownership[r][cc] === c.id) state.ownership[r][cc] = wasteland.id;
         }
       }
-      // Drop Earth-side settlements + armies regardless.
       c.settlements = (c.settlements || []).filter(s => (s.planet || "Earth") !== "Earth");
       c.armies = (c.armies || []).filter(a => (a.planet || "Earth") !== "Earth");
-      if (!isOffworld(c)) c.alive = false;
+      if (!offworld) c.alive = false;
     }
     // Stock the Wasteland with garrisons + capital cities at HOI4 state
     // centers. Settlements are critical: without any, checkCapitulation
@@ -3597,9 +3600,13 @@ function tick() {
   }
 
   if (state.planetOwnership) {
+    const _curPlanetName = state.currentPlanet || "Earth";
+    if (_curPlanetName !== "Earth") {
+      if (!state._earthOwnership) state._earthOwnership = state.planetOwnership["Earth"];
+      if (state._earthOwnership) state.planetOwnership["Earth"] = state._earthOwnership;
+    }
     for (const [planetName, grid] of Object.entries(state.planetOwnership)) {
-      if (planetName === "Earth") continue;
-      if (planetName === state.currentPlanet) continue;
+      if (planetName === _curPlanetName) continue;
 
       for (const civ of state.civs) {
         if (!civ.alive) continue;
@@ -7759,11 +7766,25 @@ document.querySelectorAll(".splash-tribe-btn").forEach(btn => {
   });
 });
 
+document.querySelectorAll('#splash-modifiers input[type="checkbox"]').forEach(cb => {
+  cb.addEventListener("change", () => {
+    if (!cb.checked) return;
+    if (cb.dataset.mod === "ww2-state") {
+      const m = document.querySelector('#splash-modifiers input[data-mod="mars-survival"]');
+      if (m) m.checked = false;
+    } else if (cb.dataset.mod === "mars-survival") {
+      const m = document.querySelector('#splash-modifiers input[data-mod="ww2-state"]');
+      if (m) m.checked = false;
+    }
+  });
+});
+
 const _splashPlayBtn = document.getElementById("splash-play");
 if (_splashPlayBtn) {
   _splashPlayBtn.addEventListener("click", () => {
-    
+
     const mods = document.querySelectorAll('#splash-modifiers input[type="checkbox"]');
+    let marsSurvival = false;
     for (const m of mods) {
       if (!m.checked) continue;
       const which = m.dataset.mod;
@@ -7774,11 +7795,19 @@ if (_splashPlayBtn) {
       else if (which === "kill-germans") killStartingTribe("Germans");
       else if (which === "kill-finns") killStartingTribe("Finns");
       else if (which === "ww2-state") applyWW2TribeTerritory();
+      else if (which === "mars-survival") marsSurvival = true;
       else if (which === "debug-start") {
         state._modDebugStart = true;
       }
     }
+    if (marsSurvival) applyMarsSurvival();
     document.getElementById("splash").style.display = "none";
+    if (marsSurvival) {
+      state.phase = "placement";
+      flashHint("Click a land tile on Mars to plant your colony.");
+      invalidateTintCache(); render(); updateUI();
+      return;
+    }
     if (state._modDebugStart && !_splashSelectedTribe) {
       state._modDebugStart = false;
       enterDebugMode();
@@ -7827,6 +7856,81 @@ function killStartingTribe(name) {
   target.armies = [];
   target.alive = false;
   log("event", name + " is wiped from history before the game even begins.");
+}
+
+function applyMarsSurvival() {
+  if (!state.planetOwnership) state.planetOwnership = {};
+  if (!state.planetOwnership["Mars"]) {
+    state.planetOwnership["Mars"] = Array.from({ length: ROWS }, () => new Array(COLS).fill(-1));
+  }
+  const grid = state.planetOwnership["Mars"];
+
+  const marsTribes = [
+    { name: "Olympus Pioneers",  color: "#e84a3a", lat:  18.65, lon: -134.03 },
+    { name: "Hellas Settlers",   color: "#c84a3a", lat: -42.7,  lon:   70.0  },
+    { name: "Tharsis Clans",     color: "#d4684a", lat:   4.5,  lon: -110.0  },
+    { name: "Vastitas Nomads",   color: "#a8584a", lat:  60.0,  lon:    0.0  },
+  ];
+
+  state._earthOwnership = state.ownership;
+  state.ownership = grid;
+  state.currentPlanet = "Mars";
+
+  for (const t of marsTribes) {
+    const seed = latLonToTile(t.lat, t.lon);
+    const land = nearestLand(seed.col, seed.row);
+    const civ = makeCiv({ name: t.name, color: t.color });
+    civ.isStartingTribe = true;
+    state.civs.push(civ);
+
+    const queue = [[land.col, land.row]];
+    const seen = new Set([land.row * COLS + land.col]);
+    let claimed = 0;
+    while (queue.length && claimed < 12) {
+      const [c, r] = queue.shift();
+      if (r < 0 || r >= ROWS || c < 0 || c >= COLS) continue;
+      if (grid[r][c] !== -1) continue;
+      if (!PASSABLE(MAP[r][c])) continue;
+      grid[r][c] = civ.id;
+      claimed++;
+      for (const [nc, nr] of neighbors(c, r)) {
+        const k = nr * COLS + nc;
+        if (!seen.has(k)) { seen.add(k); queue.push([nc, nr]); }
+      }
+    }
+    civ.settlements.push({
+      id: nextSettlementId++, col: land.col, row: land.row,
+      name: t.name + " Hub",
+      pop: 2, food: 0, prod: 0, queue: [], walls: false,
+      planet: "Mars",
+    });
+    civ.armies.push({
+      id: nextArmyId++, col: land.col, row: land.row,
+      type: "warrior", count: 2, civId: civ.id, moves: 1, planet: "Mars",
+    });
+  }
+
+  for (const a of state.civs) {
+    for (const b of state.civs) {
+      if (a.id !== b.id) {
+        if (a.relations[b.id] == null) a.relations[b.id] = 0;
+      }
+    }
+  }
+  state._modMarsSurvival = true;
+  log("event", "MARS SURVIVAL: your tribe and four others claim the Red Planet. Earth's history continues without you.");
+
+  if (typeof SOLAR_ORBITS !== "undefined" && typeof _loadPlanetTexture === "function") {
+    const obody = SOLAR_ORBITS.find(b => b.name === "Mars");
+    if (obody) _loadPlanetTexture(obody);
+  }
+  const banner = document.getElementById("planet-banner");
+  if (banner) {
+    banner.textContent = "— MARS —";
+    banner.style.display = "";
+  }
+  const back = document.getElementById("planet-return-btn");
+  if (back) back.style.display = "";
 }
 
 function applyWW2TribeTerritory() {
@@ -8502,7 +8606,9 @@ function enterPlanetSurface(bodyName) {
   // doesn't appear before 2350; Republic of Venus doesn't appear
   // before 3080; etc).
   if (!state.planetOwnership) state.planetOwnership = {};
-  state.planetOwnership[bodyName] = rebuildPlanetOwnership(bodyName);
+  if (!(state._modMarsSurvival && bodyName === "Mars" && state.planetOwnership["Mars"])) {
+    state.planetOwnership[bodyName] = rebuildPlanetOwnership(bodyName);
+  }
   state.ownership = state.planetOwnership[bodyName];
   state.currentPlanet = bodyName;
   // Hide solar-system modal, show return banner.
