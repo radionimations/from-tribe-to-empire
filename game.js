@@ -6950,12 +6950,20 @@ window.openLaunchPicker = function () {
   list.innerHTML = "";
   document.getElementById("launch-scrap-count").textContent = String(scraps);
   // Sorted ascending by cost.
+  const player = state.civs[0];
   const entries = Object.entries(PLANET_LAUNCH_COSTS).sort((a, b) => a[1] - b[1]);
   for (const [name, cost] of entries) {
     const row = document.createElement("button");
-    const enabled = scraps >= cost;
+    const dom = getPlanetDominator(name);
+    const dominatedByOther = dom !== null && (!player || dom !== player.id);
+    const enabled = scraps >= cost && !dominatedByOther;
     row.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:14px;width:100%;padding:8px 14px;margin:3px 0;background:" + (enabled ? "linear-gradient(180deg,#3a2a14,#1a0e04)" : "#1a0e04") + ";border:1px solid " + (enabled ? "#6a5a3c" : "#3a2a14") + ";color:" + (enabled ? "#fff5cc" : "#5a4a32") + ";font-family:Georgia,serif;cursor:" + (enabled ? "pointer" : "not-allowed") + ";letter-spacing:2px;";
-    row.innerHTML = '<span>' + name + '</span><span style="color:' + (enabled ? "#ffd24a" : "#5a4a32") + ';">' + cost + ' scraps</span>';
+    let suffix = cost + ' scraps';
+    if (dominatedByOther) {
+      const dCiv = state.civs[civIndexById(dom)];
+      suffix = '🔒 ' + (dCiv ? dCiv.name + ' dominates' : 'dominated');
+    }
+    row.innerHTML = '<span>' + name + '</span><span style="color:' + (enabled ? "#ffd24a" : "#5a4a32") + ';">' + suffix + '</span>';
     if (enabled) {
       row.addEventListener("click", () => {
         modal.style.display = "none";
@@ -7001,13 +7009,36 @@ function consumeCivScraps(civ, n) {
   return remaining === 0;
 }
 
+function getPlanetDominator(planetName) {
+  if (!state.planetOwnership || !state.planetOwnership[planetName]) return null;
+  const grid = state.planetOwnership[planetName];
+  const planetIsEarth = planetName === "Earth";
+  let dominantId = -2;
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (planetIsEarth && MAP[r][c] === "ocean") continue;
+      const o = grid[r][c];
+      if (o === -1) return null;
+      if (dominantId === -2) dominantId = o;
+      else if (dominantId !== o) return null;
+    }
+  }
+  if (dominantId < 0) return null;
+  return dominantId;
+}
+
 function aiTryLaunchRocket(civ) {
   if (!civ || !civ.alive || civ.isPlayer) return;
   if (state.year < 2050) return;
   const scraps = countCivScraps(civ);
   if (scraps < 10) return;
   if (Math.random() > 0.05) return;
-  const affordable = Object.entries(PLANET_LAUNCH_COSTS).filter(([n, c]) => scraps >= c);
+  const affordable = Object.entries(PLANET_LAUNCH_COSTS).filter(([n, c]) => {
+    if (scraps < c) return false;
+    const dom = getPlanetDominator(n);
+    if (dom !== null && dom !== civ.id) return false;
+    return true;
+  });
   if (affordable.length === 0) return;
   affordable.sort((a, b) => b[1] - a[1]);
   const top = affordable.slice(0, Math.min(3, affordable.length));
@@ -7048,6 +7079,12 @@ function launchToPlanet(planetName, cost) {
   if (!player || !player.isPlayer || !player.alive) return;
   if (state.year < 2050) {
     flashHint("Interplanetary travel won't be possible until year 2050.");
+    return;
+  }
+  const dom = getPlanetDominator(planetName);
+  if (dom !== null && dom !== player.id) {
+    const dCiv = state.civs[civIndexById(dom)];
+    flashHint((dCiv ? dCiv.name : "A foreign power") + " fully dominates " + planetName + " — landing denied.");
     return;
   }
   if (!consumePlayerScraps(cost)) return;
