@@ -3597,7 +3597,7 @@ function tick() {
     
     while (civ.era < ERAS.length - 1
         && civ.techPoints >= ERAS[civ.era + 1].threshold
-        && state.year >= ERAS[civ.era + 1].yearGuide) {
+        && (state.disactYearGates || state.year >= ERAS[civ.era + 1].yearGuide)) {
       civ.era++;
       const newEra = civ.era;
       if (!state.eraFirsts) state.eraFirsts = {};
@@ -4017,7 +4017,7 @@ function aiTurn(civ) {
     const settlements = civ.settlements.length;
     const wantsExpand = settlements < 3 + civ.era && Math.random() < 0.4;
     const wantsArmy = totalUnits < settlements * 3 + civ.era * 2;
-    if (civ.era >= 6 && state.year >= 2050 && !civ.aquaticOnly && Math.random() < 0.18) {
+    if (civ.era >= 6 && (state.disactYearGates || state.year >= 2050) && !civ.aquaticOnly && Math.random() < 0.18) {
       s.queue.push({ type: "rocket_scraps", progress: 0 });
     } else if (wantsExpand) {
       s.queue.push({ type: "settler", progress: 0 });
@@ -4026,7 +4026,7 @@ function aiTurn(civ) {
     }
   }
 
-  if (!civ.isPlayer && civ.era >= 6 && state.year >= 2050 && !civ.aquaticOnly) {
+  if (!civ.isPlayer && civ.era >= 6 && (state.disactYearGates || state.year >= 2050) && !civ.aquaticOnly) {
     aiTryLaunchRocket(civ);
   }
 
@@ -7078,7 +7078,7 @@ function consumePlayerScraps(n) {
 }
 
 window.openLaunchPicker = function () {
-  if (state.year < 2050) {
+  if (!state.disactYearGates && state.year < 2050) {
     flashHint("Interplanetary travel won't be possible until year 2050.");
     return;
   }
@@ -7168,7 +7168,7 @@ function getPlanetDominator(planetName) {
 
 function aiTryLaunchRocket(civ) {
   if (!civ || !civ.alive || civ.isPlayer) return;
-  if (state.year < 2050) return;
+  if (!state.disactYearGates && state.year < 2050) return;
   const scraps = countCivScraps(civ);
   if (scraps < 10) return;
   if (Math.random() > 0.05) return;
@@ -7216,7 +7216,7 @@ function aiTryLaunchRocket(civ) {
 function launchToPlanet(planetName, cost) {
   const player = state.civs[0];
   if (!player || !player.isPlayer || !player.alive) return;
-  if (state.year < 2050) {
+  if (!state.disactYearGates && state.year < 2050) {
     flashHint("Interplanetary travel won't be possible until year 2050.");
     return;
   }
@@ -7527,6 +7527,15 @@ function runConsoleCommand(line) {
     consoleEcho("  splitnow <civ name>        force-split a civ regardless of gates", "info");
     consoleEcho("  debug                      enter observer/debug mode (unlocks 20x speed)", "info");
     consoleEcho("  give <unit> [n]            grant n units to your civ at your capital (unlock-bypass)", "info");
+    consoleEcho("  disact                     toggle all year-gate requirements off (eras, rockets)", "info");
+    return;
+  }
+
+  if (cmd === "disact") {
+    state.disactYearGates = !state.disactYearGates;
+    consoleEcho("year gates " + (state.disactYearGates ? "DISABLED" : "RE-ENABLED") +
+      " — eras can advance freely; rockets ignore the 2050 lockout.",
+      state.disactYearGates ? "ok" : "info");
     return;
   }
 
