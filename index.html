@@ -1132,6 +1132,312 @@
     font-size: 13px;
     margin-top: 14px;
   }
+
+  /* ============================================================
+     HOI4 SKIN OVERRIDES
+     Dark steel-blue panels, tarnished brass trim, parchment text.
+     ============================================================ */
+  :root {
+    --hoi-bg-deep:   #0c1018;
+    --hoi-bg-mid:    #161c26;
+    --hoi-panel-1:   #232c3a;
+    --hoi-panel-2:   #131820;
+    --hoi-panel-3:   #1c242f;
+    --hoi-rule:      #3a4658;
+    --hoi-rule-soft: #2a3340;
+    --hoi-brass:     #8a6e3c;
+    --hoi-brass-lt:  #c8a563;
+    --hoi-gold:      #e8c87a;
+    --hoi-gold-hi:   #fff0b8;
+    --hoi-text:      #dccfa6;
+    --hoi-text-dim:  #92866a;
+    --hoi-accent:    #4a8acf;
+    --hoi-war:       #c4503a;
+    --hoi-peace:     #6aaa50;
+    --hoi-event:     #e8c87a;
+    --hoi-death:     #c46a6a;
+  }
+  body {
+    font-family: 'Trajan Pro', 'Cinzel', 'Georgia', serif;
+    background: linear-gradient(135deg, #0a0e15 0%, #14181f 100%) !important;
+    color: var(--hoi-text) !important;
+  }
+  #map-wrap { background: #060810 !important; }
+  #sidebar {
+    background:
+      linear-gradient(180deg, var(--hoi-panel-1) 0%, var(--hoi-panel-2) 100%) !important;
+    border-left: 2px solid var(--hoi-brass) !important;
+    box-shadow:
+      -4px 0 16px rgba(0,0,0,0.7),
+      inset 1px 0 0 rgba(232, 200, 122, 0.08) !important;
+  }
+  h1 {
+    color: var(--hoi-gold) !important;
+    text-shadow:
+      0 1px 0 #000,
+      0 0 12px rgba(232, 200, 122, 0.25) !important;
+    letter-spacing: 4px !important;
+    font-variant: small-caps;
+  }
+  .subtitle {
+    color: var(--hoi-text-dim) !important;
+    border-top: 1px solid var(--hoi-rule-soft);
+    border-bottom: 1px solid var(--hoi-rule-soft);
+    padding: 4px 0;
+    margin: 6px 0 10px !important;
+  }
+  hr { border-top: 1px solid var(--hoi-rule) !important; }
+  .section-title {
+    color: var(--hoi-gold) !important;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    font-size: 10px;
+    border-bottom: 1px solid var(--hoi-brass);
+    padding-bottom: 3px;
+    margin-bottom: 6px;
+  }
+  .stat-row { border-bottom: 1px dotted var(--hoi-rule-soft); padding: 4px 2px !important; }
+  .stat-label { color: var(--hoi-text-dim) !important; letter-spacing: 1px; font-size: 11px; }
+  .stat-val { color: var(--hoi-gold-hi) !important; font-weight: bold; }
+
+  .era-badge {
+    background:
+      linear-gradient(180deg, #3a4860 0%, #1c2330 100%) !important;
+    border: 1px solid var(--hoi-brass) !important;
+    color: var(--hoi-gold-hi) !important;
+    font-variant: small-caps;
+    letter-spacing: 3px !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 1px 2px rgba(0,0,0,0.6);
+  }
+  .year-display {
+    color: var(--hoi-gold) !important;
+    text-shadow: 0 0 12px rgba(232, 200, 122, 0.5), 0 1px 0 #000 !important;
+    background: linear-gradient(180deg, var(--hoi-panel-1) 0%, var(--hoi-panel-2) 100%);
+    border: 1px solid var(--hoi-brass);
+    border-radius: 2px;
+    padding: 6px 0 !important;
+  }
+
+  button {
+    background:
+      linear-gradient(180deg, #364257 0%, #1a212c 100%) !important;
+    border: 1px solid var(--hoi-brass) !important;
+    color: var(--hoi-text) !important;
+    border-radius: 0 !important;
+    text-transform: uppercase;
+    letter-spacing: 2px !important;
+    font-size: 11px !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.06),
+      inset 0 -1px 0 rgba(0,0,0,0.5),
+      0 1px 2px rgba(0,0,0,0.5) !important;
+  }
+  button:hover:not(:disabled) {
+    background:
+      linear-gradient(180deg, #4a5a78 0%, #232b3a 100%) !important;
+    color: var(--hoi-gold-hi) !important;
+    border-color: var(--hoi-brass-lt) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.12),
+      0 0 8px rgba(232, 200, 122, 0.35) !important;
+  }
+  button.primary {
+    background:
+      linear-gradient(180deg, #b8893a 0%, #6b4a18 100%) !important;
+    border-color: var(--hoi-gold) !important;
+    color: #fff5d4 !important;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.4);
+  }
+  button.primary:hover {
+    background:
+      linear-gradient(180deg, #d4a657 0%, #8a6620 100%) !important;
+  }
+  button.danger {
+    background:
+      linear-gradient(180deg, #743030 0%, #3a1414 100%) !important;
+    border-color: #b8504a !important;
+  }
+
+  .tile-info {
+    background: linear-gradient(180deg, var(--hoi-panel-3), var(--hoi-panel-2)) !important;
+    border: 1px solid var(--hoi-rule) !important;
+    border-left: 3px solid var(--hoi-brass) !important;
+    border-radius: 0 !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+    padding: 10px !important;
+  }
+  .civ-row {
+    background: linear-gradient(90deg, var(--hoi-panel-3) 0%, var(--hoi-panel-2) 100%) !important;
+    border: 1px solid var(--hoi-rule-soft) !important;
+    border-radius: 0 !important;
+    padding: 5px 8px !important;
+  }
+  .civ-row:hover {
+    border-color: var(--hoi-brass) !important;
+    background: linear-gradient(90deg, #2a3445 0%, #1c2330 100%) !important;
+  }
+  .civ-color { border-radius: 0 !important; border: 1px solid #000 !important; box-shadow: 0 0 0 1px var(--hoi-brass); }
+  .civ-meta { color: var(--hoi-text-dim) !important; }
+
+  .log {
+    background: linear-gradient(180deg, var(--hoi-panel-2), #0a0e15) !important;
+    border: 1px solid var(--hoi-rule) !important;
+    border-radius: 0 !important;
+  }
+  .log-entry { border-bottom-color: var(--hoi-rule-soft) !important; }
+  .log-entry.war { color: var(--hoi-war) !important; }
+  .log-entry.peace { color: var(--hoi-peace) !important; }
+  .log-entry.event { color: var(--hoi-event) !important; }
+  .log-entry.death { color: var(--hoi-death) !important; }
+
+  #splash { background: rgba(8, 12, 18, 0.92) !important; }
+  #splash h2 {
+    color: var(--hoi-gold) !important;
+    text-shadow:
+      0 0 28px rgba(232, 200, 122, 0.55),
+      0 2px 0 #000 !important;
+    font-variant: small-caps;
+    letter-spacing: 8px !important;
+  }
+  #splash p { color: var(--hoi-text-dim) !important; }
+  #splash .hint { color: var(--hoi-gold-hi) !important; }
+  #splash-modifiers label,
+  #splash-modifiers {
+    color: var(--hoi-text) !important;
+  }
+  #splash-modifiers input[type="checkbox"] {
+    accent-color: var(--hoi-brass-lt);
+  }
+  .splash-tribe-btn {
+    background: linear-gradient(180deg, var(--hoi-panel-1), var(--hoi-panel-2)) !important;
+    border: 1px solid var(--hoi-brass) !important;
+    color: var(--hoi-text) !important;
+  }
+  #splash-play {
+    background: linear-gradient(180deg, #b8893a, #6b4a18) !important;
+    border: 1px solid var(--hoi-gold) !important;
+    color: #fff5d4 !important;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.15),
+      0 0 14px rgba(232, 200, 122, 0.35),
+      0 4px 8px rgba(0,0,0,0.6) !important;
+  }
+
+  .build-queue {
+    background: linear-gradient(180deg, var(--hoi-panel-3), var(--hoi-panel-2)) !important;
+    border: 1px solid var(--hoi-rule) !important;
+    border-left: 3px solid var(--hoi-brass) !important;
+    border-radius: 0 !important;
+  }
+  .progress-bar {
+    background: var(--hoi-panel-2) !important;
+    border: 1px solid var(--hoi-rule) !important;
+    border-radius: 0 !important;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.6);
+  }
+  .progress-fill {
+    background: linear-gradient(90deg, #8a6e3c 0%, var(--hoi-gold) 50%, #8a6e3c 100%) !important;
+    background-size: 200% 100%;
+    animation: hoi-shimmer 2.4s linear infinite;
+  }
+  @keyframes hoi-shimmer {
+    from { background-position: 200% 0; }
+    to   { background-position: 0 0; }
+  }
+
+  #province-status .ps-card {
+    background: linear-gradient(180deg, var(--hoi-panel-1), var(--hoi-panel-2)) !important;
+    border: 2px solid var(--hoi-brass) !important;
+    border-radius: 0 !important;
+    box-shadow:
+      0 0 32px rgba(232, 200, 122, 0.15),
+      0 8px 24px rgba(0,0,0,0.8) !important;
+  }
+  #province-status .ps-spinner {
+    border-color: var(--hoi-rule) !important;
+    border-top-color: var(--hoi-gold) !important;
+  }
+  #province-status .ps-title { color: var(--hoi-gold) !important; }
+  #province-status .ps-detail {
+    background: rgba(0,0,0,0.5) !important;
+    border-left-color: var(--hoi-brass) !important;
+  }
+
+  /* Country panel */
+  #country-panel {
+    background: linear-gradient(180deg, var(--hoi-panel-1) 0%, var(--hoi-panel-2) 100%) !important;
+    border: 2px solid var(--hoi-brass) !important;
+    border-radius: 0 !important;
+    box-shadow:
+      0 8px 28px rgba(0,0,0,0.8),
+      inset 0 1px 0 rgba(255,255,255,0.06) !important;
+  }
+  #cp-name { color: var(--hoi-gold) !important; }
+  #country-flag {
+    border: 1px solid var(--hoi-brass) !important;
+    box-shadow: 0 0 0 1px #000, 0 2px 6px rgba(0,0,0,0.7);
+  }
+
+  /* Console */
+  #console-panel {
+    background: linear-gradient(180deg, var(--hoi-panel-1), var(--hoi-panel-2)) !important;
+    border: 1px solid var(--hoi-brass) !important;
+    border-radius: 0 !important;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.75);
+  }
+  .console-header {
+    background: linear-gradient(180deg, #2e3a4d, #1a212c) !important;
+    border-bottom: 1px solid var(--hoi-brass) !important;
+    color: var(--hoi-gold) !important;
+  }
+
+  /* Solar / planet modals */
+  #solar-system-modal,
+  #launch-modal,
+  #planet-descend-overlay {
+    background: rgba(6, 10, 16, 0.94) !important;
+  }
+  #solar-system-modal .modal-card,
+  #launch-modal .modal-card {
+    background: linear-gradient(180deg, var(--hoi-panel-1), var(--hoi-panel-2)) !important;
+    border: 2px solid var(--hoi-brass) !important;
+  }
+  #planet-banner {
+    background: linear-gradient(180deg, var(--hoi-panel-1), var(--hoi-panel-2)) !important;
+    border: 1px solid var(--hoi-brass) !important;
+    color: var(--hoi-gold) !important;
+    letter-spacing: 6px !important;
+    text-shadow: 0 0 12px rgba(232, 200, 122, 0.4);
+  }
+
+  /* Scrollbars (WebKit) */
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-track { background: var(--hoi-panel-2); border-left: 1px solid var(--hoi-rule); }
+  ::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, var(--hoi-brass), #4a3a1c);
+    border: 1px solid var(--hoi-rule);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, var(--hoi-brass-lt), var(--hoi-brass));
+  }
+
+  /* War / faction banners */
+  #cp-war-state, #cp-ally-state {
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    font-variant: small-caps;
+  }
+
+  /* Decorative corners on key panels */
+  #sidebar::before {
+    content: "";
+    position: absolute;
+    top: 0; right: 0;
+    width: 60px; height: 4px;
+    background: linear-gradient(90deg, transparent, var(--hoi-brass));
+    pointer-events: none;
+  }
 </style>
 </head>
 <body>
