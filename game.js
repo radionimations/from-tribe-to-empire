@@ -4247,6 +4247,17 @@ window.expandAllColonizers = function () {
   }
 
   log("event", "⚑ Expand directive: " + colonizers.length + " colonizer corps spread across " + seedsByPlanet.size + " world" + (seedsByPlanet.size === 1 ? "" : "s") + " — " + claimed + " new tiles claimed.");
+  if (claimed > 0) {
+    flashHint("⚑ EXPAND: " + claimed + " new tiles claimed across " + seedsByPlanet.size + " world" + (seedsByPlanet.size === 1 ? "" : "s") + ".");
+  } else {
+    flashHint("⚑ EXPAND: no unclaimed land within reach. Move colonizers further out.");
+  }
+  const btn = document.querySelector('button[onclick="expandAllColonizers()"]');
+  if (btn) {
+    btn.classList.remove("expand-pulse");
+    void btn.offsetWidth;
+    btn.classList.add("expand-pulse");
+  }
   invalidateTintCache();
   render();
   updateUI();

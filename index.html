@@ -1551,6 +1551,46 @@
     background: linear-gradient(90deg, transparent, var(--hoi-brass));
     pointer-events: none;
   }
+
+  /* Expand-button activation pulse */
+  button.expand-pulse {
+    animation: hoi-expand-pulse 0.9s ease-out 1;
+  }
+  @keyframes hoi-expand-pulse {
+    0% {
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.18),
+        0 0 0 0 rgba(184, 208, 232, 0.85),
+        0 0 18px rgba(184, 208, 232, 0.7);
+      transform: scale(1.02);
+    }
+    70% {
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.12),
+        0 0 0 18px rgba(184, 208, 232, 0),
+        0 0 10px rgba(184, 208, 232, 0.4);
+      transform: scale(1);
+    }
+    100% {
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.06),
+        0 0 0 0 rgba(184, 208, 232, 0);
+      transform: scale(1);
+    }
+  }
+
+  /* When move-mode-banner is used as a flash, give it presence */
+  #move-mode-banner {
+    background: linear-gradient(180deg, var(--hoi-panel-1), var(--hoi-panel-2)) !important;
+    border: 1px solid var(--hoi-brass) !important;
+    color: var(--hoi-gold) !important;
+    box-shadow:
+      0 0 18px rgba(155, 195, 232, 0.35),
+      0 4px 12px rgba(0,0,0,0.7) !important;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    font-weight: 700;
+  }
 </style>
 </head>
 <body>
