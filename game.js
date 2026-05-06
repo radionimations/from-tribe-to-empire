@@ -7387,6 +7387,58 @@ function runConsoleCommand(line) {
     consoleEcho("  splitinfo <civ name>       dump splitter eligibility for a civ", "info");
     consoleEcho("  splitnow <civ name>        force-split a civ regardless of gates", "info");
     consoleEcho("  debug                      enter observer/debug mode (unlocks 20x speed)", "info");
+    consoleEcho("  give <unit> [n]            grant n units to your civ at your capital (unlock-bypass)", "info");
+    return;
+  }
+
+  if (cmd === "give") {
+    const player = state.civs[0];
+    if (!player || !player.isPlayer || !player.alive) { consoleEcho("no living player civ", "err"); return; }
+    if (!arg) { consoleEcho("usage: give <unit name> [amount]", "err"); return; }
+    const tokens = arg.split(/\s+/);
+    const tail = tokens[tokens.length - 1];
+    let amount = 1;
+    let nameQuery = arg;
+    if (/^\d+$/.test(tail)) {
+      amount = Math.max(1, Math.min(9999, parseInt(tail, 10)));
+      nameQuery = tokens.slice(0, -1).join(" ");
+    }
+    const q = nameQuery.toLowerCase().replace(/[\s_-]/g, "");
+    let unitKey = null;
+    for (const [key, u] of Object.entries(UNITS)) {
+      if (key.toLowerCase().replace(/[\s_-]/g, "") === q) { unitKey = key; break; }
+      if (u.name.toLowerCase().replace(/[\s_-]/g, "") === q) { unitKey = key; break; }
+    }
+    if (!unitKey) {
+      const matches = Object.entries(UNITS).filter(([key, u]) =>
+        key.toLowerCase().includes(q) || u.name.toLowerCase().replace(/\s/g, "").includes(q)
+      );
+      if (matches.length === 1) unitKey = matches[0][0];
+      else if (matches.length > 1) {
+        consoleEcho("ambiguous - matches: " + matches.map(([k]) => k).join(", "), "err");
+        return;
+      }
+    }
+    if (!unitKey) {
+      consoleEcho("unknown unit: " + nameQuery + " (known: " + Object.keys(UNITS).join(", ") + ")", "err");
+      return;
+    }
+    const cap = (player.settlements && player.settlements[0]) || null;
+    if (!cap) { consoleEcho("you have no settlements to spawn at", "err"); return; }
+    const planet = cap.planet || "Earth";
+    let army = player.armies.find(a => a.col === cap.col && a.row === cap.row && a.type === unitKey && (a.planet || "Earth") === planet);
+    if (army) {
+      army.count += amount;
+    } else {
+      player.armies.push({
+        id: nextArmyId++, col: cap.col, row: cap.row,
+        type: unitKey, count: amount, civId: player.id, moves: 1, planet,
+      });
+    }
+    consoleEcho("granted " + amount + " " + (UNITS[unitKey].name || unitKey) + " at " + cap.name, "ok");
+    invalidateTintCache();
+    updateUI();
+    render();
     return;
   }
 
