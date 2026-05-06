@@ -1381,14 +1381,97 @@
     border: 2px solid var(--hoi-brass) !important;
     border-radius: 0 !important;
     box-shadow:
-      0 0 32px rgba(232, 200, 122, 0.15),
+      0 0 32px rgba(155, 195, 232, 0.15),
       0 8px 24px rgba(0,0,0,0.8) !important;
+    min-width: 480px;
   }
-  #province-status .ps-spinner {
-    border-color: var(--hoi-rule) !important;
-    border-top-color: var(--hoi-gold) !important;
+  #province-status .ps-spinner { display: none !important; }
+  #province-status .ps-title {
+    color: var(--hoi-gold) !important;
+    font-family: var(--hoi-font-display) !important;
+    font-weight: 700 !important;
+    text-transform: uppercase;
+    letter-spacing: 5px !important;
+    font-size: 18px !important;
+    margin: 18px 0 14px !important;
   }
-  #province-status .ps-title { color: var(--hoi-gold) !important; }
+  #province-status .ps-emblem {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    margin-bottom: 8px;
+  }
+  #province-status .ps-emblem-line {
+    flex: 1;
+    height: 2px;
+    background: linear-gradient(90deg, transparent 0%, var(--hoi-brass) 30%, var(--hoi-brass-lt) 50%, var(--hoi-brass) 70%, transparent 100%);
+  }
+  #province-status .ps-emblem-star {
+    color: var(--hoi-gold);
+    font-size: 24px;
+    text-shadow: 0 0 14px rgba(155, 195, 232, 0.6);
+    animation: ps-pulse 2s ease-in-out infinite;
+  }
+  @keyframes ps-pulse {
+    0%, 100% { opacity: 0.6; transform: scale(1); }
+    50%      { opacity: 1;   transform: scale(1.15); }
+  }
+  #province-status .ps-bar {
+    position: relative;
+    height: 14px;
+    background: linear-gradient(180deg, #0a0e15, #14181f);
+    border: 1px solid var(--hoi-brass);
+    box-shadow:
+      inset 0 1px 2px rgba(0,0,0,0.7),
+      inset 0 -1px 0 rgba(255,255,255,0.04);
+    overflow: hidden;
+    margin: 12px 0;
+  }
+  #province-status .ps-bar-fill {
+    position: absolute;
+    top: 0; bottom: 0;
+    width: 28%;
+    background: linear-gradient(90deg,
+      rgba(184, 208, 232, 0) 0%,
+      rgba(184, 208, 232, 0.35) 20%,
+      rgba(228, 240, 252, 0.95) 50%,
+      rgba(184, 208, 232, 0.35) 80%,
+      rgba(184, 208, 232, 0) 100%);
+    box-shadow: 0 0 16px rgba(184, 208, 232, 0.55);
+    animation: ps-march 1.6s ease-in-out infinite;
+  }
+  @keyframes ps-march {
+    from { left: -28%; }
+    to   { left: 100%; }
+  }
+  #province-status .ps-ticker {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    margin: 10px 0 14px;
+  }
+  #province-status .ps-ticker span {
+    display: block;
+    width: 8px;
+    height: 8px;
+    background: var(--hoi-rule);
+    border: 1px solid var(--hoi-rule-soft);
+    transform: rotate(45deg);
+    animation: ps-ticker 1.4s ease-in-out infinite;
+  }
+  #province-status .ps-ticker span:nth-child(2) { animation-delay: 0.12s; }
+  #province-status .ps-ticker span:nth-child(3) { animation-delay: 0.24s; }
+  #province-status .ps-ticker span:nth-child(4) { animation-delay: 0.36s; }
+  #province-status .ps-ticker span:nth-child(5) { animation-delay: 0.48s; }
+  #province-status .ps-ticker span:nth-child(6) { animation-delay: 0.60s; }
+  @keyframes ps-ticker {
+    0%, 100% { background: var(--hoi-rule); box-shadow: none; }
+    40%, 60% { background: var(--hoi-gold); box-shadow: 0 0 8px var(--hoi-brass-lt); }
+  }
+  #province-status.failed .ps-bar-fill,
+  #province-status.failed .ps-ticker,
+  #province-status.failed .ps-emblem-star { display: none; }
   #province-status .ps-detail {
     background: rgba(0,0,0,0.5) !important;
     border-left-color: var(--hoi-brass) !important;
@@ -1739,8 +1822,16 @@
 <div id="city-tooltip" style="display:none;"></div>
 <div id="province-status">
   <div class="ps-card">
-    <div class="ps-spinner"></div>
-    <div class="ps-title">Loading HOI4 province grid…</div>
+    <div class="ps-emblem">
+      <span class="ps-emblem-line"></span>
+      <span class="ps-emblem-star">✦</span>
+      <span class="ps-emblem-line"></span>
+    </div>
+    <div class="ps-title">Mobilising the Map Bureau</div>
+    <div class="ps-bar"><div class="ps-bar-fill"></div></div>
+    <div class="ps-ticker" id="ps-ticker">
+      <span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
     <div class="ps-detail" id="ps-detail">Fetching map/provinces.bmp + map/definition.csv</div>
     <div class="ps-version">v0.1.0</div>
   </div>
