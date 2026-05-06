@@ -4195,72 +4195,26 @@ window.expandAllColonizers = function () {
   const player = state.civs[0];
   if (!player || !player.isPlayer || !player.alive) return;
   const colonizers = player.armies.filter(a => a.type === "colonizer" && a.count > 0);
-  if (colonizers.length === 0) return;
-
-  const planetGrids = new Map();
-  if (state.planetOwnership) {
-    for (const [name, g] of Object.entries(state.planetOwnership)) planetGrids.set(name, g);
-  }
-  const curName = state.currentPlanet || "Earth";
-  planetGrids.set(curName, state.ownership);
-  if (!planetGrids.has("Earth")) {
-    const earthGrid = state._earthOwnership || (curName === "Earth" ? state.ownership : null);
-    if (earthGrid) planetGrids.set("Earth", earthGrid);
+  if (colonizers.length === 0) {
+    flashHint("⚑ EXPAND: no colonizer units to release. Train some first.");
+    return;
   }
 
-  const planetsToTouch = new Set();
-  for (const army of colonizers) planetsToTouch.add(army.planet || "Earth");
-  for (const s of (player.settlements || [])) planetsToTouch.add(s.planet || "Earth");
+  const planetCounts = {};
+  for (const army of colonizers) {
+    const p = army.planet || "Earth";
+    planetCounts[p] = (planetCounts[p] || 0) + (army.count || 0);
+  }
+  const fronts = Object.keys(planetCounts).length;
 
   state.expandDirective = {
     civId: player.id,
-    planets: {},
-    totalClaimed: 0,
     startYear: state.year,
-    fronts: 0,
+    totalClaimed: 0,
   };
 
-  for (const planet of planetsToTouch) {
-    const grid = planetGrids.get(planet);
-    if (!grid) continue;
-    const queue = [];
-    const visited = new Uint8Array(ROWS * COLS);
-    let ownTileCount = 0;
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
-        if (grid[r][c] === player.id) {
-          queue.push(c, r);
-          visited[r * COLS + c] = 1;
-          ownTileCount++;
-        }
-      }
-    }
-    if (ownTileCount === 0) {
-      for (const army of colonizers) {
-        if ((army.planet || "Earth") !== planet) continue;
-        if (visited[army.row * COLS + army.col]) continue;
-        queue.push(army.col, army.row);
-        visited[army.row * COLS + army.col] = 1;
-      }
-      for (const s of (player.settlements || [])) {
-        if ((s.planet || "Earth") !== planet) continue;
-        if (visited[s.row * COLS + s.col]) continue;
-        queue.push(s.col, s.row);
-        visited[s.row * COLS + s.col] = 1;
-      }
-    }
-    if (queue.length === 0) continue;
-    state.expandDirective.planets[planet] = { queue, visited, qHead: 0 };
-    state.expandDirective.fronts++;
-  }
-
-  if (state.expandDirective.fronts === 0) {
-    state.expandDirective = null;
-    flashHint("⚑ EXPAND: no reachable unclaimed land — every adjacent tile is held by someone else.");
-  } else {
-    log("event", "⚑ Expand directive issued — colonizers begin marching across " + state.expandDirective.fronts + " front" + (state.expandDirective.fronts === 1 ? "" : "s") + ".");
-    flashHint("⚑ EXPAND ACTIVE — colonizers spreading across " + state.expandDirective.fronts + " front" + (state.expandDirective.fronts === 1 ? "" : "s") + "…");
-  }
+  log("event", "⚑ Expand directive issued — " + colonizers.length + " colonizer corps released to roam across " + fronts + " world" + (fronts === 1 ? "" : "s") + ".");
+  flashHint("⚑ EXPAND ACTIVE — colonizers released to roam freely.");
 
   const btn = document.querySelector('button[onclick="expandAllColonizers()"]');
   if (btn) {
@@ -4278,50 +4232,84 @@ function processExpandDirective() {
   if (!dir) return;
   const player = state.civs[civIndexById(dir.civId)];
   if (!player || !player.alive) { state.expandDirective = null; return; }
-  const TILES_PER_TICK = 220;
-  let painted = 0;
-  let stillActive = false;
-  for (const [planet, st] of Object.entries(dir.planets)) {
-    let grid = null;
-    if (state.planetOwnership && state.planetOwnership[planet]) grid = state.planetOwnership[planet];
-    if (!grid && (state.currentPlanet || "Earth") === planet) grid = state.ownership;
-    if (!grid) continue;
-    const planetIsEarth = planet === "Earth";
-    const queue = st.queue;
-    const visited = st.visited;
-    while (st.qHead + 1 < queue.length && painted < TILES_PER_TICK) {
-      const c = queue[st.qHead++];
-      const r = queue[st.qHead++];
-      for (const [nc, nr] of neighbors(c, r)) {
-        const k = nr * COLS + nc;
-        if (visited[k]) continue;
-        visited[k] = 1;
+
+  const colonizers = player.armies.filter(a => a.type === "colonizer" && a.count > 0);
+  if (colonizers.length === 0) {
+    flashHint("⚑ EXPAND complete — every colonizer has settled.");
+    log("event", "⚑ Expand directive complete: " + dir.totalClaimed + " tiles claimed.");
+    state.expandDirective = null;
+    return;
+  }
+
+  const curPlanet = state.currentPlanet || "Earth";
+  const planetGrids = new Map();
+  if (state.planetOwnership) {
+    for (const [name, g] of Object.entries(state.planetOwnership)) planetGrids.set(name, g);
+  }
+  planetGrids.set(curPlanet, state.ownership);
+
+  const claimedTargets = new Set();
+  let progressedAny = false;
+
+  for (const army of colonizers) {
+    const armyPlanet = army.planet || "Earth";
+    const isCurrent = armyPlanet === curPlanet;
+
+    if (isCurrent) {
+      if (army.moves <= 0) army.moves = (UNITS[army.type] && UNITS[army.type].maxMoves) || 1;
+      const target = findExpansionTile(player, army.col, army.row, claimedTargets);
+      if (!target) continue;
+      claimedTargets.add(target.row * COLS + target.col);
+      let steps = 0;
+      while (army.moves > 0 && steps < 8) {
+        if (army.col === target.col && army.row === target.row) break;
+        const step = stepTowards(army.col, army.row, target.col, target.row, player.id, true);
+        if (!step) break;
+        const before = army.moves;
+        const beforeOwned = state.ownership[step.row][step.col];
+        tryMoveOrAttack(army, step.col, step.row);
+        if (beforeOwned === -1 && state.ownership[step.row][step.col] === player.id) {
+          dir.totalClaimed++;
+          progressedAny = true;
+        }
+        if (army.moves >= before) break;
+        steps++;
+      }
+    } else {
+      const grid = planetGrids.get(armyPlanet);
+      if (!grid) continue;
+      const planetIsEarth = armyPlanet === "Earth";
+      const candidates = [];
+      const ns = neighbors(army.col, army.row);
+      for (const [nc, nr] of ns) {
         if (planetIsEarth) {
           if (player.aquaticOnly) { if (MAP[nr][nc] !== "ocean") continue; }
           else { if (!PASSABLE(MAP[nr][nc])) continue; }
         }
-        const owner = grid[nr][nc];
-        if (owner !== -1 && owner !== player.id) continue;
-        if (owner === -1) {
-          grid[nr][nc] = player.id;
-          if (typeof claimProvinceForCiv === "function" && planetIsEarth) {
-            claimProvinceForCiv(nc, nr, player.id);
-          }
-          painted++;
-          dir.totalClaimed++;
-        }
-        queue.push(nc, nr);
-        if (painted >= TILES_PER_TICK) break;
+        const o = grid[nr][nc];
+        if (o === -1) candidates.push([nc, nr, true]);
+        else if (o === player.id) candidates.push([nc, nr, false]);
       }
+      const unclaimed = candidates.filter(t => t[2]);
+      const pick = unclaimed.length > 0
+        ? unclaimed[Math.floor(Math.random() * unclaimed.length)]
+        : (candidates.length > 0 ? candidates[Math.floor(Math.random() * candidates.length)] : null);
+      if (!pick) continue;
+      const [nc, nr, isUnclaimed] = pick;
+      if (isUnclaimed) {
+        grid[nr][nc] = player.id;
+        dir.totalClaimed++;
+        progressedAny = true;
+      }
+      army.prevCol = army.col;
+      army.prevRow = army.row;
+      army.moveStartedAt = performance.now();
+      army.col = nc;
+      army.row = nr;
     }
-    if (st.qHead + 1 < queue.length) stillActive = true;
   }
-  if (painted > 0) invalidateTintCache();
-  if (!stillActive) {
-    flashHint("⚑ EXPAND complete — " + dir.totalClaimed + " tiles claimed in " + (state.year - dir.startYear) + " years.");
-    log("event", "⚑ Expand directive complete: " + dir.totalClaimed + " tiles claimed.");
-    state.expandDirective = null;
-  }
+
+  if (progressedAny) invalidateTintCache();
 }
 
 function playerLeaderAssist(civ) {
