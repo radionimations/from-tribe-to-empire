@@ -3728,6 +3728,10 @@ function tick() {
   state.year += currentYearsPerTurn();
   processEvents();
   if (state.expandDirective) processExpandDirective();
+  if (state.turn % 8 === 0) {
+    if (typeof checkPlanetMajorityWipe === "function") checkPlanetMajorityWipe();
+    if (typeof checkSunDominion === "function") checkSunDominion();
+  }
 
   
   
@@ -7206,6 +7210,88 @@ function getPlanetDominator(planetName) {
   }
   if (dominantId < 0) return null;
   return dominantId;
+}
+
+function getPlanetGridFor(planetName) {
+  if (state.planetOwnership && state.planetOwnership[planetName]) return state.planetOwnership[planetName];
+  if ((state.currentPlanet || "Earth") === planetName) return state.ownership;
+  if (planetName === "Earth" && state._earthOwnership) return state._earthOwnership;
+  return null;
+}
+
+function checkPlanetMajorityWipe() {
+  if (!state.planetOwnership) return;
+  const player = state.civs[0];
+  if (!player || !player.isPlayer || !player.alive) return;
+  const planets = new Set(Object.keys(state.planetOwnership));
+  if (state.currentPlanet) planets.add(state.currentPlanet);
+  for (const planetName of planets) {
+    const grid = getPlanetGridFor(planetName);
+    if (!grid) continue;
+    const planetIsEarth = planetName === "Earth";
+    let playerTiles = 0, otherTiles = 0, unclaimedTiles = 0;
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (planetIsEarth && MAP[r][c] === "ocean" && !player.aquaticOnly) continue;
+        const o = grid[r][c];
+        if (o === player.id) playerTiles++;
+        else if (o === -1) unclaimedTiles++;
+        else otherTiles++;
+      }
+    }
+    const total = playerTiles + otherTiles + unclaimedTiles;
+    if (total === 0) continue;
+    if (otherTiles > 0) continue;
+    if (playerTiles / total < 0.65) continue;
+    if (unclaimedTiles === 0) continue;
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (planetIsEarth && MAP[r][c] === "ocean" && !player.aquaticOnly) continue;
+        if (grid[r][c] === -1) {
+          grid[r][c] = player.id;
+          if (typeof claimProvinceForCiv === "function" && planetIsEarth) {
+            claimProvinceForCiv(c, r, player.id);
+          }
+        }
+      }
+    }
+    log("event", "🌍 " + planetName + " fully consolidated under " + player.name + " — " + unclaimedTiles + " neutral tiles annexed.");
+    if (typeof flashHint === "function") flashHint("🌍 " + planetName + " is now fully yours.");
+    invalidateTintCache();
+  }
+}
+
+function checkSunDominion() {
+  if (state.sunClaimed) return;
+  if (typeof SOLAR_ORBITS === "undefined") return;
+  const player = state.civs[0];
+  if (!player || !player.isPlayer || !player.alive) return;
+  const required = [];
+  for (const body of SOLAR_ORBITS) {
+    if (!body || !body.name) continue;
+    if (body.name === "Sun") continue;
+    if (body.name === "Proxima Centauri b") continue;
+    required.push(body.name);
+  }
+  for (const name of required) {
+    const dom = getPlanetDominator(name);
+    if (dom !== player.id) return;
+  }
+  state.sunClaimed = true;
+  if (!state.planetOwnership) state.planetOwnership = {};
+  if (!state.planetOwnership["Sun"]) {
+    state.planetOwnership["Sun"] = Array.from({ length: ROWS }, () => new Array(COLS).fill(player.id));
+  } else {
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) state.planetOwnership["Sun"][r][c] = player.id;
+    }
+  }
+  const sun = SOLAR_ORBITS.find(b => b.name === "Sun");
+  if (sun) sun.dominator = player.name;
+  log("event", "☀ THE SUN IS YOURS — " + player.name + " has dominated every solar body. The home star itself bows to your banner.");
+  if (typeof flashHint === "function") flashHint("☀ ALL OF SOL IS YOURS — the Sun itself bows to " + player.name + ".");
+  invalidateTintCache();
+  render();
 }
 
 function aiTryLaunchRocket(civ) {
