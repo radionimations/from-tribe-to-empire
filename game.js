@@ -4141,6 +4141,60 @@ function aiTurn(civ) {
   }
 }
 
+window.expandAllColonizers = function () {
+  const player = state.civs[0];
+  if (!player || !player.isPlayer || !player.alive) return;
+  let claimed = 0;
+  const planetGrids = new Map();
+  planetGrids.set("Earth", state.planetOwnership && state.planetOwnership["Earth"] ? state.planetOwnership["Earth"] : (state.currentPlanet === "Earth" ? state.ownership : state._earthOwnership));
+  if (state.planetOwnership) {
+    for (const [name, g] of Object.entries(state.planetOwnership)) planetGrids.set(name, g);
+  }
+  if (state.currentPlanet) planetGrids.set(state.currentPlanet, state.ownership);
+
+  const colonizers = player.armies.filter(a => a.type === "colonizer" && a.count > 0);
+  for (const army of colonizers) {
+    const planet = army.planet || "Earth";
+    const grid = planetGrids.get(planet);
+    if (!grid) continue;
+    const planetIsEarth = planet === "Earth";
+    const visited = new Set();
+    visited.add(army.row * COLS + army.col);
+    const queue = [[army.col, army.row]];
+    let painted = 0;
+    const cap = army.count * 18 + 40;
+    while (queue.length && painted < cap) {
+      const [c, r] = queue.shift();
+      for (const [nc, nr] of neighbors(c, r)) {
+        const k = nr * COLS + nc;
+        if (visited.has(k)) continue;
+        visited.add(k);
+        if (planetIsEarth) {
+          if (player.aquaticOnly) { if (MAP[nr][nc] !== "ocean") continue; }
+          else { if (!PASSABLE(MAP[nr][nc])) continue; }
+        }
+        if (grid[nr][nc] !== -1) { queue.push([nc, nr]); continue; }
+        grid[nr][nc] = player.id;
+        if (typeof claimProvinceForCiv === "function" && planetIsEarth) {
+          claimProvinceForCiv(nc, nr, player.id);
+        }
+        painted++;
+        claimed++;
+        queue.push([nc, nr]);
+      }
+    }
+    army.count = Math.max(0, army.count - 1);
+    if (army.count <= 0) {
+      const i = player.armies.indexOf(army);
+      if (i >= 0) player.armies.splice(i, 1);
+    }
+  }
+  log("event", "⚑ Expand directive: " + colonizers.length + " colonizer corps spread out across " + planetGrids.size + " worlds — " + claimed + " new tiles claimed.");
+  invalidateTintCache();
+  render();
+  updateUI();
+};
+
 function playerLeaderAssist(civ) {
   
   const colonizerCount = civ.armies.reduce((s, a) => s + (a.type === "colonizer" ? a.count : 0), 0);
@@ -6550,6 +6604,10 @@ function updateUI() {
     const totalPop = player.settlements.reduce((a, s) => a + s.pop, 0);
     const totalUnits = player.armies.reduce((a, b) => a + b.count, 0);
     const tiles = countTiles(player);
+    const leaderCount = player.armies.reduce((a, b) => a + (b.type === "leader" ? b.count : 0), 0);
+    const expandRow = leaderCount >= 10
+      ? `<button class="primary" onclick="expandAllColonizers()" style="margin-top:6px;">⚑ EXPAND (release ${player.armies.reduce((a, b) => a + (b.type === "colonizer" ? b.count : 0), 0)} colonizers)</button>`
+      : "";
     document.getElementById("player-panel").innerHTML = `
       <div class="stat-row"><span class="stat-label">Civilization</span><span class="stat-val" style="color:${player.color}">${player.name}</span></div>
       <div class="stat-row"><span class="stat-label">Settlements</span><span class="stat-val">${player.settlements.length}</span></div>
@@ -6558,6 +6616,7 @@ function updateUI() {
       <div class="stat-row"><span class="stat-label">Armies</span><span class="stat-val">${totalUnits} units</span></div>
       <div class="stat-row"><span class="stat-label">Stability</span><span class="stat-val">${Math.round(player.stability)}%</span></div>
       <div class="stat-row"><span class="stat-label">Tech</span><span class="stat-val">${player.techPoints}${player.era < ERAS.length-1 ? " / " + ERAS[player.era+1].threshold : ""}</span></div>
+      ${expandRow}
     `;
   }
   renderTileInfo();
