@@ -3559,7 +3559,11 @@ function tick() {
       if (s.queue.length > 0) {
         const item = s.queue[0];
         item.progress = (item.progress || 0) + s.prod;
-        const cost = item.type === "settler" ? SETTLER_COST : (UNITS[item.type]?.cost || 999);
+        let cost = item.type === "settler" ? SETTLER_COST : (UNITS[item.type]?.cost || 999);
+        if (item.type === "rocket_scraps") {
+          const techDiscount = Math.min(0.85, (civ.techPoints || 0) / 20000);
+          cost = Math.max(20, Math.floor(cost * (1 - techDiscount)));
+        }
         if (item.progress >= cost) {
           s.prod = 0;
           s.queue.shift();
@@ -6616,7 +6620,11 @@ function renderTileInfo() {
     </div>`;
     if (settlement.queue.length > 0) {
       const item = settlement.queue[0];
-      const cost = item.type === "settler" ? SETTLER_COST : (UNITS[item.type]?.cost || 1);
+      let cost = item.type === "settler" ? SETTLER_COST : (UNITS[item.type]?.cost || 1);
+      if (item.type === "rocket_scraps" && owner) {
+        const techDiscount = Math.min(0.85, (owner.techPoints || 0) / 20000);
+        cost = Math.max(20, Math.floor(cost * (1 - techDiscount)));
+      }
       const pct = Math.min(100, ((item.progress || 0) / cost) * 100);
       const itemName = item.type === "settler" ? "Settler" : UNITS[item.type].name;
       const queueExtra = settlement.queue.length > 1 ? ` <span style="color:#8a7a5c;">(+${settlement.queue.length - 1} queued)</span>` : "";
