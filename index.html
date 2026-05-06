@@ -6,6 +6,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="mobile-web-app-capable" content="yes" />
 <title>From Tribe to Empire</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=EB+Garamond:ital,wght@0,500;0,700;1,500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -1147,20 +1150,40 @@
     --hoi-rule-soft: #2a3340;
     --hoi-brass:     #8a6e3c;
     --hoi-brass-lt:  #c8a563;
-    --hoi-gold:      #e8c87a;
-    --hoi-gold-hi:   #fff0b8;
-    --hoi-text:      #dccfa6;
-    --hoi-text-dim:  #92866a;
-    --hoi-accent:    #4a8acf;
-    --hoi-war:       #c4503a;
-    --hoi-peace:     #6aaa50;
-    --hoi-event:     #e8c87a;
-    --hoi-death:     #c46a6a;
+    --hoi-gold:      #f0d28c;
+    --hoi-gold-hi:   #fff5c8;
+    --hoi-text:      #ece2c4;
+    --hoi-text-dim:  #a89c7a;
+    --hoi-accent:    #6ba8e0;
+    --hoi-war:       #e06b50;
+    --hoi-peace:     #82c870;
+    --hoi-event:     #f0d28c;
+    --hoi-death:     #d88080;
+    --hoi-font-display: 'Cinzel', 'Trajan Pro', 'Cormorant Garamond', Georgia, serif;
+    --hoi-font-body:    'EB Garamond', 'Cormorant Garamond', Georgia, serif;
+    --hoi-font-ui:      'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
   }
   body {
-    font-family: 'Trajan Pro', 'Cinzel', 'Georgia', serif;
+    font-family: var(--hoi-font-body) !important;
+    font-size: 14px;
     background: linear-gradient(135deg, #0a0e15 0%, #14181f 100%) !important;
     color: var(--hoi-text) !important;
+  }
+  h1, h2, h3, .section-title, .era-badge, #cp-name, #planet-banner,
+  #splash h2, #move-mode-banner {
+    font-family: var(--hoi-font-display) !important;
+    font-weight: 700 !important;
+  }
+  button, .stat-label, .civ-meta, .build-queue, .log-entry,
+  #console-input, #console-output, .console-header {
+    font-family: var(--hoi-font-ui) !important;
+  }
+  .stat-val, .year-display, .civ-name {
+    font-family: var(--hoi-font-display) !important;
+  }
+  .log, #cp-stats, .tile-info, #cp-relations {
+    font-family: var(--hoi-font-body) !important;
+    font-size: 14px;
   }
   #map-wrap { background: #060810 !important; }
   #sidebar {
@@ -1175,9 +1198,16 @@
     color: var(--hoi-gold) !important;
     text-shadow:
       0 1px 0 #000,
-      0 0 12px rgba(232, 200, 122, 0.25) !important;
+      0 0 14px rgba(240, 210, 140, 0.35) !important;
+    letter-spacing: 5px !important;
+    font-weight: 900 !important;
+    text-transform: uppercase;
+  }
+  .section-title {
+    text-transform: uppercase;
     letter-spacing: 4px !important;
-    font-variant: small-caps;
+    font-weight: 700 !important;
+    font-size: 11px !important;
   }
   .subtitle {
     color: var(--hoi-text-dim) !important;
