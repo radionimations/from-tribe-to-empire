@@ -4149,64 +4149,69 @@ window.expandAllColonizers = function () {
   if (state.planetOwnership) {
     for (const [name, g] of Object.entries(state.planetOwnership)) planetGrids.set(name, g);
   }
-  if (state.currentPlanet) planetGrids.set(state.currentPlanet, state.ownership);
+  const curName = state.currentPlanet || "Earth";
+  planetGrids.set(curName, state.ownership);
   if (!planetGrids.has("Earth")) {
-    const earthGrid = state._earthOwnership || (state.currentPlanet === "Earth" ? state.ownership : null);
+    const earthGrid = state._earthOwnership || (curName === "Earth" ? state.ownership : null);
     if (earthGrid) planetGrids.set("Earth", earthGrid);
   }
 
   const colonizers = player.armies.filter(a => a.type === "colonizer" && a.count > 0);
   if (colonizers.length === 0) return;
 
-  const seedsByPlanet = new Map();
-  for (const army of colonizers) {
-    const planet = army.planet || "Earth";
-    if (!seedsByPlanet.has(planet)) seedsByPlanet.set(planet, []);
-    for (let i = 0; i < army.count; i++) {
-      seedsByPlanet.get(planet).push({ col: army.col, row: army.row });
-    }
-  }
-  for (const s of (player.settlements || [])) {
-    const planet = s.planet || "Earth";
-    if (!seedsByPlanet.has(planet)) seedsByPlanet.set(planet, []);
-    seedsByPlanet.get(planet).push({ col: s.col, row: s.row });
-  }
+  const planetsToTouch = new Set();
+  for (const army of colonizers) planetsToTouch.add(army.planet || "Earth");
+  for (const s of (player.settlements || [])) planetsToTouch.add(s.planet || "Earth");
 
-  for (const [planet, seeds] of seedsByPlanet) {
+  for (const planet of planetsToTouch) {
     const grid = planetGrids.get(planet);
-    if (!grid || seeds.length === 0) continue;
+    if (!grid) continue;
     const planetIsEarth = planet === "Earth";
     const queue = [];
-    const visited = new Set();
-    for (const seed of seeds) {
-      const k = seed.row * COLS + seed.col;
-      if (visited.has(k)) continue;
-      visited.add(k);
-      queue.push([seed.col, seed.row]);
+    const visited = new Uint8Array(ROWS * COLS);
+    let ownTileCount = 0;
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (grid[r][c] === player.id) {
+          queue.push([c, r]);
+          visited[r * COLS + c] = 1;
+          ownTileCount++;
+        }
+      }
     }
-    const tilesPerSeed = 1200;
-    const cap = seeds.length * tilesPerSeed;
-    let painted = 0;
-    while (queue.length && painted < cap) {
+    if (ownTileCount === 0) {
+      for (const army of colonizers) {
+        if ((army.planet || "Earth") !== planet) continue;
+        if (visited[army.row * COLS + army.col]) continue;
+        queue.push([army.col, army.row]);
+        visited[army.row * COLS + army.col] = 1;
+      }
+      for (const s of (player.settlements || [])) {
+        if ((s.planet || "Earth") !== planet) continue;
+        if (visited[s.row * COLS + s.col]) continue;
+        queue.push([s.col, s.row]);
+        visited[s.row * COLS + s.col] = 1;
+      }
+    }
+    if (queue.length === 0) continue;
+
+    while (queue.length) {
       const [c, r] = queue.shift();
       for (const [nc, nr] of neighbors(c, r)) {
         const k = nr * COLS + nc;
-        if (visited.has(k)) continue;
-        visited.add(k);
+        if (visited[k]) continue;
+        visited[k] = 1;
         if (planetIsEarth) {
           if (player.aquaticOnly) { if (MAP[nr][nc] !== "ocean") continue; }
           else { if (!PASSABLE(MAP[nr][nc])) continue; }
         }
         const owner = grid[nr][nc];
-        if (owner !== -1 && owner !== player.id) {
-          continue;
-        }
+        if (owner !== -1 && owner !== player.id) continue;
         if (owner === -1) {
           grid[nr][nc] = player.id;
           if (typeof claimProvinceForCiv === "function" && planetIsEarth) {
             claimProvinceForCiv(nc, nr, player.id);
           }
-          painted++;
           claimed++;
         }
         queue.push([nc, nr]);
@@ -4246,11 +4251,11 @@ window.expandAllColonizers = function () {
     }
   }
 
-  log("event", "⚑ Expand directive: " + colonizers.length + " colonizer corps spread across " + seedsByPlanet.size + " world" + (seedsByPlanet.size === 1 ? "" : "s") + " — " + claimed + " new tiles claimed.");
+  log("event", "⚑ Expand directive: " + colonizers.length + " colonizer corps spread across " + planetsToTouch.size + " world" + (planetsToTouch.size === 1 ? "" : "s") + " — " + claimed + " new tiles claimed.");
   if (claimed > 0) {
-    flashHint("⚑ EXPAND: " + claimed + " new tiles claimed across " + seedsByPlanet.size + " world" + (seedsByPlanet.size === 1 ? "" : "s") + ".");
+    flashHint("⚑ EXPAND: " + claimed + " new tiles claimed across " + planetsToTouch.size + " world" + (planetsToTouch.size === 1 ? "" : "s") + ".");
   } else {
-    flashHint("⚑ EXPAND: no unclaimed land within reach. Move colonizers further out.");
+    flashHint("⚑ EXPAND: no reachable unclaimed land — every adjacent tile is held by someone else.");
   }
   const btn = document.querySelector('button[onclick="expandAllColonizers()"]');
   if (btn) {
