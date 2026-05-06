@@ -4142,6 +4142,55 @@ function aiTurn(civ) {
   }
 }
 
+window.triggerApocalypse = function () {
+  const player = state.civs[0];
+  if (!player || !player.isPlayer || !player.alive) return;
+  const planet = state.currentPlanet || "Earth";
+  let grid = null;
+  if (planet === "Earth") {
+    grid = (state.currentPlanet && state.currentPlanet !== "Earth") ? state._earthOwnership : state.ownership;
+    if (!grid && state.planetOwnership) grid = state.planetOwnership["Earth"];
+  } else {
+    grid = state.ownership;
+  }
+  if (!grid) {
+    flashHint("☢ APOCALYPSE: no ownership grid for " + planet + ".");
+    return;
+  }
+  const targetIds = new Set();
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const o = grid[r][c];
+      if (o < 0 || o === player.id) continue;
+      targetIds.add(o);
+    }
+  }
+  if (targetIds.size === 0) {
+    flashHint("☢ APOCALYPSE: no rival civilizations on " + planet + ".");
+    return;
+  }
+  if (!state.playerWars) state.playerWars = new Set();
+  if (!state.frontlineEnemies) state.frontlineEnemies = new Set();
+  let warred = 0;
+  const targetNames = [];
+  for (const id of targetIds) {
+    const target = state.civs[civIndexById(id)];
+    if (!target || !target.alive) continue;
+    player.relations[target.id] = -100;
+    target.relations[player.id] = -100;
+    state.playerWars.add(target.id);
+    state.frontlineEnemies.add(target.id);
+    warred++;
+    targetNames.push(target.name);
+  }
+  state.frontlinePush = true;
+  log("war", "☢ APOCALYPSE declared on " + planet + " — war with " + warred + " civs: " + targetNames.slice(0, 8).join(", ") + (targetNames.length > 8 ? ", …" : ""));
+  flashHint("☢ APOCALYPSE — war declared on " + warred + " civs across " + planet + ". Front lines pushing.");
+  invalidateTintCache();
+  render();
+  updateUI();
+};
+
 window.expandAllColonizers = function () {
   const player = state.civs[0];
   if (!player || !player.isPlayer || !player.alive) return;
@@ -6688,6 +6737,10 @@ function updateUI() {
     const expandRow = leaderCount >= 10
       ? `<button class="primary" onclick="expandAllColonizers()" style="margin-top:6px;">⚑ EXPAND (release ${player.armies.reduce((a, b) => a + (b.type === "colonizer" ? b.count : 0), 0)} colonizers)</button>`
       : "";
+    const playerStr = (typeof civStrength === "function") ? civStrength(player) : 0;
+    const apocalypseRow = playerStr >= 200
+      ? `<button class="danger" onclick="triggerApocalypse()" style="margin-top:6px;font-weight:bold;letter-spacing:4px;">☢ APOCALYPSE</button>`
+      : "";
     document.getElementById("player-panel").innerHTML = `
       <div class="stat-row"><span class="stat-label">Civilization</span><span class="stat-val" style="color:${player.color}">${player.name}</span></div>
       <div class="stat-row"><span class="stat-label">Settlements</span><span class="stat-val">${player.settlements.length}</span></div>
@@ -6697,6 +6750,7 @@ function updateUI() {
       <div class="stat-row"><span class="stat-label">Stability</span><span class="stat-val">${Math.round(player.stability)}%</span></div>
       <div class="stat-row"><span class="stat-label">Tech</span><span class="stat-val">${player.techPoints}${player.era < ERAS.length-1 ? " / " + ERAS[player.era+1].threshold : ""}</span></div>
       ${expandRow}
+      ${apocalypseRow}
     `;
   }
   renderTileInfo();
